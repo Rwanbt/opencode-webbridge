@@ -1,0 +1,258 @@
+{
+  "repo": "Rwanbt/opencode-webbridge",
+  "generatedAt": "2026-10-16T23:14:11.827Z",
+  "issues": {
+    "E0": {
+      "number": 4,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/4"
+    },
+    "E1": {
+      "number": 5,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/5"
+    },
+    "E2": {
+      "number": 6,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/6"
+    },
+    "E3": {
+      "number": 7,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/7"
+    },
+    "E4": {
+      "number": 8,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/8"
+    },
+    "E5": {
+      "number": 9,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/9"
+    },
+    "E6": {
+      "number": 10,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/10"
+    },
+    "E7": {
+      "number": 11,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/11"
+    },
+    "E8": {
+      "number": 12,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/12"
+    },
+    "US-E0-01": {
+      "number": 13,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/13"
+    },
+    "US-E0-02": {
+      "number": 14,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/14"
+    },
+    "US-E0-03": {
+      "number": 15,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/15"
+    },
+    "US-E0-04": {
+      "number": 16,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/16"
+    },
+    "US-E0-05": {
+      "number": 17,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/17"
+    },
+    "US-E0-06": {
+      "number": 18,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/18"
+    },
+    "US-E1-01": {
+      "number": 19,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/19"
+    },
+    "US-E1-02": {
+      "number": 20,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/20"
+    },
+    "US-E1-03": {
+      "number": 21,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/21"
+    },
+    "US-E1-04": {
+      "number": 22,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/22"
+    },
+    "US-E1-05": {
+      "number": 23,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/23"
+    },
+    "US-E1-06": {
+      "number": 24,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/24"
+    },
+    "US-E2-01": {
+      "number": 25,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/25"
+    },
+    "US-E2-02": {
+      "number": 26,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/26"
+    },
+    "US-E2-03": {
+      "number": 27,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/27"
+    },
+    "US-E2-04": {
+      "number": 28,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/28"
+    },
+    "US-E2-05": {
+      "number": 29,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/29"
+    },
+    "US-E2-06": {
+      "number": 30,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/30"
+    },
+    "US-E3-01": {
+      "number": 31,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/31"
+    },
+    "US-E3-02": {
+      "number": 32,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/32"
+    },
+    "US-E3-03": {
+      "number": 33,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/33"
+    },
+    "US-E3-04": {
+      "number": 34,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/34"
+    },
+    "US-E3-05": {
+      "number": 35,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/35"
+    },
+    "US-E3-06": {
+      "number": 36,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/36"
+    },
+    "US-E4-01": {
+      "number": 37,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/37"
+    },
+    "US-E4-02": {
+      "number": 38,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/38"
+    },
+    "US-E4-03": {
+      "number": 39,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/39"
+    },
+    "US-E4-04": {
+      "number": 40,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/40"
+    },
+    "US-E4-05": {
+      "number": 41,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/41"
+    },
+    "US-E4-06": {
+      "number": 42,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/42"
+    },
+    "US-E5-01": {
+      "number": 43,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/43"
+    },
+    "US-E5-02": {
+      "number": 44,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/44"
+    },
+    "US-E5-03": {
+      "number": 45,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/45"
+    },
+    "US-E5-04": {
+      "number": 46,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/46"
+    },
+    "US-E5-05": {
+      "number": 47,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/47"
+    },
+    "US-E5-06": {
+      "number": 48,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/48"
+    },
+    "US-E6-01": {
+      "number": 49,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/49"
+    },
+    "US-E6-02": {
+      "number": 50,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/50"
+    },
+    "US-E6-03": {
+      "number": 51,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/51"
+    },
+    "US-E6-04": {
+      "number": 52,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/52"
+    },
+    "US-E6-05": {
+      "number": 53,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/53"
+    },
+    "US-E6-06": {
+      "number": 54,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/54"
+    },
+    "US-E7-01": {
+      "number": 55,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/55"
+    },
+    "US-E7-02": {
+      "number": 56,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/56"
+    },
+    "US-E7-03": {
+      "number": 57,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/57"
+    },
+    "US-E7-04": {
+      "number": 58,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/58"
+    },
+    "US-E7-05": {
+      "number": 59,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/59"
+    },
+    "US-E7-06": {
+      "number": 60,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/60"
+    },
+    "US-E8-01": {
+      "number": 61,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/61"
+    },
+    "US-E8-02": {
+      "number": 62,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/62"
+    },
+    "US-E8-03": {
+      "number": 63,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/63"
+    },
+    "US-E8-04": {
+      "number": 64,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/64"
+    },
+    "US-E8-05": {
+      "number": 65,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/65"
+    },
+    "US-E8-06": {
+      "number": 66,
+      "url": "https://github.com/Rwanbt/opencode-webbridge/issues/66"
+    }
+  }
+}
