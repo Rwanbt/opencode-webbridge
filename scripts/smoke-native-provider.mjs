@@ -1,0 +1,100 @@
+/** Manual G1 smoke: native OpenCode 2 session invokes our local fixture only. */
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { FIXTURE_MODEL, FIXTURE_REPLY, openFixtureServer } from '../dist/src/testing/fixture-inference.js';
+
+function findBinary() {
+  if (process.env.OPENCODE_BIN) return process.env.OPENCODE_BIN;
+  if (process.platform !== 'win32') return 'opencode';
+  // OpenCode 1 and OpenCode 2 may both be on PATH. The user's `opencode.cmd`
+  // resolves to the v2 npm binary; a separately built `.exe` may be an older major version.
+  const found = spawnSync('where.exe', ['opencode.cmd'], { encoding: 'utf8' });
+  const binary = found.stdout?.split(/\r?\n/).find((line) => line.toLowerCase().endsWith('opencode.cmd'));
+  if (!binary) throw new Error('OpenCode v2 .cmd missing; set OPENCODE_BIN to its launcher');
+  return binary.trim();
+}
+
+function run(binary, env, cwd) {
+  return new Promise((resolvePromise, reject) => {
+    const args = ['run', '--standalone', '--print-logs', '--log-level', 'debug', '--model', `webbridge-fixture/${FIXTURE_MODEL}`, '--format', 'json',
+      'This is a local inference transport verification. Respond once.'];
+    const child = spawn(binary, args, {
+      cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+      shell: process.platform === 'win32' && /\.cmd$/i.test(binary),
+    });
+    let stdout = '';
+    let stderr = '';
+    let overflow = false;
+    const collect = (target, chunk) => {
+      const added = chunk.toString('utf8');
+      if (target === 'stdout') stdout += added;
+      else stderr += added;
+      if (stdout.length + stderr.length > 200_000) { overflow = true; child.kill(); }
+    };
+    child.stdout.on('data', (chunk) => collect('stdout', chunk));
+    child.stderr.on('data', (chunk) => collect('stderr', chunk));
+    child.once('error', reject);
+    const timeout = setTimeout(() => child.kill(), 60_000);
+    child.once('close', (code) => {
+      clearTimeout(timeout);
+      resolvePromise({ code, stdout, stderr, overflow });
+    });
+  });
+}
+
+const temp = await mkdtemp(join(tmpdir(), 'webbridge-native-fixture-'));
+const fixture = await openFixtureServer();
+try {
+  const configDir = join(temp, 'config');
+  await mkdir(configDir);
+  // OpenCode 2.0.29 currently rejects configured *files* even though the docs show
+  // file examples: its loader logs "configured plugin path must be a directory".
+  // A manifest-backed package directory is supported; keep this compatibility route.
+  const pluginPath = resolve('dist/src/testing/native-fixture-plugin.js');
+  const pluginDir = join(temp, 'fixture-plugin');
+  await mkdir(pluginDir);
+  await writeFile(join(pluginDir, 'package.json'), JSON.stringify({
+    name: 'webbridge-private-fixture-plugin', version: '0.0.0', type: 'module', main: 'index.mjs',
+  }));
+  await writeFile(join(pluginDir, 'index.mjs'), `export { default } from ${JSON.stringify(pathToFileURL(pluginPath).href)};\n`);
+  const productionDir = resolve('.');
+  const config = JSON.stringify({ plugins: [pathToFileURL(productionDir).href, pathToFileURL(pluginDir).href] });
+  await writeFile(join(configDir, 'opencode.json'), config);
+  // An isolated profile avoids touching any normal OpenCode plugin, account, config or transcript.
+  // In particular, do NOT pass inherited OPENAI_API_KEY, GITHUB_TOKEN, or any other credentials.
+  const baseEnvKeys = process.platform === 'win32'
+    ? ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'HOMEDRIVE', 'HOMEPATH', 'PROCESSOR_ARCHITECTURE']
+    : ['PATH', 'HOME', 'SHELL', 'TMPDIR', 'LANG', 'LC_ALL'];
+  const cleanEnv = Object.fromEntries(baseEnvKeys
+    .filter((key) => process.env[key] !== undefined)
+    .map((key) => [key, process.env[key]]));
+  const env = {
+    ...cleanEnv,
+    XDG_CONFIG_HOME: join(temp, 'xdg-config'),
+    XDG_DATA_HOME: join(temp, 'xdg-data'),
+    XDG_CACHE_HOME: join(temp, 'xdg-cache'),
+    XDG_STATE_HOME: join(temp, 'xdg-state'),
+    OPENCODE_CONFIG_DIR: configDir,
+    OPENCODE_DISABLE_PROJECT_CONFIG: 'true',
+    OPENCODE_CONFIG_CONTENT: config,
+    WEBBRIDGE_FIXTURE_ENABLE: '1',
+    WEBBRIDGE_FIXTURE_URL: fixture.baseURL,
+  };
+  const binary = findBinary();
+  const result = await run(binary, env, temp);
+  const responded = result.stdout.includes(FIXTURE_REPLY);
+  const connected = fixture.requests() > 0;
+  console.log(`OpenCode local G1 fixture smoke: exit=${result.code}, HTTP requests=${fixture.requests()}, reply-observed=${responded}`);
+  if (result.code !== 0 || !responded || !connected || result.overflow) {
+    // Restrict diagnostics to error metadata; never print account secrets or transcripts.
+    const debug = result.stderr.split(/\r?\n/).filter((line) => /webbridge|plugin|config|provider|error|warn/i.test(line)).slice(-24).map((line) => line.slice(0,600));
+    console.error(`Fixture native integration incomplete. Output tail: ${result.stdout.slice(-700)}\nRelevant diagnostics:\n${debug.join('\n')}`);
+    process.exitCode = 1;
+  }
+} finally {
+  await fixture.close();
+  await rm(temp, { recursive: true, force: true });
+}

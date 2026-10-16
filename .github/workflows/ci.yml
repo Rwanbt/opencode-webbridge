@@ -17,3 +17,17 @@ jobs:
       - run: npm run typecheck
       - run: npm run check:backlog
       - run: npm test
+
+  native-fixture-smoke:
+    name: Native fixture smoke (OpenCode 2.0.29)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install exact OpenCode CLI for isolated smoke
+        run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @opencode/cli@2.0.29
+      - run: npm run smoke:native
