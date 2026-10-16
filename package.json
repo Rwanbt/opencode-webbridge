@@ -1,0 +1,25 @@
+{
+  "name": "opencode-webbridge",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Experimental native OpenCode 2 plugin scaffold for browser-backed web chat providers",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node --test"
+  },
+  "dependencies": {
+    "@opencode/plugin": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}
