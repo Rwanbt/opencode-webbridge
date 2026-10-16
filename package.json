@@ -16,6 +16,7 @@
     "test": "npm run build && node scripts/run-tests.mjs",
     "check:backlog": "node scripts/check-backlog.mjs",
     "smoke:native": "npm run build && node scripts/smoke-native-provider.mjs",
+    "smoke:browser": "npm run build && node scripts/smoke-native-provider.mjs --browser-fixture",
     "issues:dry-run": "node scripts/sync-github-issues.mjs",
     "issues:sync": "node scripts/sync-github-issues.mjs --apply"
   },

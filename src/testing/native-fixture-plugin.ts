@@ -16,6 +16,10 @@ export default Plugin.define({
       url.search || url.hash || url.pathname !== '/v1') {
       throw new Error('Fixture runtime must be an explicit 127.0.0.1 HTTP /v1 endpoint');
     }
+    const token = process.env.WEBBRIDGE_FIXTURE_TOKEN;
+    if (token !== undefined && !/^[a-f0-9]{64}$/.test(token)) {
+      throw new Error('invalid local fixture token');
+    }
     const providerID = Provider.ID.make('webbridge-fixture');
     const model = {
       ...Model.Info.default(providerID, Model.ID.make(FIXTURE_MODEL)),
@@ -29,7 +33,7 @@ export default Plugin.define({
           name: 'WebBridge Local Test Fixture',
           activation: 'enabled',
           package: '@opencode/ai/providers/openai-compatible',
-          settings: { baseURL: url.toString().replace(/\/$/, '') },
+          settings: { baseURL: url.toString().replace(/\/$/, ''), ...(token ? { apiKey: token } : {}) },
         },
         models: [model],
       });

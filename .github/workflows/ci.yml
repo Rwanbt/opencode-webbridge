@@ -31,3 +31,4 @@ jobs:
       - name: Install exact OpenCode CLI for isolated smoke
         run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.29
       - run: npm run smoke:native
+      - run: npm run smoke:browser

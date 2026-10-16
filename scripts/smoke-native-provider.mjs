@@ -4,7 +4,10 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { randomBytes } from 'node:crypto';
 import { FIXTURE_MODEL, FIXTURE_REPLY, openFixtureServer } from '../dist/src/testing/fixture-inference.js';
+import { FakeBrowserPort } from '../dist/src/testing/fake-browser.js';
+import { browserFixtureResponder } from '../dist/src/testing/browser-fixture-relay.js';
 
 function findBinary() {
   if (process.env.OPENCODE_BIN) return process.env.OPENCODE_BIN;
@@ -46,7 +49,16 @@ function run(binary, env, cwd) {
 }
 
 const temp = await mkdtemp(join(tmpdir(), 'webbridge-native-fixture-'));
-const fixture = await openFixtureServer();
+const useBrowserFixture = process.argv.includes('--browser-fixture');
+const fakeBinding = { sessionID: 'native-fixture', tabID: 'fake-tab', providerID: 'chatgpt', accountRef: 'fake-account' };
+let forwarded = 0;
+const browser = new FakeBrowserPort(() => { forwarded++; return FIXTURE_REPLY; });
+if (useBrowserFixture) await browser.claim(fakeBinding);
+const token = randomBytes(32).toString('hex');
+const fixture = await openFixtureServer({
+  token,
+  ...(useBrowserFixture ? { respond: browserFixtureResponder(browser, fakeBinding) } : {}),
+});
 try {
   const configDir = join(temp, 'config');
   await mkdir(configDir);
@@ -82,12 +94,13 @@ try {
     OPENCODE_CONFIG_CONTENT: config,
     WEBBRIDGE_FIXTURE_ENABLE: '1',
     WEBBRIDGE_FIXTURE_URL: fixture.baseURL,
+    WEBBRIDGE_FIXTURE_TOKEN: token,
   };
   const binary = findBinary();
   const result = await run(binary, env, temp);
   const responded = result.stdout.includes(FIXTURE_REPLY);
-  const connected = fixture.requests() > 0;
-  console.log(`OpenCode local G1 fixture smoke: exit=${result.code}, HTTP requests=${fixture.requests()}, reply-observed=${responded}`);
+  const connected = fixture.requests() > 0 && (!useBrowserFixture || forwarded > 0);
+  console.log(`OpenCode local fixture smoke: exit=${result.code}, HTTP requests=${fixture.requests()}, BrowserPort forwards=${forwarded}, reply-observed=${responded}`);
   if (result.code !== 0 || !responded || !connected || result.overflow) {
     // Restrict diagnostics to error metadata; never print account secrets or transcripts.
     const debug = result.stderr.split(/\r?\n/).filter((line) => /webbridge|plugin|config|provider|error|warn/i.test(line)).slice(-24).map((line) => line.slice(0,600));
@@ -96,5 +109,6 @@ try {
   }
 } finally {
   await fixture.close();
+  if (useBrowserFixture) await browser.release(fakeBinding);
   await rm(temp, { recursive: true, force: true });
 }
