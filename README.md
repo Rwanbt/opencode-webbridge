@@ -28,7 +28,7 @@ Websites and availability can change. A displayed website is **not** evidence th
 
 ## Architecture
 
-See [Architecture and milestones](docs/ARCHITECTURE.md), [Security policy](SECURITY.md), and [French roadmap](docs/ROADMAP.fr.md).
+See [Global production plan (FR)](docs/PLAN-GLOBAL.fr.md), [Architecture and milestones](docs/ARCHITECTURE.md), [Security policy](SECURITY.md), [French roadmap](docs/ROADMAP.fr.md), and [Backlog (9 epics / 54 user stories)](planning/backlog.json). The backlog is validated in CI and synchronized to GitHub issues via `npm run issues:sync` by authorized maintainers.
 
 The intended design is:
 

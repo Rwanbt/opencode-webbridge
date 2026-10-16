@@ -13,7 +13,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "npm run build && node --test dist/test/catalog.test.js"
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "check:backlog": "node scripts/check-backlog.mjs",
+    "issues:dry-run": "node scripts/sync-github-issues.mjs",
+    "issues:sync": "node scripts/sync-github-issues.mjs --apply"
   },
   "dependencies": {
     "@opencode/plugin": "^2.0.0"
