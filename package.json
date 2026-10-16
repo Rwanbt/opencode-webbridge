@@ -19,7 +19,7 @@
     "issues:sync": "node scripts/sync-github-issues.mjs --apply"
   },
   "dependencies": {
-    "@opencode/plugin": "^2.0.0"
+    "@opencode/plugin": "2.0.29"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
