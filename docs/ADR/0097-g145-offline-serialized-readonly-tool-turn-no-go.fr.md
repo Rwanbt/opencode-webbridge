@@ -29,12 +29,13 @@ utilisant leurs vrais contrats dans le même exécuteur.
    interdit les effets terminal arbitraires et vérifie les permissions
    avant/après lecture. Le contenu sensible détecté reste non divulgué.
 6. Vérification de reçu par **callback de fixture du host** puis
+   nouvelle autorisation **après l'attente de cette vérification**,
    `confirmed` durable avant livraison du texte, sinon
    `uncertain` irréversible et aucun résultat retourné.
 
 Les tests couvrent de vrais fichiers Git et Linux, double requête
 concurrente, redémarrage après confirmation, échec du reçu, révocation
-pendant `await`, interruption avant effet, identité forgée et rejet
+pendant `await` de la lecture **et du reçu final**, interruption avant effet, identité forgée et rejet
 Windows pour la lecture fichier dont les handles ne sont pas prouvés sûrs.
 
 ## Frontières et refus d'activation

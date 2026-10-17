@@ -85,6 +85,21 @@ test('rejected host confirmation is uncertain and cannot reveal data or replay',
       /already initialized/);
   }));
 
+test('revocation while the final host receipt verification awaits cannot disclose the result',
+  { skip: process.platform !== 'linux' }, () => sandbox(async (options) => {
+    writeFileSync(join(options.workspace, 'public.txt'), 'SENSITIVE_UNDELIVERED');
+    const text = wire('file.read', { path: 'public.txt' });
+    let permission = true, confirmations = 0;
+    const host = new OfflineToolTurnOrchestrator({
+      ...options,
+      authorize: async () => permission,
+      verifyReceipt: async () => { confirmations++; permission = false; return true; },
+    });
+    await assert.rejects(host.run(text, scope), /uncertain/);
+    assert.equal(confirmations, 1);
+    assert.equal(persisted(options, text).phase, 'uncertain');
+  }));
+
 test('revocation during awaited read denies disclosure and tombstones uncertain',
   { skip: process.platform !== 'linux' }, () => sandbox(async (options) => {
     writeFileSync(join(options.workspace, 'public.txt'), 'REVOKED_DATA');

@@ -110,8 +110,11 @@ export class OfflineToolTurnOrchestrator {
       const result = await executor.execute(proposal, proposal.provenance);
       const final = await fence.confirm(async () => {
         await authorize();
-        return (await this.options.verifyReceipt(proposal, result)) === true &&
-          !this.options.signal?.aborted;
+        const verified = await this.options.verifyReceipt(proposal, result);
+        // A revocation during the awaited host receipt verification must deny
+        // disclosure even if the verifier returned a once-valid true.
+        await authorize();
+        return verified === true && !this.options.signal?.aborted;
       });
       if (final !== 'confirmed') {
         this.broker.uncertain(operationID);
