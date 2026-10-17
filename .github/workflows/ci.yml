@@ -37,7 +37,23 @@ jobs:
       - name: Install isolated headless Chromium
         run: npx playwright install --with-deps --only-shell chromium
       - run: npm run smoke:local-read
+      - name: Offline DOM progressive relay and uncertain interruption
+        run: npm run smoke:dom-rpc
       - run: npm run smoke:page
+
+  windows-progressive-relay:
+    name: Windows bounded RPC progress (no Chromium)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - name: Native protocol and fail-closed deltas, no browser or account
+        run: node --test dist/test/browser-exchange.test.js dist/test/rpc-relay-port.test.js dist/test/rpc-browser-port.test.js dist/test/fixture-inference.test.js
 
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
