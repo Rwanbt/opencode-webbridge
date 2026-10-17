@@ -4,7 +4,7 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `FFD3961F5DBEF07FECFC8FF075528D161BC7ECFF31B2BB970B1224ADFA0BE04B`.
+Patch SHA-256: `96C376411F788F5781F141CD8E75D9D45D34F5116A723852675DD80C2745DB83`.
 
 Follow-up to #110: [ADR 0004](../ADR/0004-core-permission-browser-read-epoch.md) adds a real, read-only `Permission.Service.browserRead` authority with policy-version invalidation and RED→GREEN Core integration tests. This ledger is **not invoked by Desktop or existing browser tools**, and cannot grant native writes.
 
@@ -45,6 +45,8 @@ G104 closes a native snapshot-result sequencing gap: a result following `read.co
 G106 retains the G104 snapshot/BrowserLease controls and closes a separate asynchronous policy-revision gap in the Core `browser.tabs.list` broker. It now pins a Core-owned revision across permission prompts and the awaited host inventory; saved-rule, agent/hook, session or consent changes deny the stale tab metadata result. Two deterministic `PluginBrowser.make` cases fail on the G104 source and pass after G106; a real `Permission.Service` fixture proves that saved-rule revisions invalidate consumed browser read authority. Ordinary authorized `browser.tabs.list` is preserved. See [ADR 0042](../ADR/0042-core-browser-tabs-policy-epoch.fr.md). The first Desktop process is not authenticated and cross-process policy updates remain **NO-GO**.
 
 G114 makes the Core `read.live` receipt one-use and prevents a native snapshot result from being returned after the original read deadline. Two executable `BrowserConnection.make` adversarial tests were RED before this fix and GREEN afterward (`16/16` read-commit tests). The official pinned combined patch was regenerated and applied cleanly to a second fresh checkout; see [ADR 0043](../ADR/0043-native-read-live-single-use-and-expiry.fr.md). First-attach Desktop provenance, cross-process atomicity, real packaged Electron and commercial providers remain **NO-GO**.
+
+G121 demonstrates that public `RpcCallContext` contains no authenticated Electron process identity, while a first self-attaching RPC client previously obtained a session-wide `browser:* allow` and TCP tunnel authority by sending its own UUID. Native first attach is now **denied by default** until the Core supplies a separately verified transport authority, absent from this official V2 pin. An adversarial native first-attach test is RED on G114 and GREEN after this guard; a trusted Core fixture preserves `browser.tabs.list` metadata behavior. This intentionally makes standard packaged Desktop attachment unavailable on the proposal and is an explicit **NO-GO**, not a finished provenance integration. See [ADR 0044](../ADR/0044-native-first-attach-provenance-no-go.fr.md).
 
 Independent E2 follow-up: the Core reference ledger now snapshots the entire validated binding **before** asynchronous authorization, refuses mutation during the await, and preserves spent-call tombstones through `revoke()` to prevent replay of the same call in a later epoch. Tickets use a bounded monotonic lifetime. Regression tests exercise forged plugin/session/action mutation, post-revoke replay, and clock rollback; the ledger remains disconnected from Desktop and **does not authorize writes**.
 
