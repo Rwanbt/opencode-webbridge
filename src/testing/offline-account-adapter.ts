@@ -44,6 +44,20 @@ type Slot = {
 };
 
 const priority: Record<FixtureSource, number> = { 'fixture-ui': 3, 'fixture-dom': 2, 'fixture-cache': 1 };
+/** Checkpoints may come from disk; never evaluate a caller-supplied getter. */
+function ownData(value: unknown, fields: readonly string[]): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype ||
+    Reflect.ownKeys(value).length !== fields.length) throw new Error('invalid checkpoint object');
+  const result: Record<string, unknown> = {};
+  for (const field of fields) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, field);
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) {
+      throw new Error('checkpoint requires plain data fields');
+    }
+    result[field] = descriptor.value;
+  }
+  return result;
+}
 const health: Record<LoginSignal, AdapterHealthCode> = {
   'signed-in': 'ready', 'signed-out': 'authentication-required', expired: 'session-expired',
   challenge: 'challenge-human-required', 'rate-limited': 'rate-limited', disconnected: 'disconnected',
@@ -176,20 +190,28 @@ export class OfflineAccountAdapterHarness {
   /** All restored turns become uncertain tombstones; never infer completion. */
   recover(binding: TabClaim, checkpoint: OfflineCheckpoint): void {
     const slot = this.owned(binding);
-    if (!checkpoint || !checkpoint.owner ||
-      (Object.keys(slot.owner) as Array<keyof TabClaim>).some((k) => checkpoint.owner[k] !== slot.owner[k])) {
+    const input = ownData(checkpoint, ['owner', 'turns']);
+    const owner = snapshotTabClaim(input.owner);
+    if ((Object.keys(slot.owner) as Array<keyof TabClaim>).some((k) => owner[k] !== slot.owner[k])) {
       throw new Error('checkpoint ownership mismatch');
     }
-    if (slot.turns.size || slot.signals.size || !Array.isArray(checkpoint.turns) || checkpoint.turns.length > 64) {
+    const turns = input.turns;
+    if (slot.turns.size || slot.signals.size || !Array.isArray(turns) || turns.length > 64 ||
+      Reflect.ownKeys(turns).length !== turns.length + 1) {
       throw new Error('checkpoint cannot overwrite an existing fixture lease');
     }
     const restored = new Map<string, AdapterTurnState>();
-    for (const entry of checkpoint.turns) {
-      assertOpaqueID(entry?.turnID, 'turnID');
-      if (!Number.isSafeInteger(entry.seq) || entry.seq < 0 || entry.seq > 1_000_000 || restored.has(entry.turnID)) {
+    for (let i = 0; i < turns.length; i++) {
+      const descriptor = Object.getOwnPropertyDescriptor(turns, String(i));
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) throw new Error('invalid checkpoint record');
+      const record = ownData(descriptor.value, ['turnID', 'seq']);
+      assertOpaqueID(record.turnID as string, 'turnID');
+      if (!Number.isSafeInteger(record.seq) || (record.seq as number) < 0 ||
+        (record.seq as number) > 1_000_000 || restored.has(record.turnID as string)) {
         throw new Error('invalid checkpoint turn');
       }
-      restored.set(entry.turnID, { turnID: entry.turnID, seq: entry.seq, phase: 'uncertain', preview: '' });
+      const turnID = record.turnID as string;
+      restored.set(turnID, { turnID, seq: record.seq as number, phase: 'uncertain', preview: '' });
     }
     for (const [id, turn] of restored) slot.turns.set(id, turn);
   }

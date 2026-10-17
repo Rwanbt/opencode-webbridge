@@ -169,3 +169,30 @@ test('checkpoint validation is atomic and settles no completed reply as trusted 
   assert.throws(() => restarted.reconcile({ ...ctx.binding, tabID: 'other' },
     'turn_A', 'evidence_manual', 'observed-effect'), /ownership/);
 });
+
+test('five-provider crash recovery never evaluates checkpoint accessors or restores partial state', () => {
+  for (const { id } of WEB_PROVIDER_CATALOG) {
+    const [source, ctx] = setup(id, `recovery_${id}`);
+    source.observe(ctx.binding, 'fixture-ui', 1, 'signed-in');
+    source.openTrace(ctx, 'turn_A');
+    const checkpoint = source.checkpoint(ctx.binding);
+    const dest = new OfflineAccountAdapterHarness();
+    dest.claim(ctx.binding);
+    let calls = 0;
+    const withAccessor = Object.defineProperty({ owner: checkpoint.owner }, 'turns', {
+      enumerable: true, get() { calls++; return checkpoint.turns; },
+    });
+    const recordGetter = Object.defineProperty({ seq: 1 }, 'turnID', {
+      enumerable: true, get() { calls++; return 'turn_A'; },
+    });
+    const hidden = Object.defineProperty({ ...checkpoint }, 'extra', {
+      value: 'token', enumerable: false,
+    });
+    for (const invalid of [withAccessor, { ...checkpoint, turns: [recordGetter] }, hidden]) {
+      assert.throws(() => dest.recover(ctx.binding, invalid as typeof checkpoint), /checkpoint|invalid|plain|record/i);
+      assert.equal(calls, 0, 'malicious getter should never be evaluated');
+    }
+    dest.recover(ctx.binding, checkpoint);
+    assert.equal(dest.turnDiagnostics(ctx.binding, 'turn_A').phase, 'uncertain');
+  }
+});
