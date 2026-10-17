@@ -3,12 +3,13 @@ import { closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, open
   renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { assertOpaqueID, type TabClaim } from './browser-port.js';
+import { DurableWitness } from './durable-witness.js';
 
 type Phase = 'prepared' | 'leased' | 'settled' | 'cancelled' | 'reconciled';
 type Outcome = 'observed-applied' | 'observed-not-applied';
 type Attestation = { outcome: Outcome; evidenceHash: string; operatorHash: string; reviewedAt: string };
 type Entry = { turnID: string; phase: Phase; attestation?: Attestation };
-type Payload = { version: 1; bindingHash: string; entries: Entry[] };
+type Payload = { version: 1 | 2; bindingHash: string; entries: Entry[]; witnessRequired?: true };
 type State = Payload & { mac: string };
 
 const digest = (data: string) => createHash('sha256').update(data).digest('hex');
@@ -29,14 +30,19 @@ export class DurableRelayJournal {
     private readonly lockTag: string,
     private readonly secret: string,
     private state: State,
+    private readonly witness?: DurableWitness,
   ) {}
 
   private static signature(secret: string, payload: Payload): string {
     return createHmac('sha256', Buffer.from(secret, 'hex')).update(JSON.stringify(payload)).digest('hex');
   }
 
-  static open(dir: string, binding: TabClaim, secret: string): DurableRelayJournal {
+  static open(dir: string, binding: TabClaim, secret: string,
+    options?: { readonly witnessDir: string }): DurableRelayJournal {
     if (!/^[a-f0-9]{64}$/.test(secret)) throw new Error('invalid journal signing key');
+    if (options && (typeof options.witnessDir !== 'string' || !options.witnessDir.trim())) {
+      throw new Error('invalid witness directory');
+    }
     for (const [key, id] of Object.entries(binding)) assertOpaqueID(id, key);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     if (!lstatSync(dir).isDirectory()) throw new Error('journal directory must not be a symlink');
@@ -49,22 +55,29 @@ export class DurableRelayJournal {
       fsyncSync(lockFD);
       const path = join(dir, 'journal.json');
       const bindingHash = identity(binding);
-      let state: State = { version: 1, bindingHash, entries: [],
-        mac: DurableRelayJournal.signature(secret, { version: 1, bindingHash, entries: [] }) };
+      const initial: Payload = options
+        ? { version: 2, bindingHash, entries: [], witnessRequired: true }
+        : { version: 1, bindingHash, entries: [] };
+      let state: State = { ...initial, mac: DurableRelayJournal.signature(secret, initial) };
       if (existsSync(path)) {
         if (!lstatSync(path).isFile() || lstatSync(path).size > 64_000) throw new Error('invalid journal');
         const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));
         if (!DurableRelayJournal.valid(raw)) throw new Error('invalid journal');
         state = raw;
         if (state.bindingHash !== bindingHash) throw new Error('journal binding mismatch');
-        const signed = DurableRelayJournal.signature(secret, {
-          version: state.version, bindingHash: state.bindingHash, entries: state.entries,
-        });
+        const signed = DurableRelayJournal.signature(secret, DurableRelayJournal.payload(state));
         if (!timingSafeEqual(Buffer.from(signed, 'hex'), Buffer.from(state.mac, 'hex'))) {
           throw new Error('journal integrity mismatch');
         }
+        if ((state.version === 2) !== Boolean(options)) {
+          throw new Error('journal witness mode mismatch: downgrade/enrollment refused');
+        }
       }
-      const journal = new DurableRelayJournal(dir, lockFD, lockTag, secret, state);
+      // Witness is deliberately outside the journal directory, and must already
+      // match an existing journal. In particular, it cannot silently enroll old state.
+      const witness = options?.witnessDir ? DurableWitness.open(dir, options.witnessDir,
+        bindingHash, secret, existsSync(path), state.mac) : undefined;
+      const journal = new DurableRelayJournal(dir, lockFD, lockTag, secret, state, witness);
       // Persist ownership even when there are zero turns; never silently rebind.
       if (!existsSync(path)) journal.commit([]);
       return journal;
@@ -80,8 +93,10 @@ export class DurableRelayJournal {
   private static valid(raw: unknown): raw is State {
     if (!raw || typeof raw !== 'object') return false;
     const s = raw as State;
-    if (s.version !== 1 || !hash(s.bindingHash) || !hash(s.mac) ||
-      Object.keys(s).length !== 4 || !Array.isArray(s.entries) || s.entries.length > 16) return false;
+    if ((s.version !== 1 && s.version !== 2) || !hash(s.bindingHash) || !hash(s.mac) ||
+      (s.version === 1 ? Object.keys(s).length !== 4 || s.witnessRequired !== undefined
+        : Object.keys(s).length !== 5 || s.witnessRequired !== true) ||
+      !Array.isArray(s.entries) || s.entries.length > 16) return false;
     const ids = new Set<string>();
     for (const item of s.entries) {
       if (!item || typeof item !== 'object' || typeof item.turnID !== 'string' ||
@@ -101,6 +116,12 @@ export class DurableRelayJournal {
   }
 
   private ensure(): void { if (this.closed) throw new Error('journal closed'); }
+
+  private static payload(state: State): Payload {
+    return state.version === 2
+      ? { version: 2, bindingHash: state.bindingHash, entries: state.entries, witnessRequired: true }
+      : { version: 1, bindingHash: state.bindingHash, entries: state.entries };
+  }
 
   /** Detect lost or modified ownership, rather than removing another process's lock. */
   private static matchesLock(dir: string, fd: number, tag: string): boolean {
@@ -133,7 +154,9 @@ export class DurableRelayJournal {
   private commit(entries: Entry[]): void {
     this.ensure();
     this.assertLock();
-    const payload: Payload = { version: 1, bindingHash: this.state.bindingHash, entries };
+    const payload: Payload = this.state.version === 2
+      ? { version: 2, bindingHash: this.state.bindingHash, entries, witnessRequired: true }
+      : { version: 1, bindingHash: this.state.bindingHash, entries };
     const next: State = { ...payload, mac: DurableRelayJournal.signature(this.secret, payload) };
     const tmp = join(this.dir, `.journal-${randomUUID()}.tmp`);
     const fd = openSync(tmp, 'wx', 0o600);
@@ -141,7 +164,13 @@ export class DurableRelayJournal {
       writeFileSync(fd, JSON.stringify(next), { encoding: 'utf8' });
       fsyncSync(fd);
     } finally { closeSync(fd); }
-    try { this.assertLock(); renameSync(tmp, join(this.dir, 'journal.json')); }
+    try {
+      this.assertLock();
+      // Advance the independent witness FIRST. Crash between both writes causes
+      // fail-closed mismatch, never acceptance of a rolled-back signed journal.
+      this.witness?.advance(this.state.mac, next.mac);
+      renameSync(tmp, join(this.dir, 'journal.json'));
+    }
     catch (error) { try { unlinkSync(tmp); } catch { /* cleanup best-effort */ } throw error; }
     // Linux: flush the renamed directory entry too. Windows does not support dir fsync.
     if (process.platform !== 'win32') {
