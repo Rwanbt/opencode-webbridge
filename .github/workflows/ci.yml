@@ -27,6 +27,8 @@ jobs:
       - name: D01/D02 execute pinned official Desktop 2.0.32 packaged IPC refusal
         run: npm run check:d01d02
       - run: npm test
+      - name: G146 Linux real serialized tool turn through durable authorization, read-only FS/Git and verified receipt
+        run: node --test dist/test/offline-tool-turn-orchestrator.test.js
       - name: G141 G135 Linux real ephemeral filesystem/Git and G138 hostile serialized JSON ingress
         run: node --test dist/test/offline-readonly-tool-executor.test.js dist/test/tool-proposal-json-ingress.test.js
       - name: Deterministic offline package, upgrade, rollback and uninstall
@@ -164,6 +166,8 @@ jobs:
         run: node --test dist/test/effect-broker.test.js dist/test/tool-broker.test.js
       - name: G140 durable anti-replay fence restart/rollback/lock (local temp files only)
         run: node --test dist/test/durable-operation-fence.test.js
+      - name: G145 serialized read-only fixture refuses non-Linux file execution
+        run: node --test dist/test/offline-tool-turn-orchestrator.test.js
       - name: G141 G135 Windows file-read closed + untrusted proposals (no Windows Git sandbox claim)
         run: node --test '--test-name-pattern=file.read opens real regular Linux inode|malformed provenance/unknown or mutable actions' dist/test/offline-readonly-tool-executor.test.js
       - name: G141 G138 bounded JSON hostile input and G139 authority snapshots
