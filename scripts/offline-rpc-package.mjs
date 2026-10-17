@@ -67,9 +67,8 @@ async function smokeNative(profile, env, temp, executable, version) {
         const response = await fetch(`${url}/api/plugin`, { headers, signal: AbortSignal.timeout(600) });
         if (response.ok) {
           const inventory = await response.json();
-          // OpenCode's /api/plugin endpoint returns {output: Plugin.Info[]}, not a bare array.
-          const entries = Array.isArray(inventory) ? inventory
-            : Array.isArray(inventory?.output) ? inventory.output : [];
+          // Official pinned v2 Location.response(Plugin.Info[]) = {location, data}.
+          const entries = Array.isArray(inventory?.data) ? inventory.data : [];
           inventorySummary = JSON.stringify(entries.filter((item) =>
             /webbridge|failed/i.test(item?.id ?? '')).map((item) =>
             ({ id: item.id, state: item.state }))).slice(-700);
