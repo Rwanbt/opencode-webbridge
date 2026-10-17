@@ -144,7 +144,7 @@ test('terminal completion is never exposed before stream closure validates trail
   const observed: AdapterProgress[] = [];
   await assert.rejects(async () => {
     for await (const item of validatedAdapterProgress(invalid(), 'turn1')) observed.push(item);
-  }, /invalid adapter transition|after terminal/);
+  }, /adapter turn uncertain/);
   assert.deepEqual(observed.map((item) => item.kind), ['partial']);
 });
 
@@ -156,6 +156,24 @@ test('terminal producer throw cannot yield a false successful reply', async () =
   const observed: AdapterProgress[] = [];
   await assert.rejects(async () => {
     for await (const item of validatedAdapterProgress(broken(), 'turn1')) observed.push(item);
-  }, /browser transport lost/);
+  }, /adapter turn uncertain/);
   assert.equal(observed.length, 0);
+});
+
+test('provider exception containing secrets never escapes the common progress boundary', async () => {
+  const secret = 'Bearer SECRETSESSIONCOOKIE-DO-NOT-LOG';
+  async function* leaking(): AsyncIterable<AdapterProgress> {
+    yield event('partial', 1, 'safe preview');
+    throw new Error(`page transport failed: ${secret}`);
+  }
+  const seen: AdapterProgress[] = [];
+  await assert.rejects(async () => {
+    for await (const item of validatedAdapterProgress(leaking(), 'turn1')) seen.push(item);
+  }, (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.doesNotMatch(error.message, /SECRETSESSIONCOOKIE|Bearer/);
+    assert.match(error.message, /uncertain|reconcile/);
+    return true;
+  });
+  assert.deepEqual(seen.map((value) => value.kind), ['partial']);
 });

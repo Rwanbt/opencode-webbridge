@@ -117,11 +117,17 @@ export async function* validatedAdapterProgress(
 ): AsyncIterable<AdapterProgress> {
   let state = startAdapterTurn(turnID);
   let terminal: AdapterProgress | undefined;
-  for await (const event of events) {
-    state = advanceAdapterTurn(state, event);
-    if (terminal) throw new Error('events after terminal state');
-    if (['completed', 'aborted', 'failed', 'uncertain'].includes(state.phase)) terminal = event;
-    else yield event;
+  try {
+    for await (const event of events) {
+      state = advanceAdapterTurn(state, event);
+      if (terminal) throw new Error('events after terminal state');
+      if (['completed', 'aborted', 'failed', 'uncertain'].includes(state.phase)) terminal = event;
+      else yield event;
+    }
+  } catch {
+    // DOM/transport exception messages can contain session tokens and raw page
+    // text. Never forward upstream error objects across the adapter boundary.
+    throw new Error('adapter turn uncertain: source failure; reconcile before retry');
   }
   if (!['completed', 'aborted', 'failed'].includes(state.phase) || !terminal) {
     throw new Error('adapter turn uncertain: reconcile before retry');
