@@ -2390,7 +2390,7 @@ index 0000000000..bd830ae574
 +  return result
 +}
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
-index 4c6838c70f..2f009ba163 100644
+index 4c6838c70f..21740b6292 100644
 --- a/packages/plugin-browser/src/connection.ts
 +++ b/packages/plugin-browser/src/connection.ts
 @@ -10,9 +10,15 @@ import { BrowserTunnel } from "./tunnel.js"
@@ -2542,7 +2542,7 @@ index 4c6838c70f..2f009ba163 100644
              return yield* Effect.fail(call.error("unavailable", "Browser is unavailable.", {}))
            browser.state = input.state
          }),
-@@ -115,18 +150,55 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -115,18 +150,57 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
          Effect.gen(function* () {
            const browser = browsers.get(input.sessionID)
            const pending =
@@ -2575,8 +2575,9 @@ index 4c6838c70f..2f009ba163 100644
 +            browser.state.tabs.some((tab) => tab.id === read.tabID && tab.generation === read.generation)
 +          // Once the Core lease or tab is stale, never resurrect this spent grant.
 +          if (!allowed) read.committed = false
-+          if (allowed) read.live = true
-+          return allowed
++          if (!allowed || read.live) return false
++          read.live = true // One Core authorization for one Desktop browser effect.
++          return true
 +        }),
        result: (input, call) =>
          Effect.gen(function* () {
@@ -2588,7 +2589,8 @@ index 4c6838c70f..2f009ba163 100644
            if (!pending) return
 +          if (pending.read) {
 +            const read = pending.read
-+            if (!read.committed || !read.live || !read.authorized() || !browser.state.tabs.some((tab) =>
++            if (!read.committed || !read.live || performance.now() >= read.expires ||
++              !read.authorized() || !browser.state.tabs.some((tab) =>
 +                tab.id === read.tabID && tab.generation === read.generation)) {
 +              read.committed = false
 +              yield* Deferred.fail(pending.result, new Tool.Error({
@@ -2600,7 +2602,7 @@ index 4c6838c70f..2f009ba163 100644
            if (input.outcome.type === "failure")
              return yield* Deferred.fail(
                pending.result,
-@@ -163,9 +235,22 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -163,9 +237,22 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
    )
  
    return {
@@ -2624,7 +2626,7 @@ index 4c6838c70f..2f009ba163 100644
          return yield* new Tool.Error({
            message:
              "[browser.disconnected] No desktop browser is connected to this session. Open this session in the desktop app and wait for it to connect. Then call browser.tabs.list({}). Repeating browser actions while disconnected will not help.",
-@@ -177,10 +262,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -177,10 +264,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              "[browser.tab_unavailable] This tab is closed or does not belong to the connected session. Call browser.tabs.list({}) and use an exact returned tabID. If no tabs exist, use browser.tabs.open({}). Never substitute a request ID, file ID, or element ref for tabID.",
          })
        // Keep the selected attachment and document, even while permissions or file IO wait.
@@ -2640,7 +2642,7 @@ index 4c6838c70f..2f009ba163 100644
              Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
              Effect.mapError(
                (error) =>
-@@ -194,7 +283,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -194,7 +285,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              ),
            ),
          request: (files: readonly Browser.File[], target?: Browser.Target) =>
@@ -2675,7 +2677,7 @@ index 4c6838c70f..2f009ba163 100644
        }
      }),
    }
-@@ -207,6 +322,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -207,6 +324,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
    tab: Browser.Tab | undefined,
    files: readonly Browser.File[],
    inspection: Pick<Browser.Command, "inspect" | "target">,
@@ -2683,7 +2685,7 @@ index 4c6838c70f..2f009ba163 100644
  ) {
    const requestID = crypto.randomUUID()
    const pending = yield* Deferred.make<Browser.Result, Tool.Error>()
-@@ -214,9 +330,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -214,9 +332,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
      (action.type === "files.upload" || action.type === "files.drop") && !inspection.inspect
        ? { ...action, paths: files.map((file) => file.name) }
        : action
@@ -3509,11 +3511,11 @@ index 0000000000..23935de9c0
 +})
 diff --git a/packages/plugin-browser/test/read-commit.test.ts b/packages/plugin-browser/test/read-commit.test.ts
 new file mode 100644
-index 0000000000..7ab7a9b35d
+index 0000000000..33c6206fd2
 --- /dev/null
 +++ b/packages/plugin-browser/test/read-commit.test.ts
-@@ -0,0 +1,291 @@
-+import { expect, test } from "bun:test"
+@@ -0,0 +1,334 @@
++import { expect, spyOn, test } from "bun:test"
 +import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect"
 +import { AbsolutePath } from "@opencode/schema/schema"
 +import { Location } from "@opencode/schema/location"
@@ -3625,6 +3627,49 @@ index 0000000000..7ab7a9b35d
 +    expect(response.value.content).toBe("WEBBRIDGE_LOCAL_PAGE_OK:fixture")
 +    expect(Exit.isFailure(yield* Effect.exit(target.requestOnce([], () => true)))).toBe(true)
 +  }))
++})
++
++test("Core read.live receipt is one-use even with the exact ticket and attachment proof", async () => {
++  await harness(({ target, commands, next, base }) => Effect.gen(function* () {
++    const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
++    const requestID = yield* Deferred.await(next)
++    const caller = { error: (_: string, message: string) => new Error(message) }
++    const command = yield* commands.command({ ...base, requestID }, caller)
++    const input = { ...base, requestID, ticket: command.readCommit }
++    expect(yield* commands["read.commit"](input, caller)).toBe(true)
++    expect(yield* commands["read.live"](input, caller)).toBe(true)
++    expect(yield* commands["read.live"](input, caller)).toBe(false)
++    yield* commands.result({ ...base, requestID, outcome: { type: "success", result: {
++      value: { content: "single authorized read", truncated: false }, files: [],
++    } } }, caller)
++    const response = (yield* Fiber.join(reading)) as { value: { content: string } }
++    expect(response.value.content).toBe("single authorized read")
++  }))
++})
++
++test("Core denies page content arriving after the authorized read deadline", async () => {
++  let now = 1000
++  const clock = spyOn(performance, "now").mockImplementation(() => now)
++  try {
++    await harness(({ target, commands, next, base }) => Effect.gen(function* () {
++      const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
++      const requestID = yield* Deferred.await(next)
++      const caller = { error: (_: string, message: string) => new Error(message) }
++      const command = yield* commands.command({ ...base, requestID }, caller)
++      const input = { ...base, requestID, ticket: command.readCommit }
++      expect(yield* commands["read.commit"](input, caller)).toBe(true)
++      expect(yield* commands["read.live"](input, caller)).toBe(true)
++      now = 6001 // 5000ms from dispatch elapsed while the browser was pending.
++      expect(Exit.isFailure(yield* Effect.exit(commands.result({ ...base, requestID,
++        outcome: { type: "success", result: {
++          value: { content: "late private page", truncated: false }, files: [],
++        } },
++      }, caller)))).toBe(true)
++      expect(Exit.isFailure(yield* Fiber.await(reading))).toBe(true)
++    }))
++  } finally {
++    clock.mockRestore()
++  }
 +})
 +
 +test("a forged or stale Desktop cannot disclose a committed snapshot without Core read.live", async () => {

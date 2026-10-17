@@ -4,7 +4,7 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `FE5AE887CA3FEB1C2A2E170A12B7A9C89E79684E80EE5CE656C7377604F753E8`.
+Patch SHA-256: `FFD3961F5DBEF07FECFC8FF075528D161BC7ECFF31B2BB970B1224ADFA0BE04B`.
 
 Follow-up to #110: [ADR 0004](../ADR/0004-core-permission-browser-read-epoch.md) adds a real, read-only `Permission.Service.browserRead` authority with policy-version invalidation and RED→GREEN Core integration tests. This ledger is **not invoked by Desktop or existing browser tools**, and cannot grant native writes.
 
@@ -43,6 +43,8 @@ G93 removes the original direct HTTP POST `test.skip` and fixes the documented 5
 G104 closes a native snapshot-result sequencing gap: a result following `read.commit` but without `read.live` previously disclosed browser page content. The Core now requires and records successful post-readiness `read.live` before accepting any snapshot outcome, retires a premature response immediately, and prevents command creation/dispatch against a closing browser attachment. A deterministic real `BrowserConnection.make` RED→GREEN test exercises the missing second stage; the first-party `read.commit → read.live → result` sequence remains green. The Core-local `browser.tabs.list` mirror is unchanged; no new WebBridge browser commands are enabled. See [ADR 0041](../ADR/0041-native-browser-live-read-receipt.fr.md). Initial Desktop provenance and effect attestation remain **NO-GO**.
 
 G106 retains the G104 snapshot/BrowserLease controls and closes a separate asynchronous policy-revision gap in the Core `browser.tabs.list` broker. It now pins a Core-owned revision across permission prompts and the awaited host inventory; saved-rule, agent/hook, session or consent changes deny the stale tab metadata result. Two deterministic `PluginBrowser.make` cases fail on the G104 source and pass after G106; a real `Permission.Service` fixture proves that saved-rule revisions invalidate consumed browser read authority. Ordinary authorized `browser.tabs.list` is preserved. See [ADR 0042](../ADR/0042-core-browser-tabs-policy-epoch.fr.md). The first Desktop process is not authenticated and cross-process policy updates remain **NO-GO**.
+
+G114 makes the Core `read.live` receipt one-use and prevents a native snapshot result from being returned after the original read deadline. Two executable `BrowserConnection.make` adversarial tests were RED before this fix and GREEN afterward (`16/16` read-commit tests). The official pinned combined patch was regenerated and applied cleanly to a second fresh checkout; see [ADR 0043](../ADR/0043-native-read-live-single-use-and-expiry.fr.md). First-attach Desktop provenance, cross-process atomicity, real packaged Electron and commercial providers remain **NO-GO**.
 
 Independent E2 follow-up: the Core reference ledger now snapshots the entire validated binding **before** asynchronous authorization, refuses mutation during the await, and preserves spent-call tombstones through `revoke()` to prevent replay of the same call in a later epoch. Tickets use a bounded monotonic lifetime. Regression tests exercise forged plugin/session/action mutation, post-revoke replay, and clock rollback; the ledger remains disconnected from Desktop and **does not authorize writes**.
 
