@@ -1,4 +1,5 @@
 import type { WebProviderID } from '../catalog.js';
+import { WEB_PROVIDER_CATALOG } from '../catalog.js';
 
 /** Opaque IDs only. Never expose browser cookies, passwords or session tokens. */
 export interface TabClaim {
@@ -6,6 +7,26 @@ export interface TabClaim {
   readonly providerID: WebProviderID;
   readonly tabID: string;
   readonly accountRef: string;
+}
+
+/** Data-only immutable snapshot; never let caller-owned authority cross an await. */
+export function snapshotTabClaim(claim: unknown): Readonly<TabClaim> {
+  const keys = ['sessionID', 'providerID', 'tabID', 'accountRef'] as const;
+  if (!claim || typeof claim !== 'object' || Object.getPrototypeOf(claim) !== Object.prototype ||
+    Reflect.ownKeys(claim).length !== keys.length) throw new Error('invalid browser claim shape');
+  const values: Record<string, string> = {};
+  for (const key of keys) {
+    const field = Object.getOwnPropertyDescriptor(claim, key);
+    if (!field || field.enumerable !== true || !Object.hasOwn(field, 'value')) {
+      throw new Error('browser claim must contain plain data fields');
+    }
+    assertOpaqueID(field.value, `claim ${key}`);
+    values[key] = field.value;
+  }
+  if (!WEB_PROVIDER_CATALOG.some((provider) => provider.id === values.providerID)) {
+    throw new Error('unsupported browser claim provider');
+  }
+  return Object.freeze(values) as unknown as Readonly<TabClaim>;
 }
 
 export interface TurnRequest {

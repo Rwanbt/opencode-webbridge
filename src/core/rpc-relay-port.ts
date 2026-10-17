@@ -1,6 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { WEB_PROVIDER_CATALOG } from '../catalog.js';
-import { assertOpaqueID, assertTextOnlyTurn, type BrowserPort, type TabClaim, type TurnEvent, type TurnRequest } from './browser-port.js';
+import { assertOpaqueID, assertTextOnlyTurn, snapshotTabClaim, type BrowserPort, type TabClaim, type TurnEvent, type TurnRequest } from './browser-port.js';
 import type { DurableRelayJournal } from './durable-relay-journal.js';
 
 type Job = { readonly turnID: string; readonly prompt: string; claimed: boolean; events: TurnEvent[] };
@@ -29,20 +28,18 @@ export class RpcRelayPort implements BrowserPort {
   }
 
   private owned(binding: TabClaim): void {
+    const current = snapshotTabClaim(binding);
     if (!this.binding || Object.keys(this.binding).some((key) =>
-      this.binding?.[key as keyof TabClaim] !== binding[key as keyof TabClaim])) {
+      this.binding?.[key as keyof TabClaim] !== current[key as keyof TabClaim])) {
       throw new Error('relay binding mismatch');
     }
   }
 
   async claim(binding: TabClaim): Promise<void> {
-    for (const [key, value] of Object.entries(binding)) assertOpaqueID(value, key);
-    this.journal?.assertBinding(binding);
-    if (!WEB_PROVIDER_CATALOG.some((provider) => provider.id === binding.providerID)) {
-      throw new Error('unsupported relay provider');
-    }
+    const stable = snapshotTabClaim(binding);
     if (this.binding) throw new Error('relay already claimed');
-    this.binding = Object.freeze({ ...binding });
+    this.journal?.assertBinding(stable);
+    this.binding = stable;
   }
 
   async submit(binding: TabClaim, request: TurnRequest): Promise<void> {

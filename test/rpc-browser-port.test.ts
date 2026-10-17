@@ -76,3 +76,14 @@ test('malformed cancellation acknowledgement must fail closed', async () => {
     await port.release(binding);
   }
 });
+
+test('RPC fixture pins constructor owner against caller mutation after claim', async () => {
+  const mutable = { ...binding };
+  let calls = 0;
+  const port = new RpcBrowserFixturePort(mutable, async () => { calls++; return { accepted: true }; });
+  await port.claim(mutable);
+  mutable.accountRef = 'impostor';
+  await assert.rejects(port.submit(mutable, { turnID: 'test-1', prompt: 'hello' }), /binding|mismatch/i);
+  assert.equal(calls, 0);
+  await port.release(binding);
+});

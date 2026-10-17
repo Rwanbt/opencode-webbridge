@@ -1,28 +1,7 @@
-import { assertOpaqueID, assertTextOnlyTurn, type BrowserPort, type TabClaim, type TurnRequest } from './browser-port.js';
-import { WEB_PROVIDER_CATALOG } from '../catalog.js';
+import { assertTextOnlyTurn, snapshotTabClaim, type BrowserPort, type TabClaim, type TurnRequest } from './browser-port.js';
 
 const MAX_EVENTS = 64;
 const MAX_TEXT = 16_000;
-
-/** Capture the trusted caller's exact owner before any asynchronous driver call. */
-function snapshotClaim(claim: TabClaim): Readonly<TabClaim> {
-  const keys = ['sessionID', 'providerID', 'tabID', 'accountRef'] as const;
-  if (!claim || typeof claim !== 'object' || Object.getPrototypeOf(claim) !== Object.prototype ||
-    Reflect.ownKeys(claim).length !== keys.length) throw new Error('invalid browser claim shape');
-  const values: Record<string, string> = {};
-  for (const key of keys) {
-    const field = Object.getOwnPropertyDescriptor(claim, key);
-    if (!field || field.enumerable !== true || !Object.hasOwn(field, 'value')) {
-      throw new Error('browser claim must contain plain data fields');
-    }
-    assertOpaqueID(field.value, `claim ${key}`);
-    values[key] = field.value;
-  }
-  if (!WEB_PROVIDER_CATALOG.some((provider) => provider.id === values.providerID)) {
-    throw new Error('unregistered browser claim provider');
-  }
-  return Object.freeze(values) as unknown as Readonly<TabClaim>;
-}
 
 /**
  * Read one terminal response without ever resending the request. The browser's
@@ -40,7 +19,7 @@ export async function exchangeBrowserTurn(
 
   // Reject unsupported media and unknown fields BEFORE any possible external effect.
   assertTextOnlyTurn(request);
-  const binding = snapshotClaim(claim);
+  const binding = snapshotTabClaim(claim);
   const turn = Object.freeze({
     turnID: Object.getOwnPropertyDescriptor(request, 'turnID')!.value as string,
     prompt: Object.getOwnPropertyDescriptor(request, 'prompt')!.value as string,

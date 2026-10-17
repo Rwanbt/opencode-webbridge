@@ -57,6 +57,24 @@ test('relay refuses unsupported providers before allocating ownership', async ()
   await relay.release(binding);
 });
 
+test('relay rejects accessor or hidden claim fields before any auth or durable effect', async () => {
+  const relay = new RpcRelayPort(secret);
+  let getters = 0;
+  const getter = Object.defineProperty({ ...binding }, 'accountRef', {
+    enumerable: true, get() { getters++; return 'forged-account'; },
+  });
+  const hidden = Object.defineProperty({ ...binding }, 'secret', {
+    enumerable: false, value: 'sensitive-cookie',
+  });
+  await assert.rejects(relay.claim(getter), /claim|binding|plain|field/i);
+  await assert.rejects(relay.claim(hidden), /claim|binding|plain|field/i);
+  assert.equal(getters, 0, 'never evaluate a caller-supplied authority getter');
+  await relay.claim(binding);
+  assert.throws(() => relay.check(secret, getter), /claim|binding|plain|field/i);
+  assert.equal(getters, 0);
+  await relay.release(binding);
+});
+
 test('ordered progress is visible before finish and never frees the busy lease', async () => {
   const relay = new RpcRelayPort(secret);
   await relay.claim(binding);

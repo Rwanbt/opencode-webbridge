@@ -1,4 +1,4 @@
-import { assertOpaqueID, assertTextOnlyTurn, type BrowserPort, type TabClaim, type TurnEvent, type TurnRequest } from '../core/browser-port.js';
+import { assertOpaqueID, assertTextOnlyTurn, snapshotTabClaim, type BrowserPort, type TabClaim, type TurnEvent, type TurnRequest } from '../core/browser-port.js';
 
 export type RelayMethod = 'submit' | 'observe' | 'cancel';
 export type RelayCaller = (method: RelayMethod, input: { turnID: string; prompt?: string; afterSeq?: number }) => Promise<unknown>;
@@ -9,19 +9,22 @@ export type RelayCaller = (method: RelayMethod, input: { turnID: string; prompt?
  */
 export class RpcBrowserFixturePort implements BrowserPort {
   private active = false;
+  private readonly owner: Readonly<TabClaim>;
 
-  constructor(private readonly owner: TabClaim, private readonly rpc: RelayCaller) {}
+  constructor(owner: TabClaim, private readonly rpc: RelayCaller) { this.owner = snapshotTabClaim(owner); }
 
   private owned(binding: TabClaim): void {
+    const current = snapshotTabClaim(binding);
     if (!this.active || Object.keys(this.owner).some((key) =>
-      this.owner[key as keyof TabClaim] !== binding[key as keyof TabClaim])) {
+      this.owner[key as keyof TabClaim] !== current[key as keyof TabClaim])) {
       throw new Error('RPC BrowserPort binding missing or mismatched');
     }
   }
 
   async claim(binding: TabClaim): Promise<void> {
+    const current = snapshotTabClaim(binding);
     if (this.active || Object.keys(this.owner).some((key) =>
-      this.owner[key as keyof TabClaim] !== binding[key as keyof TabClaim])) {
+      this.owner[key as keyof TabClaim] !== current[key as keyof TabClaim])) {
       throw new Error('RPC BrowserPort cannot claim this binding');
     }
     this.active = true;
