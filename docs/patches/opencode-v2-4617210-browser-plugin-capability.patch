@@ -53,7 +53,7 @@ index 14732fdd75..a8230b27ae 100644
      })
    }),
 diff --git a/packages/core/src/permission.ts b/packages/core/src/permission.ts
-index 2aecebb0ce..758726c33c 100644
+index 2aecebb0ce..bf1ffc79aa 100644
 --- a/packages/core/src/permission.ts
 +++ b/packages/core/src/permission.ts
 @@ -12,6 +12,8 @@ import { SessionStore } from "./session/store.js"
@@ -65,17 +65,19 @@ index 2aecebb0ce..758726c33c 100644
  
  const PermissionEffect = Permission.Effect
  export { PermissionEffect as Effect }
-@@ -108,6 +110,9 @@ export interface Interface {
+@@ -108,6 +110,11 @@ export interface Interface {
    readonly get: (id: ID) => Effect.Effect<Request | undefined>
    readonly forSession: (sessionID: SessionSchema.ID) => Effect.Effect<ReadonlyArray<Request>>
    readonly list: () => Effect.Effect<ReadonlyArray<Request>>
 +  /** Restricted Core-only reference authority: does not authorize Desktop browser effects. */
 +  /** Optional in test doubles; real Permission.Service always supplies this authority. */
 +  readonly browserRead?: ReturnType<typeof BrowserLease.make>
++  /** Core-only saved/agent/hook policy fence across awaited metadata reads. */
++  readonly browserPolicy?: () => number | undefined
  }
  
  export class Service extends Context.Service<Service, Interface>()("@opencode/Permission") {}
-@@ -129,9 +134,13 @@ const layer = Layer.effect(
+@@ -129,9 +136,13 @@ const layer = Layer.effect(
      const hooks = yield* PluginHooks.Service
      const pending = new Map<ID, Pending>()
      let closed = false
@@ -89,7 +91,7 @@ index 2aecebb0ce..758726c33c 100644
        yield* Effect.forEach(Array.from(pending.values()), (item) =>
          bus
            .publish(Permission.Event.Replied, {
-@@ -228,7 +237,7 @@ const layer = Layer.effect(
+@@ -228,7 +239,7 @@ const layer = Layer.effect(
        return { id: value.id, effect: result.effect }
      })
  
@@ -98,7 +100,7 @@ index 2aecebb0ce..758726c33c 100644
        Effect.gen(function* () {
          if (closed) return yield* Effect.die(new DeclinedError())
          const result = yield* evaluateInput(input)
-@@ -242,7 +251,9 @@ const layer = Layer.effect(
+@@ -242,7 +253,9 @@ const layer = Layer.effect(
                  reason: result.message,
                })
              }
@@ -109,27 +111,28 @@ index 2aecebb0ce..758726c33c 100644
              const item = yield* create(request(input, result.message), input.agent)
              return yield* restore(Deferred.await(item.deferred)).pipe(
                // Deliberate defect tunnel: leaves wrap execution in blanket `mapError`, which
-@@ -262,6 +273,58 @@ const layer = Layer.effect(
+@@ -262,6 +275,59 @@ const layer = Layer.effect(
        }),
      )
  
 +    // Core authority owns the lease epoch, not a plugin-supplied predicate. This deliberately
 +    // supports only a read action; external session/agent/saved-rule changes still require
 +    // an atomic mutation hook before this can be trusted for browser effect dispatch.
-+    const browserRead = BrowserLease.make({
-+      live: () => {
++    const browserPolicy = () => {
 +        const a = agents.revision?.()
 +        const s = saved.revision?.()
 +        const h = hooks.permissionRevision?.()
-+        if (a === undefined || s === undefined || h === undefined) return false
++        if (a === undefined || s === undefined || h === undefined) return undefined
 +        if (a !== agentRevision || s !== savedRevision || h !== hookRevision) {
 +          agentRevision = a
 +          savedRevision = s
 +          hookRevision = h
 +          browserRead.revoke() // Synchronous before any next issue/consume.
 +        }
-+        return !closed
-+      },
++        return closed ? undefined : browserRead.revision
++      }
++    const browserRead = BrowserLease.make({
++      live: () => browserPolicy() !== undefined,
 +      authorize: (binding) =>
 +        Effect.gen(function* () {
 +          if (binding.action !== "snapshot.once")
@@ -168,7 +171,7 @@ index 2aecebb0ce..758726c33c 100644
      const reply = Effect.fn("Permission.reply")((input: ReplyInput) =>
        Effect.uninterruptible(
          Effect.gen(function* () {
-@@ -274,6 +337,7 @@ const layer = Layer.effect(
+@@ -274,6 +340,7 @@ const layer = Layer.effect(
            })
  
            if (input.reply === "reject") {
@@ -176,12 +179,12 @@ index 2aecebb0ce..758726c33c 100644
              yield* Deferred.fail(
                existing.deferred,
                input.message ? new CorrectedError({ feedback: input.message }) : new DeclinedError(),
-@@ -336,7 +400,7 @@ const layer = Layer.effect(
+@@ -336,7 +403,7 @@ const layer = Layer.effect(
        return Array.from(pending.values(), (item) => item.request).filter((request) => request.sessionID === sessionID)
      })
  
 -    return Service.of({ ask, assert, reply, get, forSession, list, close })
-+    return Service.of({ ask, assert, reply, get, forSession, list, close, browserRead })
++    return Service.of({ ask, assert, reply, get, forSession, list, close, browserRead, browserPolicy })
    }),
  )
  
@@ -264,10 +267,10 @@ index 8ade682658..218870e15a 100644
          Effect.updateContext((context: Context.Context<never>) =>
 diff --git a/packages/core/src/plugin/browser-lease.ts b/packages/core/src/plugin/browser-lease.ts
 new file mode 100644
-index 0000000000..49887aafe8
+index 0000000000..eb2fa054e8
 --- /dev/null
 +++ b/packages/core/src/plugin/browser-lease.ts
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,151 @@
 +export * as BrowserLease from "./browser-lease.js"
 +
 +import { Effect, Exit } from "effect"
@@ -413,14 +416,18 @@ index 0000000000..49887aafe8
 +    get outstanding() {
 +      return pending.size
 +    },
++    /** Core-only policy generation, also advances for session and user rejection events. */
++    get revision() {
++      return epoch
++    },
 +  }
 +}
 diff --git a/packages/core/src/plugin/browser.ts b/packages/core/src/plugin/browser.ts
 new file mode 100644
-index 0000000000..0ed6d6bead
+index 0000000000..bd554d6c8c
 --- /dev/null
 +++ b/packages/core/src/plugin/browser.ts
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,119 @@
 +export * as PluginBrowser from "./browser.js"
 +
 +import type { BrowserDomain, BrowserDriver } from "@opencode/plugin/effect/browser"
@@ -433,7 +440,7 @@ index 0000000000..0ed6d6bead
 +
 +/** Location-local broker. The registered driver never leaves the trusted host. */
 +export function make(
-+  permission: Pick<Permission.Interface, "assert" | "browserRead">,
++  permission: Pick<Permission.Interface, "assert" | "browserRead" | "browserPolicy">,
 +  scope?: {
 +    readonly location: Location.Ref
 +    readonly session: (id: Session.ID) => Effect.Effect<Location.Ref | undefined, Error>
@@ -506,10 +513,16 @@ index 0000000000..0ed6d6bead
 +          if (retired) return yield* Effect.fail(new Error("Plugin generation unloaded"))
 +          const owner = driver
 +          if (!owner) return yield* Effect.fail(new Error("Desktop browser not connected"))
++          const revision = permission.browserPolicy?.()
++          if (revision === undefined)
++            return yield* Effect.fail(new Error("Core browser policy revision unavailable"))
 +          yield* authorize(input.sessionID, "tabs.list")
-+          if (driver !== owner || retired)
-+            return yield* Effect.fail(new Error("Browser host changed during authorization"))
-+          return yield* owner.host.tabs(input)
++          if (driver !== owner || retired || permission.browserPolicy?.() !== revision)
++            return yield* Effect.fail(new Error("Browser policy or host changed during authorization"))
++          const result = yield* owner.host.tabs(input)
++          if (driver !== owner || retired || permission.browserPolicy?.() !== revision)
++            return yield* Effect.fail(new Error("Browser policy or host changed during tab inventory"))
++          return result
 +        }),
 +      // Legacy ctx.browser.snapshot has no trusted tool turn or Core epoch.
 +      snapshot: () => Effect.fail(new Error("Legacy plugin snapshot lacks Core authority; use snapshotOnce")),
@@ -798,10 +811,10 @@ index a7db22b729..0b48b09ddb 100644
            while: (error) => "type" in error && error.type === "unavailable",
 diff --git a/packages/core/test/permission-browser-lease.test.ts b/packages/core/test/permission-browser-lease.test.ts
 new file mode 100644
-index 0000000000..a3ac1e1cb4
+index 0000000000..8b3b60111b
 --- /dev/null
 +++ b/packages/core/test/permission-browser-lease.test.ts
-@@ -0,0 +1,446 @@
+@@ -0,0 +1,469 @@
 +import { Tool } from "@opencode/schema/tool"
 +import { SessionMessage } from "@opencode/schema/session-message"
 +import { BrowserTurn } from "@opencode/core/tool/browser-turn"
@@ -999,12 +1012,14 @@ index 0000000000..a3ac1e1cb4
 +      { action: "browser_plugin", resource: "*", effect: "allow" },
 +    ])
 +    const permission = yield* Permission.Service
++    const before = permission.browserPolicy?.()
 +    const ticket = yield* permission.browserRead!.issue(binding)
 +    const bus = yield* Bus.Service
 +    yield* bus.publish(SessionEvent.Permissions, {
 +      sessionID,
 +      permissions: [{ action: "browser_plugin", resource: "*", effect: "deny" }],
 +    })
++    expect(permission.browserPolicy?.()).not.toBe(before)
 +    expect(permission.browserRead!.consume(ticket, binding)).toBe(false)
 +    expect(permission.browserRead!.outstanding).toBe(0)
 +  }),
@@ -1065,6 +1080,27 @@ index 0000000000..a3ac1e1cb4
 +    yield* saved.add({ projectID: Project.ID.global, action: "browser_plugin", resources: ["*"] })
 +    expect(permission.browserRead!.consume(ticket, binding)).toBe(false)
 +    expect(permission.browserRead!.outstanding).toBe(0)
++  }),
++)
++
++test.effect("real saved-rule mutation invalidates an already consumed native read before host live validation", () =>
++  Effect.gen(function* () {
++    yield* setup([
++      { action: "browser", resource: "*", effect: "allow" },
++      { action: "browser_plugin", resource: "*", effect: "allow" },
++    ])
++    const permission = yield* Permission.Service
++    const before = permission.browserPolicy?.()
++    expect(before).toBeDefined()
++    const ticket = yield* permission.browserRead!.issue(binding)
++    expect(permission.browserRead!.consume(ticket, binding)).toBe(true)
++    expect(permission.browserRead!.current(ticket, binding)).toBe(true)
++    const saved = yield* PermissionSaved.Service
++    yield* saved.add({ projectID: Project.ID.global, action: "browser_plugin", resources: ["*"] })
++    expect(permission.browserPolicy?.()).not.toBe(before)
++    expect(permission.browserRead!.current(ticket, binding)).toBe(false)
++    // Reallowing a policy never resurrects a consumed read from a previous epoch.
++    expect(permission.browserRead!.current(ticket, binding)).toBe(false)
 +  }),
 +)
 +
@@ -1250,10 +1286,10 @@ index 0000000000..a3ac1e1cb4
 +)
 diff --git a/packages/core/test/plugin/browser-capability.test.ts b/packages/core/test/plugin/browser-capability.test.ts
 new file mode 100644
-index 0000000000..0a8bd5467d
+index 0000000000..907ba5a6da
 --- /dev/null
 +++ b/packages/core/test/plugin/browser-capability.test.ts
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,199 @@
 +import { expect, test } from "bun:test"
 +import type { Context } from "@opencode/plugin/effect/plugin"
 +import { PluginBrowser } from "@opencode/core/plugin/browser"
@@ -1296,6 +1332,7 @@ index 0000000000..0a8bd5467d
 +  const calls: string[] = []
 +  const actions: string[] = []
 +  const broker = PluginBrowser.make({
++    browserPolicy: () => 0,
 +    assert: (input) => {
 +      actions.push(`${input.action}:${input.resources.join(",")}`)
 +      return input.action === deny
@@ -1377,6 +1414,7 @@ index 0000000000..0a8bd5467d
 +  const release = Deferred.makeUnsafe<void>()
 +  const calls: string[] = []
 +  const broker = PluginBrowser.make({
++    browserPolicy: () => 0,
 +    assert: (input) =>
 +      input.action === "browser_plugin"
 +        ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))
@@ -1413,6 +1451,7 @@ index 0000000000..0a8bd5467d
 +  let revoked = false
 +  const invoked: string[] = []
 +  const broker = PluginBrowser.make({
++    browserPolicy: () => 0,
 +    assert: (input) =>
 +      Effect.gen(function* () {
 +        if (input.action === "browser" && ++checks === 2) {
@@ -1686,10 +1725,10 @@ index 0000000000..6e53adf475
 +})
 diff --git a/packages/core/test/plugin/browser-one-shot.test.ts b/packages/core/test/plugin/browser-one-shot.test.ts
 new file mode 100644
-index 0000000000..6323fc2b9a
+index 0000000000..118f73afca
 --- /dev/null
 +++ b/packages/core/test/plugin/browser-one-shot.test.ts
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,318 @@
 +import { test, expect } from "bun:test"
 +import { PluginBrowser } from "@opencode/core/plugin/browser"
 +import { BrowserLease } from "@opencode/core/plugin/browser-lease"
@@ -1702,7 +1741,7 @@ index 0000000000..6323fc2b9a
 +import { Location } from "@opencode/schema/location"
 +import { AbsolutePath } from "@opencode/schema/schema"
 +import { Workspace } from "@opencode/schema/workspace"
-+import { Deferred, Effect, Exit, Scope } from "effect"
++import { Deferred, Effect, Exit, Fiber, Scope } from "effect"
 +import { testEffect } from "../lib/effect"
 +import { PluginTestLayer } from "./fixture"
 +
@@ -1727,6 +1766,7 @@ index 0000000000..6323fc2b9a
 +        Effect.sync(() => {
 +          grants.push(`${input.action}:${input.resources.join(",")}`)
 +        }),
++      browserPolicy: () => 0,
 +      ...(withAuthority ? { browserRead: BrowserLease.make({
 +        authorize: (input) => Effect.sync(() => {
 +          grants.push(`browserRead:${input.pluginID}:${input.pluginGeneration}:${input.agentID}:${input.action}:${input.sessionID}:${input.turnID}:${input.callID}:${input.connectionID}:${input.tabID}:${input.tabGeneration}`)
@@ -1822,6 +1862,64 @@ index 0000000000..6323fc2b9a
 +    }))
 +  })))
 +  expect(f.reads).toBe(0)
++})
++
++test("a saved-rule epoch change while browser.tabs.list permission awaits cannot disclose stale metadata", async () => {
++  let policyEpoch = 0
++  let calls = 0
++  let disclosed = 0
++  const awaiting = Deferred.makeUnsafe<void>()
++  const resume = Deferred.makeUnsafe<void>()
++  const broker = PluginBrowser.make({
++    assert: () => Effect.gen(function* () {
++      calls++
++      if (calls === 2) {
++        yield* Deferred.succeed(awaiting, undefined)
++        yield* Deferred.await(resume)
++      }
++    }),
++    browserPolicy: () => policyEpoch,
++  } as never, { location, session: () => Effect.succeed(location) })
++  const owner = broker("opencode.browser", true)
++  const consumer = broker("external-reader")
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    yield* owner.register({
++      tabs: () => Effect.sync(() => { disclosed++; return [{ id: "tab_private", title: "stale" }] }),
++      snapshot: () => Effect.fail(new Error("not used")),
++    } as never)
++    const pending = yield* consumer.tabs({ sessionID }).pipe(Effect.exit, Effect.forkScoped)
++    yield* Deferred.await(awaiting)
++    policyEpoch++ // Saved-rule mutation while permission.assert is waiting.
++    yield* Deferred.succeed(resume, undefined)
++    expect(Exit.isFailure(yield* Fiber.join(pending))).toBe(true)
++  })))
++  expect(disclosed).toBe(0)
++})
++
++test("saved-rule revision during asynchronous Desktop tab inventory rejects the stale result", async () => {
++  let policyEpoch = 0
++  const awaiting = Deferred.makeUnsafe<void>()
++  const resume = Deferred.makeUnsafe<void>()
++  const broker = PluginBrowser.make({
++    assert: () => Effect.void,
++    browserPolicy: () => policyEpoch,
++  } as never, { location, session: () => Effect.succeed(location) })
++  const owner = broker("opencode.browser", true)
++  const consumer = broker("external-reader")
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    yield* owner.register({
++      tabs: () => Deferred.succeed(awaiting, undefined).pipe(
++        Effect.andThen(Deferred.await(resume)),
++        Effect.as([{ id: "tab_private", title: "secret" }]),
++      ),
++      snapshot: () => Effect.fail(new Error("not used")),
++    } as never)
++    const pending = yield* consumer.tabs({ sessionID }).pipe(Effect.exit, Effect.forkScoped)
++    yield* Deferred.await(awaiting)
++    policyEpoch++ // A revocation while the native driver awaits its inventory.
++    yield* Deferred.succeed(resume, undefined)
++    expect(Exit.isFailure(yield* Fiber.join(pending))).toBe(true)
++  })))
 +})
 +
 +test("mutating the trusted tool agent cannot borrow a more privileged Core read principal", async () => {
