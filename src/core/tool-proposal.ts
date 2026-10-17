@@ -45,6 +45,43 @@ const MUTABLE_ACTIONS: ReadonlySet<string> = new Set([
   'git.reset', 'git.checkout', 'agent.spawn', 'agent.delegate',
 ]);
 const MAX_ARGS_BYTES = 8_192;
+const SCOPE_FIELDS = ['sessionID', 'agentID', 'turnID', 'workspaceID', 'callID'] as const;
+
+/** Snapshot own data fields before accessing untrusted web/model values.
+ * This rejects accessors, toJSON hooks, inherited fields, symbols, and unexpected
+ * authority metadata. It is NOT a safe substitute for parsing a serialized
+ * message at the host boundary: Proxy introspection traps can still run JS. */
+function dataRecord(raw: unknown, required: readonly string[],
+  optional: readonly string[] = [], flat = true): Record<string, unknown> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  try {
+    const proto = Object.getPrototypeOf(raw);
+    if (proto !== Object.prototype && proto !== null) return null;
+    const keys = Reflect.ownKeys(raw);
+    const permitted = new Set([...required, ...optional]);
+    if (keys.length < required.length ||
+        keys.some((key) => typeof key !== 'string' || !permitted.has(key)) ||
+        required.some((key) => !keys.includes(key))) return null;
+    const copy: Record<string, unknown> = {};
+    for (const key of keys) {
+      if (typeof key !== 'string') return null;
+      const descriptor = Object.getOwnPropertyDescriptor(raw, key);
+      if (!descriptor || !('value' in descriptor)) return null;
+      if (flat && descriptor.value !== null && typeof descriptor.value === 'object') return null;
+      copy[key] = descriptor.value;
+    }
+    return copy;
+  } catch { return null; }
+}
+
+function snapshotArgs(action: ReadOnlyAction, raw: unknown): Record<string, unknown> | null {
+  switch (action) {
+    case 'file.read': return dataRecord(raw, ['path'], ['encoding']);
+    case 'git.status':
+    case 'git.log': return dataRecord(raw, [], ['limit']);
+    case 'git.diff': return dataRecord(raw, [], ['path', 'staged']);
+  }
+}
 
 function isOpaque(v: unknown): v is string {
   try { assertOpaqueID(v as string, 'x'); return true; } catch { return false; }
@@ -85,7 +122,8 @@ export function isMutableAction(action: unknown): boolean {
 
 export function validateToolProposal(raw: unknown, scope: ToolScope): ValidateResult {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, reason: 'not-object' };
-  const r = raw as Record<string, unknown>;
+  const r = dataRecord(raw, ['version', 'action', 'args', 'provenance'], [], false);
+  if (!r) return { ok: false, reason: 'not-object' };
 
   if (r.version !== 1) return { ok: false, reason: 'bad-version' };
 
@@ -94,52 +132,50 @@ export function validateToolProposal(raw: unknown, scope: ToolScope): ValidateRe
   if (isMutableAction(action)) return { ok: false, reason: 'mutable-action' };
   if (!isReadOnlyAction(action)) return { ok: false, reason: 'unknown-action' };
 
-  // Size guard before deeper parsing.
+  const args = snapshotArgs(action, r.args);
+  if (!args) return { ok: false, reason: 'bad-args' };
+  // Size guard after copying primitives: no hostile toJSON/getter execution.
   let size = 0;
-  try { size = JSON.stringify(r.args ?? {}).length; } catch { return { ok: false, reason: 'bad-args' }; }
+  try { size = JSON.stringify(args).length; } catch { return { ok: false, reason: 'bad-args' }; }
   if (size > MAX_ARGS_BYTES) return { ok: false, reason: 'oversized' };
 
-  if (!validateArgs(action, r.args)) return { ok: false, reason: 'bad-args' };
+  if (!validateArgs(action, args)) return { ok: false, reason: 'bad-args' };
 
-  const prov = r.provenance;
-  if (!prov || typeof prov !== 'object' || Array.isArray(prov)) return { ok: false, reason: 'bad-provenance' };
-  const p = prov as Record<string, unknown>;
-  const fields: (keyof ToolScope)[] = ['sessionID', 'agentID', 'turnID', 'workspaceID', 'callID'];
-  for (const f of fields) {
+  const p = dataRecord(r.provenance, SCOPE_FIELDS);
+  const trusted = dataRecord(scope, SCOPE_FIELDS);
+  if (!p || !trusted) return { ok: false, reason: 'bad-provenance' };
+  for (const f of SCOPE_FIELDS) {
     if (!isOpaque(p[f])) return { ok: false, reason: 'bad-provenance' };
+    if (!isOpaque(trusted[f])) return { ok: false, reason: 'bad-provenance' };
   }
 
   // Scope binding: proposal must match the independently known session/agent/turn/workspace/call.
-  if (p.sessionID !== scope.sessionID || p.agentID !== scope.agentID ||
-      p.turnID !== scope.turnID || p.workspaceID !== scope.workspaceID ||
-      p.callID !== scope.callID) {
+  if (SCOPE_FIELDS.some((key) => p[key] !== trusted[key])) {
     return { ok: false, reason: 'scope-mismatch' };
   }
 
   // Path traversal check (defence in depth, already in validateArgs) and
   // canonicalization: the validated proposal only ever carries the strict
   // posix relative form, never a raw caller-supplied string.
-  const rawArgs = r.args as Record<string, unknown>;
-  const args: Record<string, unknown> = { ...rawArgs };
-  if (action === 'file.read' || (action === 'git.diff' && rawArgs.path !== undefined)) {
-    const normalized = normalizeWorkspacePath(rawArgs.path);
+  if (action === 'file.read' || (action === 'git.diff' && args.path !== undefined)) {
+    const normalized = normalizeWorkspacePath(args.path);
     if (normalized === null) return { ok: false, reason: 'path-traversal' };
     args.path = normalized;
   }
 
   return {
     ok: true,
-    proposal: {
+    proposal: Object.freeze({
       version: 1,
       action,
       args: Object.freeze(args),
-      provenance: {
+      provenance: Object.freeze({
         sessionID: p.sessionID as string,
         agentID: p.agentID as string,
         turnID: p.turnID as string,
         workspaceID: p.workspaceID as string,
         callID: p.callID as string,
-      },
-    },
+      }),
+    }),
   };
 }

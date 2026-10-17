@@ -74,3 +74,58 @@ test('isReadOnlyAction / isMutableAction classify correctly', () => {
   assert.equal(isMutableAction('terminal.exec'), true);
   assert.equal(isMutableAction('file.read'), false);
 });
+
+test('web-authored getters and toJSON are never invoked during proposal validation', () => {
+  let invoked = 0;
+  const evilArg = Object.defineProperty({ path: 'src/index.ts' }, 'toJSON', {
+    enumerable: false, get() { invoked++; throw new Error('hostile toJSON'); },
+  });
+  const evilPath = { get path() { invoked++; return 'src/index.ts'; } };
+  const evilAction = Object.defineProperty(mk(), 'action', {
+    enumerable: true, get() { invoked++; return 'file.read'; },
+  });
+  const evilProvenance = { ...scope, get sessionID() { invoked++; return scope.sessionID; } };
+  for (const raw of [
+    mk({ args: evilArg }), mk({ args: evilPath }), evilAction,
+    mk({ provenance: evilProvenance }),
+  ]) assert.equal(validateToolProposal(raw, scope).ok, false);
+  assert.equal(invoked, 0);
+});
+
+test('web tool proposals reject hidden payload fields and unexpected authority metadata', () => {
+  for (const raw of [
+    mk({ args: { path: 'src/index.ts', command: 'rm -rf .' } }),
+    mk({ args: { path: 'src/index.ts', __proto__: null, hidden: 'secret' } }),
+    mk({ action: 'git.status', args: { limit: 2, shell: 'whoami' } }),
+    mk({ provenance: { ...scope, connectionID: 'forged' } }),
+    { ...mk(), grantId: 'claimedNativeApproval' },
+  ]) assert.equal(validateToolProposal(raw, scope).ok, false);
+});
+
+test('validated tool proposal is deeply detached and cannot be retargeted after admission', () => {
+  const raw = mk();
+  const r = validateToolProposal(raw, scope);
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  (raw.args as { path: string }).path = 'src/other.ts';
+  (raw.provenance as { sessionID: string }).sessionID = 'hijack';
+  assert.equal(r.proposal.args.path, 'src/index.ts');
+  assert.equal(r.proposal.provenance.sessionID, scope.sessionID);
+  assert.ok(Object.isFrozen(r.proposal));
+  assert.ok(Object.isFrozen(r.proposal.provenance));
+  assert.ok(Object.isFrozen(r.proposal.args));
+});
+
+test('prototype, hidden symbol and non-primitive arguments cannot smuggle capability metadata', () => {
+  const inherited = Object.create({ path: 'src/index.ts' }) as { path: string };
+  const symbolArg = { path: 'src/index.ts', [Symbol.for('extra-capability')]: true };
+  const withHidden = Object.defineProperty({ path: 'src/index.ts' }, 'effect', {
+    value: 'terminal.exec', enumerable: false,
+  });
+  for (const args of [inherited, symbolArg, withHidden, { path: { toString: () => 'src/index.ts' } }]) {
+    assert.equal(validateToolProposal(mk({ args }), scope).ok, false);
+  }
+  const clean = validateToolProposal(mk({ action: 'git.diff', args: { path: 'src\\ok.ts', staged: true } }), scope);
+  assert.equal(clean.ok, true);
+  if (clean.ok) assert.deepEqual(clean.proposal.args, { path: 'src/ok.ts', staged: true });
+});
