@@ -1,5 +1,5 @@
 diff --git a/packages/core/src/plugin.ts b/packages/core/src/plugin.ts
-index 8ade682658..9a0123cdfa 100644
+index 8ade682658..218870e15a 100644
 --- a/packages/core/src/plugin.ts
 +++ b/packages/core/src/plugin.ts
 @@ -9,6 +9,7 @@ import { Cause, Context, Effect, Exit, Latch, Layer, Logger, Queue, References,
@@ -10,35 +10,51 @@ index 8ade682658..9a0123cdfa 100644
  import { type Failure, type Generation, Service } from "./plugin/service.js"
  import { State } from "./state.js"
  
-@@ -62,7 +63,11 @@ const layer = Layer.effect(
+@@ -61,9 +62,15 @@ const layer = Layer.effect(
+           release: holdUnsafe(),
          })
        })
-       const exit = yield* Effect.suspend(() =>
+-      const exit = yield* Effect.suspend(() =>
 -        plugin.effect({ ...host, storage: PluginHost.storage(kv, plugin.id) }),
-+        plugin.effect({
+-      ).pipe(
++      const exit = yield* Effect.gen(function* () {
++        const browser = host.browserFor(plugin.id, PluginInternal.isTrustedBrowser(plugin.effect))
++        yield* Effect.addFinalizer(() => Effect.sync(() => browser.revoke()))
++        return yield* plugin.effect({
 +          ...host,
-+          browser: host.browserFor(plugin.id, PluginInternal.isTrustedBrowser(plugin.effect)),
++          browser,
 +          storage: PluginHost.storage(kv, plugin.id),
-+        }),
-       ).pipe(
++        })
++      }).pipe(
          grouped,
          inherit,
+         Effect.updateContext((context: Context.Context<never>) =>
 diff --git a/packages/core/src/plugin/browser.ts b/packages/core/src/plugin/browser.ts
 new file mode 100644
-index 0000000000..0f24954789
+index 0000000000..ffac36d67b
 --- /dev/null
 +++ b/packages/core/src/plugin/browser.ts
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,116 @@
 +export * as PluginBrowser from "./browser.js"
 +
 +import type { BrowserDomain, BrowserDriver } from "@opencode/plugin/effect/browser"
 +import type { Permission } from "../permission.js"
++import type { Session } from "@opencode/schema/session"
++import type { Location } from "@opencode/schema/location"
++import { BrowserTurn } from "../tool/browser-turn.js"
 +import { Effect } from "effect"
 +
 +/** Location-local broker. The registered driver never leaves the trusted host. */
-+export function make(permission: Pick<Permission.Interface, "assert">) {
++export function make(
++  permission: Pick<Permission.Interface, "assert">,
++  scope?: {
++    readonly location: Location.Ref
++    readonly session: (id: Session.ID) => Effect.Effect<Location.Ref | undefined, Error>
++  },
++) {
 +  let driver: { readonly host: BrowserDriver } | undefined
-+  return (pluginID: string, builtin = false): BrowserDomain => {
++  return (pluginID: string, builtin = false): BrowserDomain & { revoke: () => void } => {
++    let retired = false
 +    const authorize = (sessionID: Parameters<BrowserDomain["tabs"]>[0]["sessionID"], operation: string) =>
 +      Effect.gen(function* () {
 +        yield* permission.assert({ sessionID, action: "browser", resources: ["*"] })
@@ -57,20 +73,61 @@ index 0000000000..0f24954789
 +        })
 +      })
 +    return {
++      revoke: () => {
++        retired = true
++      },
++      snapshotOnce: (input) =>
++        Effect.gen(function* () {
++          if (!scope || retired || !BrowserTurn.valid(input.context))
++            return yield* Effect.fail(new Error("No trusted active tool turn"))
++          const owner = driver
++          if (!owner) return yield* Effect.fail(new Error("Desktop browser not connected"))
++          if (!owner.host.bindSnapshot) return yield* Effect.fail(new Error("Native transactional binding unavailable"))
++          const sessionID = input.context.sessionID
++          const sameLocation = (value: Location.Ref | undefined) =>
++            value?.directory === scope.location.directory && value.workspaceID === scope.location.workspaceID
++          if (!sameLocation(yield* scope.session(sessionID)))
++            return yield* Effect.fail(new Error("Session is not in this workspace"))
++          // The official driver pins the live attachment and exact tab generation BEFORE any prompt.
++          const bound = yield* owner.host.bindSnapshot({ sessionID, tabID: input.tabID })
++          const operation = [
++            "snapshot.once",
++            scope.location.workspaceID ?? "none",
++            sessionID,
++            input.context.messageID,
++            input.context.id,
++            bound.binding.connectionID,
++            input.tabID,
++            bound.binding.tabGeneration,
++          ].join(":")
++          // Permission resource is exact to this tool turn, attachment, tab generation and read action.
++          yield* authorize(sessionID, operation)
++          if (!sameLocation(yield* scope.session(sessionID)))
++            return yield* Effect.fail(new Error("Session moved during authorization"))
++          return yield* Effect.suspend(() => {
++            if (driver !== owner || retired || !BrowserTurn.consume(input.context))
++              return Effect.fail(new Error("Browser grant expired or already consumed"))
++            return bound.read()
++          })
++        }),
 +      tabs: (input) =>
 +        Effect.gen(function* () {
++          if (retired) return yield* Effect.fail(new Error("Plugin generation unloaded"))
 +          const owner = driver
 +          if (!owner) return yield* Effect.fail(new Error("Desktop browser not connected"))
 +          yield* authorize(input.sessionID, "tabs.list")
-+          if (driver !== owner) return yield* Effect.fail(new Error("Browser host changed during authorization"))
++          if (driver !== owner || retired)
++            return yield* Effect.fail(new Error("Browser host changed during authorization"))
 +          return yield* owner.host.tabs(input)
 +        }),
 +      snapshot: (input) =>
 +        Effect.gen(function* () {
++          if (retired) return yield* Effect.fail(new Error("Plugin generation unloaded"))
 +          const owner = driver
 +          if (!owner) return yield* Effect.fail(new Error("Desktop browser not connected"))
 +          yield* authorize(input.sessionID, "snapshot")
-+          if (driver !== owner) return yield* Effect.fail(new Error("Browser host changed during authorization"))
++          if (driver !== owner || retired)
++            return yield* Effect.fail(new Error("Browser host changed during authorization"))
 +          return yield* owner.host.snapshot(input)
 +        }),
 +      register: (host) => {
@@ -95,7 +152,7 @@ index 0000000000..0f24954789
 +  }
 +}
 diff --git a/packages/core/src/plugin/host.ts b/packages/core/src/plugin/host.ts
-index d6d2781ad2..b6851f2dff 100644
+index d6d2781ad2..7def490eab 100644
 --- a/packages/core/src/plugin/host.ts
 +++ b/packages/core/src/plugin/host.ts
 @@ -34,6 +34,7 @@ import { WorktreeStrategies } from "../worktree/strategies.js"
@@ -106,15 +163,21 @@ index d6d2781ad2..b6851f2dff 100644
  import type { Interface } from "../plugin.js"
  import { LayerNode } from "@opencode/util/effect/layer-node"
  
-@@ -67,6 +68,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
+@@ -67,8 +68,12 @@ export const make = Effect.fn("PluginHost.make")(function* (
    const websearch = yield* WebSearch.Service
    const generate = yield* Generate.Service
    const permission = yield* Permission.Service
-+  const browser = PluginBrowser.make(permission)
-   const hooks = yield* PluginHooks.Service
+-  const hooks = yield* PluginHooks.Service
    const sessions = yield* Session.Service
++  const browser = PluginBrowser.make(permission, {
++    location: Location.Ref.make({ directory: location.directory, workspaceID: location.workspaceID }),
++    session: (id) => sessions.get(id).pipe(Effect.map((info) => info.location)),
++  })
++  const hooks = yield* PluginHooks.Service
    const persistentPty = yield* PersistentPty.Service
-@@ -114,6 +116,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
+   const locations = yield* LocationServiceMap.Service
+   const worktrees = yield* Worktree.Service
+@@ -114,6 +119,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
    // Keep the instance graph's inferred types independent of Session handles.
    const context: Plugin.Context = {
      app,
@@ -122,7 +185,7 @@ index d6d2781ad2..b6851f2dff 100644
      location: locationInfo(),
      options: {},
      rpc: Object.assign(rpc.client, { register: rpc.register }),
-@@ -575,7 +578,10 @@ export const make = Effect.fn("PluginHost.make")(function* (
+@@ -575,7 +581,10 @@ export const make = Effect.fn("PluginHost.make")(function* (
        context: (input) => sessions.context(input.sessionID),
      },
    }
@@ -166,6 +229,116 @@ index f6239be4cb..d2e5b04ced 100644
    return {
      pre: resolve(pre),
      post: resolve(post),
+diff --git a/packages/core/src/tool.ts b/packages/core/src/tool.ts
+index a07468a61e..537bb73f0a 100644
+--- a/packages/core/src/tool.ts
++++ b/packages/core/src/tool.ts
+@@ -13,6 +13,7 @@ import { Image } from "./image.js"
+ import { Permission } from "./permission.js"
+ import { PluginHooks } from "./plugin/hooks.js"
+ import { SessionMessage } from "./session/message.js"
++import { BrowserTurn } from "./tool/browser-turn.js"
+ import { SessionSchema } from "./session/schema.js"
+ import { State } from "./state.js"
+ import { definition, effectiveName, execute, normalizedName, normalizeContent } from "./tool/runtime.js"
+@@ -268,19 +269,24 @@ const layer = Layer.effect(
+                 id: Tool.CallID.make(input.call.id),
+                 progress: input.progress ?? (() => Effect.void),
+               }
+-              const event = yield* beforeExecute(input.call.name, input.call.input, context)
+-              const requested = input.definitions?.get(event.tool)
+-              // Preserve session context removal and alias resolution, now after the repair hook.
+-              if (!requested && input.definitions && (direct.has(event.tool) || codeModeTool?.name === event.tool))
+-                return yield* new Tool.Error({ message: `Tool is not available for this request: ${event.tool}` })
+-              const name = requested?.name ?? event.tool
+-              if (name === "execute" && codeModeTool)
+-                return yield* executeTool(codeModeTool, name, event.input, context)
+-              const tool = direct.get(name)
+-              if (tool) return yield* executeTool(tool, name, event.input, context)
+-              return yield* new Tool.Error({
+-                message: `No tool named "${name}" is currently available. Please use a tool from the available tool list.`,
+-              })
++              return yield* BrowserTurn.withContext(
++                context,
++                Effect.gen(function* () {
++                  const event = yield* beforeExecute(input.call.name, input.call.input, context)
++                  const requested = input.definitions?.get(event.tool)
++                  // Preserve session context removal and alias resolution, now after the repair hook.
++                  if (!requested && input.definitions && (direct.has(event.tool) || codeModeTool?.name === event.tool))
++                    return yield* new Tool.Error({ message: `Tool is not available for this request: ${event.tool}` })
++                  const name = requested?.name ?? event.tool
++                  if (name === "execute" && codeModeTool)
++                    return yield* executeTool(codeModeTool, name, event.input, context)
++                  const tool = direct.get(name)
++                  if (tool) return yield* executeTool(tool, name, event.input, context)
++                  return yield* new Tool.Error({
++                    message: `No tool named "${name}" is currently available. Please use a tool from the available tool list.`,
++                  })
++                }),
++              )
+             }),
+           }
+         }),
+diff --git a/packages/core/src/tool/browser-turn.ts b/packages/core/src/tool/browser-turn.ts
+new file mode 100644
+index 0000000000..5f9baa6050
+--- /dev/null
++++ b/packages/core/src/tool/browser-turn.ts
+@@ -0,0 +1,54 @@
++export * as BrowserTurn from "./browser-turn.js"
++
++import type { Tool } from "@opencode/schema/tool"
++import { Effect } from "effect"
++
++// Proofs are the *identity* of Tool.Context objects created by the Core tool executor,
++// not caller-supplied session/message strings. No proof is serialized to plugins or RPC.
++const active = new WeakMap<
++  Tool.Context,
++  {
++    used: boolean
++    sessionID: Tool.Context["sessionID"]
++    messageID: Tool.Context["messageID"]
++    id: Tool.Context["id"]
++  }
++>()
++
++export function withContext<A, E, R>(context: Tool.Context, task: Effect.Effect<A, E, R>) {
++  return Effect.acquireUseRelease(
++    Effect.sync(() => {
++      if (active.has(context)) throw new Error("Tool context is already active")
++      active.set(context, {
++        used: false,
++        sessionID: context.sessionID,
++        messageID: context.messageID,
++        id: context.id,
++      })
++    }),
++    () => task,
++    () =>
++      Effect.sync(() => {
++        active.delete(context)
++      }),
++  )
++}
++
++/** Synchronous one-shot consume. Do not await between verification and consumption. */
++export function consume(context: Tool.Context) {
++  const claim = active.get(context)
++  if (!claim || claim.used || !valid(context)) return false
++  claim.used = true
++  return true
++}
++
++export function valid(context: Tool.Context) {
++  const claim = active.get(context)
++  return (
++    !!claim &&
++    !claim.used &&
++    claim.sessionID === context.sessionID &&
++    claim.messageID === context.messageID &&
++    claim.id === context.id
++  )
++}
 diff --git a/packages/core/test/plugin/browser-capability.test.ts b/packages/core/test/plugin/browser-capability.test.ts
 new file mode 100644
 index 0000000000..293ba7aeca
@@ -375,24 +548,275 @@ index 0000000000..293ba7aeca
 +    ),
 +  )
 +})
+diff --git a/packages/core/test/plugin/browser-one-shot.test.ts b/packages/core/test/plugin/browser-one-shot.test.ts
+new file mode 100644
+index 0000000000..b072b711f5
+--- /dev/null
++++ b/packages/core/test/plugin/browser-one-shot.test.ts
+@@ -0,0 +1,222 @@
++import { test, expect } from "bun:test"
++import { PluginBrowser } from "@opencode/core/plugin/browser"
++import { Tool as CoreTool } from "@opencode/core/tool"
++import { Agent } from "@opencode/schema/agent"
++import { BrowserTurn } from "@opencode/core/tool/browser-turn"
++import { Session } from "@opencode/schema/session"
++import { SessionMessage } from "@opencode/schema/session-message"
++import { Tool } from "@opencode/schema/tool"
++import { Location } from "@opencode/schema/location"
++import { AbsolutePath } from "@opencode/schema/schema"
++import { Workspace } from "@opencode/schema/workspace"
++import { Deferred, Effect, Exit, Scope } from "effect"
++import { testEffect } from "../lib/effect"
++import { PluginTestLayer } from "./fixture"
++
++const sessionID = Session.ID.make("ses_native_once")
++const turn = {
++  sessionID,
++  messageID: SessionMessage.ID.make("msg_native_once"),
++  id: Tool.CallID.make("call_native_once"),
++  agent: "build" as never,
++  progress: () => Effect.void,
++} satisfies Tool.Context
++const directory = AbsolutePath.make("/test-workspace")
++const location = Location.Ref.make({ directory, workspaceID: Workspace.ID.make("wrk_origin") })
++
++function fixture() {
++  let reads = 0
++  let binding = 0
++  const grants: string[] = []
++  const broker = PluginBrowser.make(
++    {
++      assert: (input) =>
++        Effect.sync(() => {
++          grants.push(`${input.action}:${input.resources.join(",")}`)
++        }),
++    },
++    {
++      location,
++      session: () => Effect.succeed(location),
++    },
++  )
++  const builtin = broker("opencode.browser", true)
++  const caller = broker("test-plugin")
++  const driver = {
++    tabs: () => Effect.succeed([]),
++    snapshot: () => Effect.succeed({ content: "old", truncated: false }),
++    bindSnapshot: () =>
++      Effect.sync(() => {
++        const initial = binding
++        return {
++          binding: { connectionID: "local-driver-1", tabGeneration: initial },
++          read: () =>
++            Effect.sync(() => {
++              if (binding !== initial) throw new Error("tab generation changed")
++              reads++
++              return { content: "local fixture", truncated: false }
++            }),
++        }
++      }),
++  }
++  return {
++    builtin,
++    caller,
++    driver,
++    grants,
++    get reads() {
++      return reads
++    },
++    invalidate: () => {
++      binding++
++    },
++  }
++}
++
++test("one-shot read refuses a forged context and permits exactly one native read per live turn", async () => {
++  const f = fixture()
++  await Effect.runPromise(
++    Effect.scoped(
++      Effect.gen(function* () {
++        yield* f.builtin.register(f.driver)
++        expect(Exit.isFailure(yield* Effect.exit(f.caller.snapshotOnce({ context: turn, tabID: "tab_local" })))).toBe(
++          true,
++        )
++        yield* BrowserTurn.withContext(
++          turn,
++          Effect.gen(function* () {
++            const result = yield* Effect.all(
++              [
++                Effect.exit(f.caller.snapshotOnce({ context: turn, tabID: "tab_local" })),
++                Effect.exit(f.caller.snapshotOnce({ context: turn, tabID: "tab_local" })),
++              ],
++              { concurrency: "unbounded" },
++            )
++            expect(result.filter(Exit.isSuccess)).toHaveLength(1)
++            expect(result.filter(Exit.isFailure)).toHaveLength(1)
++          }),
++        )
++        expect(Exit.isFailure(yield* Effect.exit(f.caller.snapshotOnce({ context: turn, tabID: "tab_local" })))).toBe(
++          true,
++        )
++      }),
++    ),
++  )
++  expect(f.reads).toBe(1)
++  expect(
++    f.grants.some((item) =>
++      item.includes(
++        `browser_plugin:test-plugin:snapshot.once:wrk_origin:${sessionID}:${turn.messageID}:${turn.id}:local-driver-1:tab_local:0`,
++      ),
++    ),
++  ).toBe(true)
++})
++
++test("cross-workspace fixture session cannot be granted even with a real tool turn", async () => {
++  const f = fixture()
++  const foreign = PluginBrowser.make(
++    { assert: () => Effect.void },
++    {
++      location,
++      session: () => Effect.succeed(Location.Ref.make({ directory, workspaceID: Workspace.ID.make("wrk_other") })),
++    },
++  )
++  const builtin = foreign("opencode.browser", true)
++  const caller = foreign("test-plugin")
++  await Effect.runPromise(
++    Effect.scoped(
++      Effect.gen(function* () {
++        yield* builtin.register(f.driver)
++        yield* BrowserTurn.withContext(
++          turn,
++          Effect.gen(function* () {
++            expect(Exit.isFailure(yield* Effect.exit(caller.snapshotOnce({ context: turn, tabID: "tab_local" })))).toBe(
++              true,
++            )
++          }),
++        )
++      }),
++    ),
++  )
++  expect(f.reads).toBe(0)
++})
++
++test("a mutated live turn cannot switch to a different session or message", async () => {
++  const f = fixture()
++  const modified = { ...turn }
++  await Effect.runPromise(
++    Effect.scoped(
++      Effect.gen(function* () {
++        yield* f.builtin.register(f.driver)
++        yield* BrowserTurn.withContext(
++          modified,
++          Effect.gen(function* () {
++            modified.sessionID = Session.ID.make("ses_forged")
++            expect(
++              Exit.isFailure(yield* Effect.exit(f.caller.snapshotOnce({ context: modified, tabID: "tab_local" }))),
++            ).toBe(true)
++            modified.sessionID = sessionID
++            modified.messageID = SessionMessage.ID.make("msg_forged")
++            expect(
++              Exit.isFailure(yield* Effect.exit(f.caller.snapshotOnce({ context: modified, tabID: "tab_local" }))),
++            ).toBe(true)
++          }),
++        )
++      }),
++    ),
++  )
++  expect(f.reads).toBe(0)
++})
++
++test("tab replacement while consent awaits invalidates the bound read", async () => {
++  const gate = Deferred.makeUnsafe<void>()
++  const resume = Deferred.makeUnsafe<void>()
++  const f = fixture()
++  const broker = PluginBrowser.make(
++    { assert: () => Deferred.succeed(gate, undefined).pipe(Effect.andThen(Deferred.await(resume))) },
++    { location, session: () => Effect.succeed(location) },
++  )
++  const owner = broker("opencode.browser", true)
++  const caller = broker("test-plugin")
++  const scope = await Effect.runPromise(Scope.make())
++  await Effect.runPromise(owner.register(f.driver).pipe(Effect.provideService(Scope.Scope, scope)))
++  const attempt = Effect.runPromiseExit(
++    BrowserTurn.withContext(turn, caller.snapshotOnce({ context: turn, tabID: "tab_local" })),
++  )
++  await Effect.runPromise(Deferred.await(gate))
++  f.invalidate()
++  await Effect.runPromise(Deferred.succeed(resume, undefined))
++  expect(Exit.isFailure(await attempt)).toBe(true)
++  expect(f.reads).toBe(0)
++  await Effect.runPromise(Scope.close(scope, Exit.void))
++})
++
++testEffect(PluginTestLayer).live("a real Core tool execution issues and expires a one-shot context", () =>
++  Effect.gen(function* () {
++    const f = fixture()
++    const tools = yield* CoreTool.Service
++    yield* f.builtin.register(f.driver)
++    yield* tools.transform((editor) =>
++      editor.add({
++        name: "native_read_fixture",
++        description: "Reads a local fixture only",
++        input: { type: "object", properties: {}, additionalProperties: false },
++        options: { codemode: false },
++        execute: (_input, context) =>
++          f.caller.snapshotOnce({ context, tabID: "tab_local" }).pipe(
++            Effect.map((snapshot) => ({ content: snapshot.content })),
++            Effect.mapError((error) => new Tool.Error({ message: error.message })),
++          ),
++      }),
++    )
++    const snapshot = yield* tools.snapshot()
++    const result = yield* snapshot.execute({
++      sessionID,
++      agent: Agent.ID.make("build"),
++      messageID: turn.messageID,
++      call: { type: "tool-call", id: "call_native_fixture", name: "native_read_fixture", input: {} },
++    })
++    expect(result.content).toEqual([{ type: "text", text: "local fixture" }])
++    expect(f.reads).toBe(1)
++  }),
++)
 diff --git a/packages/core/test/plugin/host.ts b/packages/core/test/plugin/host.ts
-index 108846d5ac..89a0c4cdd0 100644
+index 108846d5ac..0ca9e11d0d 100644
 --- a/packages/core/test/plugin/host.ts
 +++ b/packages/core/test/plugin/host.ts
-@@ -28,6 +28,11 @@ export function host(overrides: Overrides = {}): Plugin.Context {
+@@ -28,6 +28,12 @@ export function host(overrides: Overrides = {}): Plugin.Context {
          },
        }),
      options: {},
 +    browser: overrides.browser ?? {
 +      tabs: () => Effect.die("unused browser.tabs"),
 +      snapshot: () => Effect.die("unused browser.snapshot"),
++      snapshotOnce: () => Effect.die("unused browser.snapshotOnce"),
 +      register: () => Effect.die("unused browser.register"),
 +    },
      rpc:
        overrides.rpc ??
        Object.assign(
+@@ -231,13 +237,15 @@ export function providerHost(providers: Provider.Interface): Plugin.Context["pro
+   return {
+     list: () => providers.available().pipe(Effect.map(located)),
+     get: (input) =>
+-      providers.get(Provider.ID.make(input.providerID)).pipe(
+-        Effect.flatMap((provider) =>
+-          provider === undefined
+-            ? Effect.fail(new Error(`Provider not found: ${input.providerID}`))
+-            : Effect.succeed(located(provider)),
++      providers
++        .get(Provider.ID.make(input.providerID))
++        .pipe(
++          Effect.flatMap((provider) =>
++            provider === undefined
++              ? Effect.fail(new Error(`Provider not found: ${input.providerID}`))
++              : Effect.succeed(located(provider)),
++          ),
+         ),
+-      ),
+     reload: providers.reload,
+     transform: (callback) =>
+       providers.transform((editor) =>
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
-index 4c6838c70f..6d21bbbc91 100644
+index 4c6838c70f..c06ae04be9 100644
 --- a/packages/plugin-browser/src/connection.ts
 +++ b/packages/plugin-browser/src/connection.ts
 @@ -80,7 +80,10 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
@@ -407,11 +831,36 @@ index 4c6838c70f..6d21bbbc91 100644
              return yield* Effect.fail(call.error("unavailable", "Session belongs to another location.", {}))
            const browser = yield* Effect.acquireRelease(
              Effect.gen(function* () {
+@@ -179,6 +182,7 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+       // Keep the selected attachment and document, even while permissions or file IO wait.
+       return {
+         tab,
++        binding: { connectionID: browser.connectionID, tabGeneration: tab?.generation ?? 0 },
+         inspect: () =>
+           request(rpc, browser, action, tab, [], { inspect: true }).pipe(
+             Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
+@@ -194,7 +198,15 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+             ),
+           ),
+         request: (files: readonly Browser.File[], target?: Browser.Target) =>
+-          request(rpc, browser, action, tab, files, { target }),
++          Effect.gen(function* () {
++            if (
++              !active ||
++              browsers.get(sessionID) !== browser ||
++              (tab && browser.state.tabs.find((item) => item.id === tab.id)?.generation !== tab.generation)
++            )
++              return yield* new Tool.Error({ message: "Browser attachment or tab generation changed before dispatch." })
++            return yield* request(rpc, browser, action, tab, files, { target })
++          }),
+       }
+     }),
+   }
 diff --git a/packages/plugin-browser/src/index.ts b/packages/plugin-browser/src/index.ts
-index 3ef7c6b877..20c89895e5 100644
+index 3ef7c6b877..0c2cd99ac4 100644
 --- a/packages/plugin-browser/src/index.ts
 +++ b/packages/plugin-browser/src/index.ts
-@@ -1,13 +1,34 @@
+@@ -1,13 +1,46 @@
  import { Plugin } from "@opencode/plugin/effect"
 -import { Effect } from "effect"
 +import { Effect, Schema } from "effect"
@@ -441,6 +890,18 @@ index 3ef7c6b877..20c89895e5 100644
 +              const target = yield* connection.target(input.sessionID, { type: "snapshot", tabID })
 +              const result = yield* target.request([])
 +              return yield* Schema.decodeUnknownEffect(Snapshot)(result.value)
++            }),
++          bindSnapshot: (input) =>
++            Effect.gen(function* () {
++              const tabID = yield* Schema.decodeUnknownEffect(Browser.TabID)(input.tabID)
++              const target = yield* connection.target(input.sessionID, { type: "snapshot", tabID })
++              return {
++                binding: target.binding,
++                read: () =>
++                  target
++                    .request([])
++                    .pipe(Effect.flatMap((result) => Schema.decodeUnknownEffect(Snapshot)(result.value))),
++              }
 +            }),
 +        })
 +        .pipe(Effect.orDie)
@@ -518,18 +979,24 @@ index 0000000000..cbfd5b5d12
 +})
 diff --git a/packages/plugin/src/effect/browser.ts b/packages/plugin/src/effect/browser.ts
 new file mode 100644
-index 0000000000..25c160ac63
+index 0000000000..09dfc71f0f
 --- /dev/null
 +++ b/packages/plugin/src/effect/browser.ts
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,43 @@
 +import type { Effect, Scope } from "effect"
 +import type { Session } from "@opencode/schema/session"
++import type { Tool } from "@opencode/schema/tool"
 +
 +/** Read-only desktop browser capability. Every call asks for a plugin-specific grant. */
 +export interface BrowserDomain {
 +  readonly tabs: (input: { readonly sessionID: Session.ID }) => Effect.Effect<ReadonlyArray<BrowserTab>, Error>
 +  readonly snapshot: (input: {
 +    readonly sessionID: Session.ID
++    readonly tabID: string
++  }) => Effect.Effect<BrowserSnapshot, Error>
++  /** One read per *live Core tool call*. No detached, reusable or plugin-minted grant. */
++  readonly snapshotOnce: (input: {
++    readonly context: Tool.Context
 +    readonly tabID: string
 +  }) => Effect.Effect<BrowserSnapshot, Error>
 +  /** Only the built-in opencode.browser plugin may register the Desktop host. */
@@ -539,6 +1006,14 @@ index 0000000000..25c160ac63
 +export interface BrowserDriver {
 +  readonly tabs: BrowserDomain["tabs"]
 +  readonly snapshot: BrowserDomain["snapshot"]
++  /** First-party binding pins the actual session attachment and tab generation. */
++  readonly bindSnapshot?: (input: { readonly sessionID: Session.ID; readonly tabID: string }) => Effect.Effect<
++    {
++      readonly binding: { readonly connectionID: string; readonly tabGeneration: number }
++      readonly read: () => Effect.Effect<BrowserSnapshot, Error>
++    },
++    Error
++  >
 +}
 +
 +export interface BrowserTab {
@@ -572,32 +1047,37 @@ index b19fac7e57..c7c356321a 100644
    readonly options: PluginOptions
    readonly agent: AgentDomain
 diff --git a/packages/plugin/src/promise/adapter.ts b/packages/plugin/src/promise/adapter.ts
-index ff5efd107e..6770f37d4d 100644
+index ff5efd107e..73e68e97eb 100644
 --- a/packages/plugin/src/promise/adapter.ts
 +++ b/packages/plugin/src/promise/adapter.ts
-@@ -290,6 +290,10 @@ export function fromPromise(plugin: Plugin) {
+@@ -290,6 +290,12 @@ export function fromPromise(plugin: Plugin) {
  
          const context2: PromiseContext = {
            app: host.app,
 +          browser: {
 +            tabs: (input) => run(host.browser.tabs(input)),
 +            snapshot: (input) => run(host.browser.snapshot(input)),
++            // Promise adaptation clones Tool.Context; the WeakMap proof is intentionally not transferable.
++            snapshotOnce: () => Promise.reject(new Error("Native browser one-shot requires an Effect tool context")),
 +          },
            location: host.location,
            options: host.options,
            agent: {
 diff --git a/packages/plugin/src/promise/browser.ts b/packages/plugin/src/promise/browser.ts
 new file mode 100644
-index 0000000000..dc34547eb2
+index 0000000000..24a5dcaf67
 --- /dev/null
 +++ b/packages/plugin/src/promise/browser.ts
-@@ -0,0 +1,7 @@
+@@ -0,0 +1,10 @@
 +import type { Session } from "@opencode/schema/session"
++import type { ToolContext } from "./tool.js"
 +import type { BrowserTab, BrowserSnapshot } from "../effect/browser.js"
 +
 +export interface BrowserDomain {
 +  readonly tabs: (input: { readonly sessionID: Session.ID }) => Promise<ReadonlyArray<BrowserTab>>
 +  readonly snapshot: (input: { readonly sessionID: Session.ID; readonly tabID: string }) => Promise<BrowserSnapshot>
++  /** Unsupported until the Promise tool context can preserve a trusted Core turn proof. */
++  readonly snapshotOnce: (input: { readonly context: ToolContext; readonly tabID: string }) => Promise<BrowserSnapshot>
 +}
 diff --git a/packages/plugin/src/promise/plugin.ts b/packages/plugin/src/promise/plugin.ts
 index ed94b09302..ea317fa062 100644
