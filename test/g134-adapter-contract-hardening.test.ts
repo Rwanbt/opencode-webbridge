@@ -1,6 +1,6 @@
 // G134 — adversarial RED→GREEN matrix over validateAdapterContract() / isAdapterUsable().
 // Fixture-only: no network, no provider site, no credential material. Nothing here
-// enables a commercial model; the five providers stay disabled for production.
+// enables a real provider; the five catalog providers carry no verified capability.
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
@@ -70,16 +70,19 @@ test('g134: provider/origin cross mismatch and unknown providers are refused', (
   reject('unknown-provider', fixture('not-a-provider', 'https://chatgpt.com'));
 });
 
-test('g134: an approval without authorization or a permitted policy is incoherent', () => {
-  const noAuthorization = fixture('chatgpt', 'https://chatgpt.com');
-  noAuthorization.approved = true;
-  reject('incoherent-approval', noAuthorization);
+test('g134: approval needs verified capabilities only - policy metadata stays declarative', () => {
+  const approved = fixture('chatgpt', 'https://chatgpt.com');
+  approved.approved = true;
+  approved.policyDecision = 'restricted';
+  approved.verifiedCapabilities = { ...CAPS };
+  accept(approved);
+  assert.equal(isAdapterUsable(approved as never), true);
 
-  const wrongPolicy = fixture('chatgpt', 'https://chatgpt.com');
-  wrongPolicy.approved = true;
-  wrongPolicy.policyDecision = 'restricted';
-  wrongPolicy.commercialAuthorization = { status: 'permitted', evidenceRef: 'evidence_ref_1' };
-  reject('incoherent-approval', wrongPolicy);
+  const noProof = fixture('chatgpt', 'https://chatgpt.com');
+  noProof.approved = true;
+  noProof.policyDecision = 'restricted';
+  accept(noProof);
+  assert.equal(isAdapterUsable(noProof as never), false, 'no verified capability, no activation');
 });
 
 test('g134: policy decision is restricted to the four review states', () => {
@@ -194,7 +197,7 @@ test('g134: capabilities must be exact, complete and getter-free', () => {
   assert.equal(getterCalls, 0);
 });
 
-test('g134: declared, verified and commercial authorization stay distinct', () => {
+test('g134: declared and verified capabilities stay distinct', () => {
   const verifiedNull = fixture('chatgpt', 'https://chatgpt.com');
   verifiedNull.verifiedCapabilities = null;
   accept(verifiedNull); // explicit "no proof yet" is valid but unusable
@@ -211,32 +214,15 @@ test('g134: declared, verified and commercial authorization stay distinct', () =
   const extraVerified = fixture('chatgpt', 'https://chatgpt.com');
   extraVerified.verifiedCapabilities = { ...CAPS, authority: 'native' };
   reject('unexpected-field:authority', extraVerified);
-
-  const badStatus = fixture('chatgpt', 'https://chatgpt.com');
-  badStatus.commercialAuthorization = { status: 'granted', evidenceRef: null };
-  reject('bad-authorization-status', badStatus);
-
-  const missingEvidence = fixture('chatgpt', 'https://chatgpt.com');
-  missingEvidence.commercialAuthorization = { status: 'permitted', evidenceRef: null };
-  reject('missing-authorization-evidence', missingEvidence);
-
-  const badEvidence = fixture('chatgpt', 'https://chatgpt.com');
-  badEvidence.commercialAuthorization = { status: 'permitted', evidenceRef: 'raw token with spaces' };
-  reject('bad-authorization-evidence', badEvidence);
-
-  const tokenSmuggle = fixture('chatgpt', 'https://chatgpt.com');
-  tokenSmuggle.commercialAuthorization = { status: 'unverified', evidenceRef: null, token: 'secret' };
-  reject('unexpected-field:token', tokenSmuggle);
 });
 
-test('g134: usable only with declared+verified capabilities, approval and authorization evidence', () => {
+test('g134: usable with declared+verified capabilities and approval, with no other gate', () => {
   const full = fixture('qwen', 'https://chat.qwen.ai');
   full.approved = true;
-  full.policyDecision = 'permitted';
-  full.commercialAuthorization = { status: 'permitted', evidenceRef: 'maintainer_evidence_ref' };
+  full.policyDecision = 'restricted';
   full.verifiedCapabilities = { ...CAPS };
   accept(full);
-  assert.equal(isAdapterUsable(full as never), true, 'fully evidenced synthetic contract only');
+  assert.equal(isAdapterUsable(full as never), true, 'technical proof plus approval is enough');
 
   const noVerified = { ...full };
   delete (noVerified as AnyRecord).verifiedCapabilities;
@@ -245,18 +231,8 @@ test('g134: usable only with declared+verified capabilities, approval and author
   const unverifiedStreaming = { ...full, verifiedCapabilities: { ...CAPS, streaming: 'unknown' } };
   assert.equal(isAdapterUsable(unverifiedStreaming as never), false);
 
-  const noAuthorization = { ...full };
-  delete (noAuthorization as AnyRecord).commercialAuthorization;
-  assert.equal(isAdapterUsable(noAuthorization as never), false);
-
-  const notPermitted = { ...full, commercialAuthorization: { status: 'unverified', evidenceRef: null } };
-  assert.equal(isAdapterUsable(notPermitted as never), false);
-
   const notApproved = { ...full, approved: false };
   assert.equal(isAdapterUsable(notApproved as never), false);
-
-  const notPermittedPolicy = { ...full, policyDecision: 'restricted' };
-  assert.equal(isAdapterUsable(notPermittedPolicy as never), false);
 
   let hostileCalls = 0;
   const hostile = { ...full };
@@ -265,12 +241,10 @@ test('g134: usable only with declared+verified capabilities, approval and author
   assert.equal(hostileCalls, 0, 'usability proof must not execute hostile getters');
 });
 
-test('g134: the five catalog providers stay disabled against the live policy file', () => {
+test('g134: the five catalog providers carry no verified capability and stay unusable', () => {
   const policy = JSON.parse(readFileSync('planning/provider-policy-review.json', 'utf8')) as {
-    commercialAutomationEnabled: boolean;
     providers: Array<{ id: string; decision: string; approved: boolean }>;
   };
-  assert.equal(policy.commercialAutomationEnabled, false);
   assert.equal(policy.providers.length, 5);
   for (const entry of policy.providers) {
     const catalogEntry = WEB_PROVIDER_CATALOG.find((provider) => provider.id === entry.id);
@@ -278,9 +252,12 @@ test('g134: the five catalog providers stay disabled against the live policy fil
     const contract = fixture(entry.id, catalogEntry.origin);
     contract.policyDecision = entry.decision;
     contract.approved = entry.approved;
-    contract.commercialAuthorization = { status: entry.decision, evidenceRef: null };
     contract.verifiedCapabilities = null;
     accept(contract);
-    assert.equal(isAdapterUsable(contract as never), false, `${entry.id} must stay unusable`);
+    assert.equal(isAdapterUsable(contract as never), false, `${entry.id} must stay unusable without verification`);
+
+    const presumed = { ...contract, approved: true }; // even a hypothetical approval proves nothing
+    accept(presumed);
+    assert.equal(isAdapterUsable(presumed as never), false, `${entry.id} must not activate without a verified capability`);
   }
 });

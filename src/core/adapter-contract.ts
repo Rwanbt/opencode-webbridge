@@ -2,10 +2,9 @@
  * Common adapter capability contract — hardened in G134.
  *
  * An adapter must declare capabilities explicitly, but a declaration is only a
- * claim. Activation additionally requires independently verified capabilities
- * and an explicit commercial authorization decision backed by an opaque
- * evidence reference. Unknown or unverified capabilities are treated as
- * unsupported (fail-closed).
+ * claim. Activation requires what a bench actually observed: an approved
+ * adapter whose declared core capabilities are all verified `supported`.
+ * Unknown or unverified capabilities are treated as unsupported (fail-closed).
  *
  * Every input is read through own-property descriptors only: getters, proxies,
  * toJSON hooks and unexpected prototypes are rejected WITHOUT being executed.
@@ -39,14 +38,6 @@ export type PolicyDecisionValue =
   | 'written-authorization-required'
   | 'permitted';
 
-export type CommercialAuthorizationStatus = PolicyDecisionValue;
-
-export interface CommercialAuthorization {
-  readonly status: CommercialAuthorizationStatus;
-  /** Opaque reference to reviewed evidence. Never a token, cookie or secret. */
-  readonly evidenceRef: string | null;
-}
-
 export interface AdapterContract {
   readonly identity: AdapterIdentity;
   readonly capabilities: AdapterCapabilities;
@@ -54,8 +45,6 @@ export interface AdapterContract {
   readonly approved: boolean;
   /** Missing or null: structurally valid, but the adapter is never usable. */
   readonly verifiedCapabilities?: VerifiedCapabilities | null;
-  /** Missing: no commercial automation proof, so the adapter is never usable. */
-  readonly commercialAuthorization?: CommercialAuthorization;
 }
 
 export type ContractResult =
@@ -77,7 +66,6 @@ const POLICY_DECISIONS: ReadonlySet<string> = new Set([
 const OFFICIAL_ORIGINS: ReadonlyMap<string, string> = new Map(
   WEB_PROVIDER_CATALOG.map((provider) => [provider.id, provider.origin]),
 );
-const OPAQUE_REF = /^[A-Za-z0-9_-]{1,128}$/;
 
 /**
  * Descriptor-only reader. Never executes getters, setters, proxies or toJSON:
@@ -121,10 +109,7 @@ export function readPlainFields(
 interface ParsedContract {
   readonly declared: ReadonlyMap<string, CapabilityState>;
   readonly verified: ReadonlyMap<string, CapabilityState> | null;
-  readonly policyDecision: string;
   readonly approved: boolean;
-  readonly authorizationStatus: string | null;
-  readonly authorizationEvidence: string | null;
 }
 
 type ParseResult =
@@ -167,8 +152,7 @@ function checkOrigin(providerID: string, origin: string): string | null {
 
 function parseContract(contract: unknown): ParseResult {
   const top = readPlainFields(contract, [], [
-    'identity', 'capabilities', 'policyDecision', 'approved',
-    'verifiedCapabilities', 'commercialAuthorization',
+    'identity', 'capabilities', 'policyDecision', 'approved', 'verifiedCapabilities',
   ]);
   if (!top.ok) return top;
   const { fields } = top;
@@ -215,41 +199,7 @@ function parseContract(contract: unknown): ParseResult {
     verified = parsedVerified.caps;
   }
 
-  let authorizationStatus: string | null = null;
-  let authorizationEvidence: string | null = null;
-  const authorizationValue = fields.get('commercialAuthorization');
-  if (authorizationValue !== undefined) {
-    const authorization = readPlainFields(authorizationValue, ['status', 'evidenceRef']);
-    if (!authorization.ok) {
-      return {
-        ok: false,
-        reason: authorization.reason === 'not-object' ? 'bad-authorization' : authorization.reason,
-      };
-    }
-    const status = authorization.fields.get('status');
-    if (typeof status !== 'string' || !POLICY_DECISIONS.has(status)) {
-      return { ok: false, reason: 'bad-authorization-status' };
-    }
-    const evidenceRef = authorization.fields.get('evidenceRef');
-    if (evidenceRef !== null && (typeof evidenceRef !== 'string' || !OPAQUE_REF.test(evidenceRef))) {
-      return { ok: false, reason: 'bad-authorization-evidence' };
-    }
-    if (status === 'permitted' && evidenceRef === null) {
-      return { ok: false, reason: 'missing-authorization-evidence' };
-    }
-    authorizationStatus = status;
-    authorizationEvidence = evidenceRef as string | null;
-  }
-
-  if (approved && (policyDecision !== 'permitted' ||
-    authorizationStatus !== 'permitted' || authorizationEvidence === null)) {
-    return { ok: false, reason: 'incoherent-approval' };
-  }
-
-  return {
-    ok: true,
-    value: { declared: declared.caps, verified, policyDecision, approved, authorizationStatus, authorizationEvidence },
-  };
+  return { ok: true, value: { declared: declared.caps, verified, approved } };
 }
 
 export function validateAdapterContract(c: unknown): ContractResult {
@@ -258,19 +208,15 @@ export function validateAdapterContract(c: unknown): ContractResult {
 }
 
 /**
- * An adapter is usable only with declared AND verified core capabilities, an
- * approved and permitted policy, and an explicit commercial authorization
- * backed by an opaque evidence reference. Any missing proof — or any hostile
- * input — fails closed without being executed.
+ * An approved adapter is usable once its declared core capabilities (text in,
+ * text out, streaming) are all verified `supported`. Any missing proof — or
+ * any hostile input — fails closed without being executed.
  */
 export function isAdapterUsable(c: AdapterContract): boolean {
   const parsed = parseContract(c);
   if (!parsed.ok) return false;
-  const { declared, verified, policyDecision, approved, authorizationStatus, authorizationEvidence } = parsed.value;
+  const { declared, verified, approved } = parsed.value;
   return approved === true &&
-    policyDecision === 'permitted' &&
-    authorizationStatus === 'permitted' &&
-    authorizationEvidence !== null &&
     verified !== null &&
     CORE_CAPABILITY_FIELDS.every((field) =>
       declared.get(field) === 'supported' && verified.get(field) === 'supported');

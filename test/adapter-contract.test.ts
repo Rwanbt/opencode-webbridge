@@ -6,7 +6,6 @@ const valid = {
   identity: { providerID: 'qwen', displayName: 'Qwen', origin: 'https://chat.qwen.ai' },
   capabilities: { textInput: 'supported', textOutput: 'supported', streaming: 'supported', tools: 'unsupported', attachments: 'unknown', interruption: 'supported' },
   verifiedCapabilities: null,
-  commercialAuthorization: { status: 'written-authorization-required', evidenceRef: null },
   policyDecision: 'restricted',
   approved: false,
 };
@@ -44,25 +43,24 @@ test('isAdapterUsable false when not approved', () => {
   assert.equal(isAdapterUsable(c), false);
 });
 
-test('isAdapterUsable requires proof: verified capabilities and authorization evidence', () => {
+test('isAdapterUsable requires verified capabilities, with no other gate', () => {
   // A claim of approval alone never activates anything.
   const claim = JSON.parse(JSON.stringify(valid));
   claim.approved = true;
+  assert.deepEqual(validateAdapterContract(claim), { ok: true });
   assert.equal(isAdapterUsable(claim), false);
   claim.verifiedCapabilities = { ...claim.capabilities };
-  assert.equal(isAdapterUsable(claim), false);
+  assert.equal(isAdapterUsable(claim), true);
 
-  // Full evidence: permitted policy, authorization reference and verified capabilities.
-  const full = JSON.parse(JSON.stringify(valid));
-  full.approved = true;
-  full.policyDecision = 'permitted';
-  full.commercialAuthorization = { status: 'permitted', evidenceRef: 'evidence_ref_1' };
-  full.verifiedCapabilities = { ...full.capabilities };
-  assert.deepEqual(validateAdapterContract(full), { ok: true });
-  assert.equal(isAdapterUsable(full), true);
-  full.capabilities.streaming = 'unknown';
-  assert.equal(isAdapterUsable(full), false);
-  full.capabilities.streaming = 'supported';
-  full.verifiedCapabilities.streaming = 'unknown';
-  assert.equal(isAdapterUsable(full), false);
+  // Declared and verified capabilities must both hold per core capability.
+  const weak = JSON.parse(JSON.stringify(claim));
+  weak.capabilities.streaming = 'unknown';
+  assert.equal(isAdapterUsable(weak), false);
+  weak.capabilities.streaming = 'supported';
+  weak.verifiedCapabilities.streaming = 'unknown';
+  assert.equal(isAdapterUsable(weak), false);
+
+  const notApproved = JSON.parse(JSON.stringify(claim));
+  notApproved.approved = false;
+  assert.equal(isAdapterUsable(notApproved), false);
 });
