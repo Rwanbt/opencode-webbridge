@@ -87,3 +87,31 @@ test('RPC fixture pins constructor owner against caller mutation after claim', a
   assert.equal(calls, 0);
   await port.release(binding);
 });
+
+test('RPC reply arriving after release or same-owner re-claim cannot complete stale work', async () => {
+  for (const method of ['submit', 'observe', 'cancel'] as const) {
+    for (const reClaim of [false, true]) {
+      let entered!: () => void;
+      let resume!: () => void;
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      const wait = new Promise<void>((resolve) => { resume = resolve; });
+      const rpc = async () => {
+        entered();
+        await wait;
+        return method === 'submit' ? { accepted: true } : method === 'cancel' ? { cancelled: true } :
+          { events: [{ seq: 1, kind: 'finished', turnID: 'turn-1' }] };
+      };
+      const port = new RpcBrowserFixturePort(binding, rpc);
+      await port.claim(binding);
+      const pending = method === 'submit' ? port.submit(binding, { turnID: 'turn-1', prompt: 'hi' }) :
+        method === 'observe' ? port.events(binding, 'turn-1', 0) : port.cancel(binding, 'turn-1');
+      await started;
+      await port.release(binding);
+      if (reClaim) await port.claim(binding);
+      resume();
+      await assert.rejects(pending, /revoked|expired|binding missing|uncertain/i,
+        `method ${method} must not revive pre-release work after ${reClaim ? 'reclaim' : 'release'}`);
+      if (reClaim) await port.release(binding);
+    }
+  }
+});

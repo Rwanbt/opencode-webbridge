@@ -9,6 +9,7 @@ export type RelayCaller = (method: RelayMethod, input: { turnID: string; prompt?
  */
 export class RpcBrowserFixturePort implements BrowserPort {
   private active = false;
+  private generation = 0;
   private readonly owner: Readonly<TabClaim>;
 
   constructor(owner: TabClaim, private readonly rpc: RelayCaller) { this.owner = snapshotTabClaim(owner); }
@@ -21,19 +22,29 @@ export class RpcBrowserFixturePort implements BrowserPort {
     }
   }
 
+  private stillOwned(binding: TabClaim, generation: number): void {
+    if (generation !== this.generation) {
+      throw new Error('RPC BrowserPort authority expired; effect uncertain, reconcile before retry');
+    }
+    this.owned(binding);
+  }
+
   async claim(binding: TabClaim): Promise<void> {
     const current = snapshotTabClaim(binding);
     if (this.active || Object.keys(this.owner).some((key) =>
       this.owner[key as keyof TabClaim] !== current[key as keyof TabClaim])) {
       throw new Error('RPC BrowserPort cannot claim this binding');
     }
+    this.generation++;
     this.active = true;
   }
 
   async submit(binding: TabClaim, request: TurnRequest): Promise<void> {
     this.owned(binding);
     assertTextOnlyTurn(request);
+    const generation = this.generation;
     const response = await this.rpc('submit', { turnID: request.turnID, prompt: request.prompt });
+    this.stillOwned(binding, generation);
     if (!response || typeof response !== 'object' || !('accepted' in response) || response.accepted !== true) {
       throw new Error('RPC BrowserPort send was not accepted; reconcile before retry');
     }
@@ -42,7 +53,9 @@ export class RpcBrowserFixturePort implements BrowserPort {
   async events(binding: TabClaim, turnID: string, afterSeq: number): Promise<readonly TurnEvent[]> {
     this.owned(binding);
     if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new Error('invalid RPC cursor');
+    const generation = this.generation;
     const response = await this.rpc('observe', { turnID, afterSeq });
+    this.stillOwned(binding, generation);
     if (!response || typeof response !== 'object' || !('events' in response) ||
       !Array.isArray(response.events) || response.events.length > 64) {
       throw new Error('malformed RPC event batch');
@@ -55,7 +68,9 @@ export class RpcBrowserFixturePort implements BrowserPort {
   async cancel(binding: TabClaim, turnID: string): Promise<boolean> {
     this.owned(binding);
     assertOpaqueID(turnID, 'turnID');
+    const generation = this.generation;
     const response = await this.rpc('cancel', { turnID });
+    this.stillOwned(binding, generation);
     if (!response || typeof response !== 'object' || !('cancelled' in response) ||
       typeof response.cancelled !== 'boolean' || Object.keys(response).length !== 1) {
       throw new Error('malformed RPC cancellation acknowledgement');
@@ -66,6 +81,7 @@ export class RpcBrowserFixturePort implements BrowserPort {
   /** Releases only local authority. Remote cleanup is separately required. */
   async release(binding: TabClaim): Promise<void> {
     this.owned(binding);
+    this.generation++;
     this.active = false;
   }
 }
