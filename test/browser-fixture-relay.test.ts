@@ -58,3 +58,26 @@ test('latest user multimodal request cannot fall back to an earlier text message
     assert.equal(sends, 0);
   } finally { await browser.release(binding); }
 });
+
+test('message role and content accessors never run while choosing the latest user turn', async () => {
+  let effects = 0;
+  const browser = new FakeBrowserPort((text) => { effects++; return text; });
+  await browser.claim(binding);
+  const respond = browserFixtureResponder(browser, binding);
+  let getters = 0;
+  const roleGetter = Object.defineProperty({ content: 'injected command' }, 'role', {
+    enumerable: true, get() { getters++; return 'user'; },
+  });
+  const contentGetter = Object.defineProperty({ role: 'user' }, 'content', {
+    enumerable: true, get() { getters++; return 'secret prompt'; },
+  });
+  try {
+    for (const input of [roleGetter, contentGetter]) {
+      await assert.rejects(respond([
+        { role: 'user', content: 'old approved prompt' }, input,
+      ]), /unsupported|plain|role|content/i);
+    }
+    assert.equal(getters, 0, 'untrusted accessors must not execute during message selection');
+    assert.equal(effects, 0, 'no fallback or unintended browser send');
+  } finally { await browser.release(binding); }
+});
