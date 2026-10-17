@@ -2292,14 +2292,15 @@ index 0000000000..bd830ae574
 +  return result
 +}
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
-index 4c6838c70f..d496eb1244 100644
+index 4c6838c70f..8e7a2498af 100644
 --- a/packages/plugin-browser/src/connection.ts
 +++ b/packages/plugin-browser/src/connection.ts
-@@ -10,9 +10,13 @@ import { BrowserTunnel } from "./tunnel.js"
+@@ -10,9 +10,14 @@ import { BrowserTunnel } from "./tunnel.js"
  
  type Attachment = {
    connectionID: string
 +  attachmentProof: string
++  ready: boolean
    state: Browser.State
    closed: Deferred.Deferred<"closed" | "replaced">
 -  pending: Map<string, { command: Browser.Command; result: Deferred.Deferred<Browser.Result, Tool.Error> }>
@@ -2310,12 +2311,12 @@ index 4c6838c70f..d496eb1244 100644
    tunnels: BrowserTunnel.Tunnels
  }
  
-@@ -64,12 +68,15 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -64,12 +69,15 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
      active = false
      return Effect.forEach(browsers.keys(), (id) => close(id), { discard: true })
    })
 +  const matches = (browser: Attachment | undefined, input: { connectionID: string; attachmentProof: string }): browser is Attachment =>
-+    !!browser && browser.connectionID === input.connectionID && browser.attachmentProof === input.attachmentProof
++    !!browser && browser.ready && browser.connectionID === input.connectionID && browser.attachmentProof === input.attachmentProof
    const tunnels = (input: {
      sessionID: Session.ID
      connectionID: string
@@ -2327,7 +2328,7 @@ index 4c6838c70f..d496eb1244 100644
        ? Effect.succeed(browser.tunnels)
        : Effect.fail(new Error("Browser attachment is unavailable; its network connections were closed."))
    }
-@@ -80,7 +87,10 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -80,7 +88,10 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
            const session = yield* ctx.session
              .get({ sessionID: input.sessionID })
              .pipe(Effect.mapError(() => call.error("unavailable", "Session not found.", {})))
@@ -2339,17 +2340,24 @@ index 4c6838c70f..d496eb1244 100644
              return yield* Effect.fail(call.error("unavailable", "Session belongs to another location.", {}))
            const browser = yield* Effect.acquireRelease(
              Effect.gen(function* () {
-@@ -88,6 +98,7 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -88,6 +99,8 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
                yield* close(input.sessionID, "replaced")
                const browser: Attachment = {
                  connectionID: input.connectionID,
 +                attachmentProof: input.attachmentProof,
++                ready: false,
                  state: { tabs: [], focusedTabID: null },
                  closed: yield* Deferred.make<"closed" | "replaced">(),
                  pending: new Map(),
-@@ -100,14 +111,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -99,15 +112,20 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+             (browser) => (browsers.get(input.sessionID) === browser ? close(input.sessionID) : Effect.void),
            )
            yield* grant(input.sessionID)
++          // Publishing this attachment or allowing any RPC before the session
++          // permission update completes would expose the host during its await.
++          if (browsers.get(input.sessionID) !== browser)
++            return yield* Effect.fail(call.error("unavailable", "Browser attachment replaced during initialization.", {}))
++          browser.ready = true
            yield* rpc.events
 -            .emit("control", { type: "attached", connectionID: input.connectionID, version: 4 })
 +            .emit("control", { type: "attached", connectionID: input.connectionID, version: 6 })
@@ -2364,7 +2372,7 @@ index 4c6838c70f..d496eb1244 100644
              return yield* Effect.fail(call.error("unavailable", "Browser is unavailable.", {}))
            browser.state = input.state
          }),
-@@ -115,18 +126,51 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -115,18 +133,51 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
          Effect.gen(function* () {
            const browser = browsers.get(input.sessionID)
            const pending =
@@ -2418,7 +2426,7 @@ index 4c6838c70f..d496eb1244 100644
            if (input.outcome.type === "failure")
              return yield* Deferred.fail(
                pending.result,
-@@ -177,10 +221,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -177,10 +228,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              "[browser.tab_unavailable] This tab is closed or does not belong to the connected session. Call browser.tabs.list({}) and use an exact returned tabID. If no tabs exist, use browser.tabs.open({}). Never substitute a request ID, file ID, or element ref for tabID.",
          })
        // Keep the selected attachment and document, even while permissions or file IO wait.
@@ -2434,7 +2442,7 @@ index 4c6838c70f..d496eb1244 100644
              Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
              Effect.mapError(
                (error) =>
-@@ -194,7 +242,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -194,7 +249,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              ),
            ),
          request: (files: readonly Browser.File[], target?: Browser.Target) =>
@@ -2469,7 +2477,7 @@ index 4c6838c70f..d496eb1244 100644
        }
      }),
    }
-@@ -207,6 +281,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -207,6 +288,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
    tab: Browser.Tab | undefined,
    files: readonly Browser.File[],
    inspection: Pick<Browser.Command, "inspect" | "target">,
@@ -2477,7 +2485,7 @@ index 4c6838c70f..d496eb1244 100644
  ) {
    const requestID = crypto.randomUUID()
    const pending = yield* Deferred.make<Browser.Result, Tool.Error>()
-@@ -214,9 +289,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -214,9 +296,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
      (action.type === "files.upload" || action.type === "files.drop") && !inspection.inspect
        ? { ...action, paths: files.map((file) => file.name) }
        : action
@@ -2616,10 +2624,10 @@ index aaba261a16..35218e4e72 100644
      "tunnel.read": { input: Schema.Struct(tunnel), output: TunnelRead, errors },
 diff --git a/packages/plugin-browser/test/connection-location.test.ts b/packages/plugin-browser/test/connection-location.test.ts
 new file mode 100644
-index 0000000000..d2d3db8911
+index 0000000000..5b9c379e69
 --- /dev/null
 +++ b/packages/plugin-browser/test/connection-location.test.ts
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,104 @@
 +import { expect, test } from "bun:test"
 +import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect"
 +import { AbsolutePath } from "@opencode/schema/schema"
@@ -2682,6 +2690,47 @@ index 0000000000..d2d3db8911
 +  )
 +  expect(Exit.isFailure(result)).toBe(true)
 +  if (Exit.isFailure(result)) expect(Cause.pretty(result.cause)).toContain("Session belongs to another location")
++})
++
++test("an attachment cannot use a private RPC or TCP tunnel while its session permission update is pending", async () => {
++  const directory = AbsolutePath.make("/workspace")
++  const sessionID = Session.ID.make("ses_pending_activation")
++  const updateStarted = Deferred.makeUnsafe<void>()
++  const resumeGrant = Deferred.makeUnsafe<void>()
++  const announced = Deferred.makeUnsafe<void>()
++  let commands: Record<string, (input: any, caller: any) => any> = {}
++  const location = new Location.Info({ directory, workspaceID: Workspace.ID.make("wrk_owner"),
++    project: { id: Project.ID.global, directory, canonical: directory } })
++  const ctx = {
++    location,
++    agent: { transform: () => Effect.void },
++    event: { subscribe: () => Stream.empty },
++    session: {
++      get: () => Effect.succeed({ location, permissions: [] }),
++      update: () => Deferred.succeed(updateStarted, undefined).pipe(Effect.andThen(Deferred.await(resumeGrant))),
++    },
++    rpc: { register: (_schema: unknown, handlers: typeof commands) => {
++      commands = handlers
++      return Effect.succeed({ events: { emit: () => Deferred.succeed(announced, undefined) } })
++    } },
++  } as unknown as Parameters<typeof BrowserConnection.make>[0]
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    yield* BrowserConnection.make(ctx)
++    const caller = { error: (_type: string, message: string) => new Error(message) }
++    const base = { sessionID, connectionID: "public-id", attachmentProof: crypto.randomUUID() }
++    const pending = yield* commands.attach({ ...base, version: 6 }, caller)
++      .pipe(Effect.forkScoped({ startImmediately: true }))
++    yield* Deferred.await(updateStarted)
++    expect(Exit.isFailure(yield* Effect.exit(commands.state({ ...base,
++      state: { tabs: [], focusedTabID: null } }, caller)))).toBe(true)
++    expect(Exit.isFailure(yield* Effect.exit(commands["tunnel.open"]({ ...base,
++      target: { host: "127.0.0.1", port: 1 } }, caller)))).toBe(true)
++    yield* Deferred.succeed(resumeGrant, undefined)
++    yield* Deferred.await(announced)
++    expect(Exit.isSuccess(yield* Effect.exit(commands.state({ ...base,
++      state: { tabs: [], focusedTabID: null } }, caller)))).toBe(true)
++    yield* Fiber.interrupt(pending)
++  })) as Effect.Effect<void, unknown, never>)
 +})
 diff --git a/packages/plugin-browser/test/read-commit.test.ts b/packages/plugin-browser/test/read-commit.test.ts
 new file mode 100644

@@ -4,7 +4,7 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `D1DD0618F9B2677024BDDB81D4FA2E7DFBEF9D33CD67CFD38FC3F6AC0C4F7CE9`.
+Patch SHA-256: `3299FAF2F4D27B73369C211DF4DECDA19B30DE03F074B1970D7EF7F58D0F5A02`.
 
 Follow-up to #110: [ADR 0004](../ADR/0004-core-permission-browser-read-epoch.md) adds a real, read-only `Permission.Service.browserRead` authority with policy-version invalidation and RED→GREEN Core integration tests. This ledger is **not invoked by Desktop or existing browser tools**, and cannot grant native writes.
 
@@ -27,6 +27,8 @@ G58 denies the remaining **legacy page-content/capture actions** at both `Browse
 G60 adds a **second Core read.live revalidation after Desktop page.ready**, before any Chromium snapshot invocation; it denies post-commit Core epoch revocation during readiness, burns rejected commits permanently, and verifies the local binding again after that additional RPC await. Protocol **V5** is mandatory to prevent older Desktop V4 clients from skipping the revalidation. A direct renderer `browser.pane.command` path previously bypassed the agent-command gate and is now denied for all uncommitted content reads/captures. Bun runtime RED→GREEN and negative host/GUI tests are described in [ADR 0010](../ADR/0010-native-core-read-recheck-ipc.fr.md). Neither control provides atomic cross-process locking: Core can still revoke immediately after read.live returns. Read-only and NO-GO for WebBridge writes remain mandatory.
 
 G61 introduces a **separate private per-attachment proof** alongside the public `connectionID` in all privileged browser RPC calls, with a mandatory **V6** desktop handshake. It denies a second authenticated API client that knows only the broadcast routing ID from spoofing a connection's state, result or tunnel operations. See [ADR 0011](../ADR/0011-desktop-rpc-attachment-proof.fr.md). This does **not** attest that `attach` came from official Electron Desktop: a separately authenticated client can still initiate its own attachment, so stronger server transport identity is a future requirement. No WebBridge writes or commercial automation are enabled.
+
+G62 closes an attachment-initialization race: before the asynchronous session permission update finishes, **no privileged browser RPC or server TCP tunnel may use the attachment**, even with the correct V6 proof. A displaced attachment cannot become ready when its late permission update returns. A deterministic deferred-authorization native host test and the precise compatibility limitations are in [ADR 0012](../ADR/0012-browser-attachment-activation-gate.fr.md). This is not Desktop process attestation or a cross-process atomic permission-effect boundary.
 
 Independent E2 follow-up: the Core reference ledger now snapshots the entire validated binding **before** asynchronous authorization, refuses mutation during the await, and preserves spent-call tombstones through `revoke()` to prevent replay of the same call in a later epoch. Tickets use a bounded monotonic lifetime. Regression tests exercise forged plugin/session/action mutation, post-revoke replay, and clock rollback; the ledger remains disconnected from Desktop and **does not authorize writes**.
 
