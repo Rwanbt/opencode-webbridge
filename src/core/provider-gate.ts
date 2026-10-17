@@ -41,12 +41,14 @@ export function disabledGate(id: WebProviderID): ProviderGate {
 
 /** Readiness is an AND of all independently proven requirements. */
 export function evaluateGate(gate: ProviderGate): GateResult {
+  if (!WEB_PROVIDER_CATALOG.some((provider) => provider.id === gate.id)) return { ready: false, reason: 'policy' };
   if (gate.policy !== 'permitted') return { ready: false, reason: 'policy' };
   if (gate.transport !== 'verified') return { ready: false, reason: 'transport' };
   if (gate.browser !== 'verified') return { ready: false, reason: 'browser' };
   if (!gate.authenticated) return { ready: false, reason: 'auth' };
   if (!gate.consented) return { ready: false, reason: 'consent' };
-  if (gate.textInput !== 'supported' || gate.textOutput !== 'supported') {
+  if (gate.textInput !== 'supported' || gate.textOutput !== 'supported' ||
+    gate.streaming !== 'supported' || gate.tools !== 'supported') {
     return { ready: false, reason: 'capability' };
   }
   return { ready: true };

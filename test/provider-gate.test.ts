@@ -5,7 +5,7 @@ import { evaluateGate, initialGates, type ProviderGate } from '../src/core/provi
 const granted: ProviderGate = {
   id: 'chatgpt', policy: 'permitted', transport: 'verified', browser: 'verified',
   authenticated: true, consented: true, textInput: 'supported', textOutput: 'supported',
-  tools: 'unknown', streaming: 'unknown',
+  tools: 'supported', streaming: 'supported',
 };
 
 test('all five providers fail closed on startup', () => {
@@ -21,7 +21,21 @@ test('each necessary gate blocks independently when missing', () => {
     ['transport', 'fixture-only', 'transport'], ['browser', 'unproven', 'browser'],
     ['authenticated', false, 'auth'], ['consented', false, 'consent'],
     ['textInput', 'unknown', 'capability'], ['textOutput', 'unsupported', 'capability'],
+    ['streaming', 'unknown', 'capability'], ['streaming', 'unsupported', 'capability'],
+    ['tools', 'unknown', 'capability'], ['tools', 'unsupported', 'capability'],
   ] as const) {
     assert.deepEqual(evaluateGate({ ...granted, [key]: value }), { ready: false, reason });
   }
+});
+
+test('unsupported streaming, tools and unknown provider cannot be declared natively ready', () => {
+  const complete = { ...granted, tools: 'supported', streaming: 'supported' } as const;
+  assert.deepEqual(evaluateGate(complete), { ready: true });
+  for (const unsupported of [
+    { ...complete, streaming: 'unknown' as const },
+    { ...complete, streaming: 'unsupported' as const },
+    { ...complete, tools: 'unknown' as const },
+    { ...complete, tools: 'unsupported' as const },
+  ]) assert.deepEqual(evaluateGate(unsupported), { ready: false, reason: 'capability' });
+  assert.deepEqual(evaluateGate({ ...complete, id: 'forged' as never }), { ready: false, reason: 'policy' });
 });
