@@ -2527,10 +2527,10 @@ index 0000000000..c1427a3a5d
 +})
 diff --git a/packages/plugin/src/effect/browser.ts b/packages/plugin/src/effect/browser.ts
 new file mode 100644
-index 0000000000..09dfc71f0f
+index 0000000000..d2f214974f
 --- /dev/null
 +++ b/packages/plugin/src/effect/browser.ts
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,44 @@
 +import type { Effect, Scope } from "effect"
 +import type { Session } from "@opencode/schema/session"
 +import type { Tool } from "@opencode/schema/tool"
@@ -2558,7 +2558,8 @@ index 0000000000..09dfc71f0f
 +  readonly bindSnapshot?: (input: { readonly sessionID: Session.ID; readonly tabID: string }) => Effect.Effect<
 +    {
 +      readonly binding: { readonly connectionID: string; readonly tabGeneration: number }
-+      readonly read: () => Effect.Effect<BrowserSnapshot, Error>
++      /** Trust boundary: Core supplies the live epoch probe, never the page or plugin. */
++      readonly read: (stillAuthorized: () => boolean) => Effect.Effect<BrowserSnapshot, Error>
 +    },
 +    Error
 +  >
