@@ -20,6 +20,7 @@
     "smoke:rpc": "npm run build && node scripts/smoke-rpc-relay.mjs",
     "smoke:e2e": "npm run build && node scripts/smoke-model-rpc-e2e.mjs",
     "smoke:page": "npm run build && node scripts/smoke-model-rpc-e2e.mjs --real-page",
+    "smoke:local-read": "npm run build && node scripts/smoke-local-read-page.mjs",
     "journal:operator": "npm run build && node scripts/reconcile-relay.mjs",
     "issues:dry-run": "node scripts/sync-github-issues.mjs",
     "issues:sync": "node scripts/sync-github-issues.mjs --apply"

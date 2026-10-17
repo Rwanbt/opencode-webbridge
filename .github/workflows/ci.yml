@@ -36,6 +36,7 @@ jobs:
       - run: npm run smoke:e2e
       - name: Install isolated headless Chromium
         run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run smoke:local-read
       - run: npm run smoke:page
 
   upstream-v2-browser-patch:
@@ -64,5 +65,6 @@ jobs:
           bun run --cwd packages/plugin typecheck
           bun run --cwd packages/plugin-browser typecheck
           bun run --cwd packages/core typecheck
+          bun run --cwd packages/gui-extensions typecheck
           (cd packages/core && bun test test/permission-browser-lease.test.ts test/plugin/browser-lease.test.ts test/plugin/browser-one-shot.test.ts test/plugin/browser-capability.test.ts test/plugin/promise-tool.test.ts test/plugin/supervisor.test.ts)
-          (cd packages/plugin-browser && bun test test/connection-location.test.ts test/rpc.test.ts test/tools.test.ts)
+          (cd packages/plugin-browser && bun test test/read-commit.test.ts test/connection-location.test.ts test/rpc.test.ts test/tools.test.ts)
