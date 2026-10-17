@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { nativeOpenCodeExecutable } from '../dist/src/testing/native-cli-launcher.js';
+import { trackNativeChild } from '../dist/src/testing/native-child-lifecycle.js';
 
 async function freePort() {
   const srv = createServer();
@@ -24,6 +25,8 @@ const password = randomBytes(32).toString('hex');
 const binding = { sessionID: 'fixture-session', tabID: 'fixture-tab', providerID: 'qwen', accountRef: 'fixture-account' };
 const port = await freePort();
 let server;
+let serverLifecycle;
+let validated = false;
 let stderr = '';
 let stdout = '';
 try {
@@ -53,6 +56,7 @@ try {
     cwd: tmp, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     shell: process.platform === 'win32' && /\.cmd$/i.test(exe),
   });
+  serverLifecycle = trackNativeChild(server);
   server.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString('utf8')).slice(-6000); });
   server.stdout.on('data', (chunk) => { stdout = (stdout + chunk.toString('utf8')).slice(-12000); });
 
@@ -102,18 +106,18 @@ try {
       persisted.includes('RPC_BROWSER_FIXTURE_OK') || persisted.includes(secret)) {
     throw new Error('native RPC relay journal absent, leaked data or not settled');
   }
-  console.log('G3 native OpenCode RPC relay: PASS (submit -> take once -> complete -> result)');
+  validated = true;
 } catch (error) {
   const diag = `${stderr}\n${stdout}`.split(/\r?\n/)
     .filter((line) => /error|warn|journal|plugin|rpc|fail|lock/i.test(line)).slice(-14).join('\n');
   console.error(`G3 native RPC relay: FAIL — ${String(error).replaceAll(secret, '[REDACTED]')}\n${diag.slice(-2500).replaceAll(secret, '[REDACTED]').replaceAll(password, '[REDACTED]')}`);
   process.exitCode = 1;
 } finally {
-  if (server) {
-    if (process.platform === 'win32' && server.pid) {
-      spawnSync('taskkill', ['/PID', String(server.pid), '/T', '/F'], { stdio: 'ignore' });
-    } else server.kill();
-  }
+  // Wait for the child and its pipes to close before deleting its watched profile.
+  if (serverLifecycle) await serverLifecycle.stop();
   await rm(tmp, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
   await rm(journalDir, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
+}
+if (validated && !process.exitCode) {
+  console.log('G3 native OpenCode RPC relay: PASS (submit -> take once -> complete -> result; cleaned)');
 }
