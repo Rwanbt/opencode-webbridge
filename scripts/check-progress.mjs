@@ -24,14 +24,28 @@ ensure(Array.isArray(a.productionAcceptedStoryIDs) && a.productionAcceptedStoryI
 ensure(Array.isArray(a.commercialProvidersOperational) && a.commercialProvidersOperational.length === 0, 'commercial providers unproven');
 for (const name of ['nativeDesktopElectronE2E', 'atomicCoreChromiumRevocation', 'commercialAutomationAuthorized', 'webbridgeWritesEnabled'])
   ensure(a[name] === false, `unsafe production gate ${name}`);
-ensure(Array.isArray(progress.evidence) && progress.evidence.length === 13, 'unsupported evidence count');
+ensure(Array.isArray(progress.evidence) && progress.evidence.length === 21, 'unsupported evidence count');
 const ids = new Set();
 for (const e of progress.evidence) {
-  ensure(Number.isInteger(e.pr) && e.pr >= 142 && e.pr <= 154 && !ids.has(e.pr), 'duplicate/unknown PR');
+  ensure(Number.isInteger(e.pr) && e.pr >= 142 && e.pr <= 162 && !ids.has(e.pr), 'duplicate/unknown PR');
   ids.add(e.pr);
   ensure(/^[a-f\d]{40}$/.test(e.sha), 'invalid commit SHA');
   ensure(e.checks === (e.pr >= 152 ? 8 : 6), 'inexact check count');
   ensure(typeof e.scope === 'string' && e.scope.endsWith('-partial'), 'CI is not production acceptance');
 }
+ensure(Array.from({ length: 21 }, (_, index) => 142 + index).every((pr) => ids.has(pr)),
+  'every newly claimed PR must be evidenced');
+ensure(Array.isArray(progress.epicEvidence) && progress.epicEvidence.length === backlog.epics.length,
+  'missing epic evidence');
+for (const [index, epic] of backlog.epics.entries()) {
+  const entry = progress.epicEvidence[index];
+  ensure(entry?.id === epic.id && entry.stories === backlog.stories.filter((story) => story.epic === epic.id).length,
+    `${epic.id} story allocation mismatch`);
+  ensure(entry.acceptedStories === 0, `${epic.id} cannot be production accepted by fixture CI`);
+  ensure(Array.isArray(entry.verifiedPartialPRs) && entry.verifiedPartialPRs.length > 0 &&
+    entry.verifiedPartialPRs.every((pr) => Number.isInteger(pr) && ids.has(pr)), `${epic.id} unknown PR proof`);
+  ensure(typeof entry.criticalGap === 'string' && entry.criticalGap.length >= 20,
+    `${epic.id} missing critical release gap`);
+}
 ensure(Array.isArray(progress.blockers) && progress.blockers.length >= 5, 'missing release blockers');
-console.log('Progress guard PASS: 9 epics, 54 stories, 66 issues; 13 partial PRs; 0/5 commercial, 0 accepted');
+console.log('Progress guard PASS: 9 epics, 54 stories, 66 issues; 21 partial PRs; 0/5 commercial, 0 accepted');

@@ -23,7 +23,7 @@ function attempt(change?: (input: Record<string, any>) => void) {
 test('verified partial evidence and zero production acceptance pass', () => {
   const result = attempt();
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /0\/5 commercial, 0 accepted/);
+  assert.match(result.stdout, /21 partial PRs; 0\/5 commercial, 0 accepted/);
 });
 test('partial CI cannot silently certify a commercial provider or enable writes', () => {
   for (const modify of [
@@ -46,5 +46,8 @@ test('fabricated SHA/checks or changed mapping cannot become evidence', () => {
     (p: any) => { p.evidence[1].pr = p.evidence[0].pr; },
     (p: any) => { p.backlog.totalIssues = 65; },
     (p: any) => { p.backlog.stories = 53; },
+    (p: any) => { p.epicEvidence[0].acceptedStories = 1; },
+    (p: any) => { p.epicEvidence[2].verifiedPartialPRs = [199]; },
+    (p: any) => { p.epicEvidence[6].stories = 5; },
   ]) assert.notEqual(attempt(modify).status, 0);
 });
