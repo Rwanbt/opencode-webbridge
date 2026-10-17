@@ -1,4 +1,4 @@
-# ADR 0023 — Réserver l'attachement navigateur jusqu'au retrait de son grant
+# ADR 0027 — Réserver l'attachement navigateur jusqu'au retrait de son grant
 
 ## Défaillance reproductible
 
