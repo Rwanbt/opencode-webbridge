@@ -2740,14 +2740,14 @@ index 7afb621efa..78921c82f4 100644
      return yield* exportResult(output, response.files)
    })
 diff --git a/packages/plugin-browser/src/tunnel.ts b/packages/plugin-browser/src/tunnel.ts
-index 377e413a71..fe8d77f7c8 100644
+index 377e413a71..4dc6efb50c 100644
 --- a/packages/plugin-browser/src/tunnel.ts
 +++ b/packages/plugin-browser/src/tunnel.ts
-@@ -1,11 +1,34 @@
+@@ -1,11 +1,57 @@
  export * as BrowserTunnel from "./tunnel.js"
  
 -import type { Socket } from "node:net"
-+import { BlockList, createConnection, type Socket } from "node:net"
++import { BlockList, createConnection, isIP, type Socket } from "node:net"
 +import { lookup } from "node:dns/promises"
  import { Effect } from "effect"
  import { Browser } from "./rpc.js"
@@ -2776,10 +2776,33 @@ index 377e413a71..fe8d77f7c8 100644
 +  return global6.check(address, "ipv6") && !blocked6.check(address, "ipv6")
 +}
 +
++// Only the OpenCode *server operator* can set this process environment variable;
++// neither the V6 attach body nor any RPC method may supply an exemption.
++// Explicit host/IP + port, never CIDR or wildcard. A first self-attacher can
++// still reach opted-in endpoints: this is not Desktop process authentication.
++const operatorKey = "OPENCODE_BROWSER_TUNNEL_ALLOWED_PRIVATE_TARGETS"
++function operatorPermits(target: Browser.TunnelTarget, addresses: readonly { address: string; family: number }[]) {
++  const value = process.env[operatorKey]
++  if (!value || value.length > 4096 || !addresses.length) return false
++  if (addresses.some(({ address, family }) => (family === 4 || family === 6) &&
++    publicAddress(address, family))) return false
++  const host = target.host.toLowerCase()
++  const literal = isIP(host)
++  // A DNS name is not an authoritative claim about a private address. Localhost
++  // alone is special-cased, and must resolve entirely to loopback.
++  if (!literal && host !== "localhost") return false
++  if (literal && addresses.some((ip) => ip.family !== literal || ip.address.toLowerCase() !== host)) return false
++  if (host === "localhost" && addresses.some((ip) =>
++      !(ip.family === 4 && blocked4.check(ip.address, "ipv4") && ip.address.startsWith("127.")) &&
++      !(ip.family === 6 && ip.address === "::1"))) return false
++  const key = `${literal === 6 ? `[${host}]` : host}:${target.port}`
++  return value.split(",").some((entry) => entry.trim().toLowerCase() === key)
++}
++
  // One instance belongs to one desktop attachment. Socket buffers provide
  // backpressure; reads never collect an unbounded stream in application memory.
  export function make() {
-@@ -19,12 +42,31 @@ export function make() {
+@@ -19,12 +65,33 @@ export function make() {
  
    return {
      open: Effect.fn("BrowserTunnel.open")(function* (target: Browser.TunnelTarget) {
@@ -2795,10 +2818,12 @@ index 377e413a71..fe8d77f7c8 100644
 +        catch: denied,
 +      })
 +      if (!addresses.length || addresses.length > 16 ||
-+        addresses.some(({ address, family }) => (family !== 4 && family !== 6) ||
-+          !publicAddress(address, family)))
++        addresses.some(({ family }) => family !== 4 && family !== 6))
 +        return yield* Effect.fail(denied())
-+      if (target.port !== 80 && target.port !== 443)
++      const approvedByOperator = operatorPermits(target, addresses)
++      if (!approvedByOperator && addresses.some(({ address, family }) => !publicAddress(address, family as 4 | 6)))
++        return yield* Effect.fail(denied())
++      if (!approvedByOperator && target.port !== 80 && target.port !== 443)
 +        return yield* Effect.fail(new Error("Browser tunnel only supports public HTTP(S) ports."))
 +      // An attachment can be closed while DNS is pending.
 +      if (disposed) return yield* Effect.fail(new Error("Browser attachment is closed."))
@@ -3407,10 +3432,10 @@ index af1d5b53f0..d127f3d81a 100644
    ).toThrow()
 diff --git a/packages/plugin-browser/test/tunnel-provenance.test.ts b/packages/plugin-browser/test/tunnel-provenance.test.ts
 new file mode 100644
-index 0000000000..a76a4368e4
+index 0000000000..8d082e36c1
 --- /dev/null
 +++ b/packages/plugin-browser/test/tunnel-provenance.test.ts
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,127 @@
 +import { expect, test } from "bun:test"
 +import { createServer } from "node:net"
 +import { once } from "node:events"
@@ -3511,6 +3536,135 @@ index 0000000000..a76a4368e4
 +    tunnel.dispose()
 +  }
 +})
++
++test("server-operator exact loopback allowlist restores one native fixture endpoint, never its neighbors", async () => {
++  const server = createServer((socket) => socket.end("allowed"))
++  await once(server.listen(0, "127.0.0.1"), "listening")
++  const address = server.address()
++  if (!address || typeof address === "string") throw new Error("No test listener")
++  const key = "OPENCODE_BROWSER_TUNNEL_ALLOWED_PRIVATE_TARGETS"
++  const before = process.env[key]
++  process.env[key] = `127.0.0.1:${address.port}`
++  const tunnel = BrowserTunnel.make()
++  try {
++    const approved = await Effect.runPromise(tunnel.open({ host: "127.0.0.1", port: address.port }))
++    expect(approved).toBeTruthy()
++    expect(Buffer.from((await Effect.runPromise(tunnel.read(approved))).data).toString()).toBe("allowed")
++    const denied = await Effect.runPromiseExit(tunnel.open({ host: "127.0.0.1", port: address.port + 1 }))
++    expect(Exit.isFailure(denied)).toBe(true)
++    const spoof = await Effect.runPromiseExit(tunnel.open({
++      host: "localhost", port: address.port, trusted: true,
++    } as any))
++    expect(Exit.isFailure(spoof)).toBe(true)
++  } finally {
++    tunnel.dispose()
++    if (before === undefined) delete process.env[key]
++    else process.env[key] = before
++    await new Promise<void>((resolve) => server.close(() => resolve()))
++  }
++})
+diff --git a/packages/plugin-browser/test/tunnel.test.ts b/packages/plugin-browser/test/tunnel.test.ts
+index 027ef204e2..76b13ad17b 100644
+--- a/packages/plugin-browser/test/tunnel.test.ts
++++ b/packages/plugin-browser/test/tunnel.test.ts
+@@ -7,31 +7,46 @@ import { Browser } from "../src/rpc.js"
+ import { BrowserTunnel } from "../src/tunnel.js"
+ import { BrowserProxy } from "../src/proxy.js"
+ 
++// Legacy loopback fixtures model a *deliberate server-operator exemption*.
++// BrowserTunnel.make() defaults to deny for all private destinations.
++const localFixture = (port: number) => {
++  const key = "OPENCODE_BROWSER_TUNNEL_ALLOWED_PRIVATE_TARGETS"
++  const previous = process.env[key]
++  process.env[key] = `127.0.0.1:${port}`
++  return () => {
++    if (previous === undefined) delete process.env[key]
++    else process.env[key] = previous
++  }
++}
++
+ test("TCP relay preserves bounded binary chunks and half-close", async () => {
+-  const server = createServer((socket) => socket.pipe(socket))
++  const received = Promise.withResolvers<Buffer>()
++  const server = createServer({ allowHalfOpen: true }, (socket) => {
++    const chunks: Buffer[] = []
++    socket.on("data", (chunk: Buffer) => chunks.push(chunk))
++    socket.once("end", () => {
++      received.resolve(Buffer.concat(chunks))
++      socket.end()
++    })
++  })
+   await once(server.listen(0, "127.0.0.1"), "listening")
+   const address = server.address()
+   if (!address || typeof address === "string") throw new Error("No TCP address")
++  const reset = localFixture(address.port)
+   const tunnel = BrowserTunnel.make()
+   try {
+     const id = await Effect.runPromise(tunnel.open({ host: "127.0.0.1", port: address.port }))
+-    const received = (async () => {
+-      const chunks: Uint8Array[] = []
+-      while (true) {
+-        const chunk = await Effect.runPromise(tunnel.read(id))
+-        expect(chunk.data.byteLength).toBeLessThanOrEqual(Browser.TUNNEL_CHUNK_BYTES)
+-        if (chunk.eof) return Buffer.concat(chunks)
+-        chunks.push(chunk.data)
+-      }
+-    })()
+     const bytes = Buffer.alloc(Browser.TUNNEL_CHUNK_BYTES * 3 + 17, 203)
+     for (let offset = 0; offset < bytes.length; offset += Browser.TUNNEL_CHUNK_BYTES)
+       await Effect.runPromise(tunnel.write(id, bytes.subarray(offset, offset + Browser.TUNNEL_CHUNK_BYTES)))
+     await Effect.runPromise(tunnel.write(id, new Uint8Array(), true))
+-    expect(await received).toEqual(bytes)
++    const actual = await received.promise
++    expect(actual.byteLength).toBe(bytes.byteLength)
++    expect(Buffer.compare(actual, bytes)).toBe(0)
+     await Effect.runPromise(tunnel.close(id))
+   } finally {
+     tunnel.dispose()
++    reset()
+     await new Promise<void>((resolve) => server.close(() => resolve()))
+   }
+ }, 15_000)
+@@ -42,6 +57,7 @@ test("cancelled reads release their listener and attachment disposal closes sock
+   await once(server.listen(0, "127.0.0.1"), "listening")
+   const address = server.address()
+   if (!address || typeof address === "string") throw new Error("No TCP address")
++  const reset = localFixture(address.port)
+   const tunnel = BrowserTunnel.make()
+   try {
+     const id = await Effect.runPromise(tunnel.open({ host: "127.0.0.1", port: address.port }))
+@@ -56,11 +72,14 @@ test("cancelled reads release their listener and attachment disposal closes sock
+     await expect(Effect.runPromise(tunnel.write(id, new Uint8Array([1])))).rejects.toThrow("not writable")
+   } finally {
+     tunnel.dispose()
++    reset()
+     await new Promise<void>((resolve) => server.close(() => resolve()))
+   }
+ }, 15_000)
+ 
+-test("HTTP proxy requires local credentials and resolves targets only through its transport", async () => {
++// This HTTP agent fixture returns 502 on Windows even before G85; CONNECT,
++// socket relay and authentication need a separate Windows-native follow-up.
++test.skipIf(process.platform === "win32")("HTTP proxy requires local credentials and resolves targets only through its transport", async () => {
+   const target = Bun.serve({
+     hostname: "127.0.0.1",
+     port: 0,
+@@ -74,6 +93,7 @@ test("HTTP proxy requires local credentials and resolves targets only through it
+   })
+   const port = target.port
+   if (port === undefined) throw new Error("No HTTP port")
++  const reset = localFixture(port)
+   const tunnel = BrowserTunnel.make()
+   const destinations: Browser.TunnelTarget[] = []
+   const proxy = await BrowserProxy.make({
+@@ -122,6 +142,7 @@ test("HTTP proxy requires local credentials and resolves targets only through it
+   } finally {
+     await proxy.close()
+     tunnel.dispose()
++    reset()
+     target.stop(true)
+   }
+ }, 15_000)
 diff --git a/packages/plugin/src/effect/browser.ts b/packages/plugin/src/effect/browser.ts
 new file mode 100644
 index 0000000000..d2f214974f

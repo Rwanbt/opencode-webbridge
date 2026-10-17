@@ -4,7 +4,7 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `B8953773A3B1E674F4D1561ECFDCDF6B1AE4226FA6EA951EB50A180EAF73CEF8`.
+Patch SHA-256: `946E79EC7DEECB6CC67EAB11F11E1F4E6C8A9FC7C220757B3A79E69B263F0F0A`.
 
 Follow-up to #110: [ADR 0004](../ADR/0004-core-permission-browser-read-epoch.md) adds a real, read-only `Permission.Service.browserRead` authority with policy-version invalidation and RED→GREEN Core integration tests. This ledger is **not invoked by Desktop or existing browser tools**, and cannot grant native writes.
 
@@ -35,6 +35,8 @@ G63 restores only **first-party browser.tabs.list and plugin ctx.browser.tabs me
 G74 refuses a second `experimental.browser.attach` while a session already has an attachment (including pending authorization), and reserves that slot until its session-grant finalizer completes. The historical automatic allow is no longer removed when it existed before the browser attached. Regression tests on `BrowserConnection.make` cover takeover, pending grants, pre-existing permissions and concurrent teardown. See [ADR 0027](../ADR/0027-native-browser-attach-ownership.fr.md). **The first attach still has no trusted Electron process provenance; an API-authorized attacker who attaches first can still operate the server-side tunnel. This is a production NO-GO.**
 
 G85 reduces that first-attachment tunnel risk by refusing private, loopback, reserved and mapped destination IPs after DNS resolution, pinning the public address before TCP connect and restricting non-web ports. A native adversarial `BrowserConnection.make` test is RED without the filter and GREEN after it, exercising a real local TCP listener. The guard also applies to legitimate Desktop browsers: localhost, private services and non-standard web ports are no longer reachable. **Initial process provenance, auto browser session grant, and complete native browser compatibility remain NO-GO**; see [ADR 0031](../ADR/0031-native-browser-public-tunnel-boundary.fr.md).
+
+G86 verifies that the official Desktop and any first-attaching RPC client reach the **same** native tunnel, so an unverified WebBridge-only exemption cannot be enforced there. G86 therefore retains the G85 default-deny and adds only explicitly server-operator-approved private IP/localhost + exact-port exceptions via `OPENCODE_BROWSER_TUNNEL_ALLOWED_PRIVATE_TARGETS`. Historical native TCP relay/cancellation fixtures are re-enabled with temporary exact-port exemptions. On Windows, the pre-existing HTTP 502 fixture is skipped with a documented baseline comparison and still runs on Linux. This does not authenticate the first attached Desktop or permit WebBridge browser writes. See [ADR 0032](../ADR/0032-native-tunnel-operator-compatibility.fr.md).
 
 Independent E2 follow-up: the Core reference ledger now snapshots the entire validated binding **before** asynchronous authorization, refuses mutation during the await, and preserves spent-call tombstones through `revoke()` to prevent replay of the same call in a later epoch. Tickets use a bounded monotonic lifetime. Regression tests exercise forged plugin/session/action mutation, post-revoke replay, and clock rollback; the ledger remains disconnected from Desktop and **does not authorize writes**.
 
