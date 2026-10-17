@@ -16,6 +16,7 @@
     "test": "npm run build && node scripts/run-tests.mjs",
     "check:backlog": "node scripts/check-backlog.mjs",
     "check:progress": "node scripts/check-progress.mjs",
+    "check:policy": "node scripts/check-provider-policy.mjs",
     "smoke:native": "npm run build && node scripts/smoke-native-provider.mjs",
     "smoke:browser": "npm run build && node scripts/smoke-native-provider.mjs --browser-fixture",
     "smoke:rpc": "npm run build && node scripts/smoke-rpc-relay.mjs",

@@ -17,6 +17,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run check:backlog
       - run: npm run check:progress
+      - run: npm run check:policy
       - run: npm test
 
   native-fixture-smoke:
