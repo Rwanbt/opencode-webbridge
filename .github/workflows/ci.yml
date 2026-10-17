@@ -23,6 +23,8 @@ jobs:
         run: npm run preview:package
       - name: Packaged RPC fixture offline upgrade, tamper denial and rollback
         run: npm run preview:rpc-package
+      - name: G97 combined standalone RPC and model package offline lifecycle
+        run: npm run preview:g97
 
   native-fixture-smoke:
     name: Native fixture smoke (OpenCode 2.0.29)
@@ -42,6 +44,8 @@ jobs:
         run: npm run smoke:rpc-package-native
       - name: G88 installed RPC through official CLI model turn and progressive fake SSE
         run: npm run smoke:packaged-model
+      - name: G97 ONLY one installed tarball registers BOTH native RPC and model
+        run: npm run smoke:g97-native
       - run: npm run smoke:native
       - run: npm run smoke:browser
       - run: npm run smoke:rpc

@@ -27,13 +27,13 @@ async function freePort() {
   return port;
 }
 
-async function smokeNative(profile, env, temp, executable, version, modelBridge) {
+async function smokeNative(profile, env, temp, executable, version, modelBridge, descriptor) {
   const configDir = join(temp, 'native-g81');
   await mkdir(configDir, { recursive: true });
-  const packageDir = join(profile, 'node_modules', fixture.name);
+  const packageDir = join(profile, 'node_modules', descriptor.name);
   const extra = modelBridge ? await modelBridge.prepare({ temp, env, version }) : undefined;
   const config = JSON.stringify({ plugins: [pathToFileURL(packageDir).href,
-    ...(extra ? [pathToFileURL(extra.modelPluginDir).href] : [])] });
+    ...(extra?.modelPluginDir ? [pathToFileURL(extra.modelPluginDir).href] : [])] });
   await writeFile(join(configDir, 'opencode.json'), config);
   const password = randomBytes(32).toString('hex');
   const secret = randomBytes(32).toString('hex');
@@ -76,7 +76,7 @@ async function smokeNative(profile, env, temp, executable, version, modelBridge)
             /webbridge|failed/i.test(item?.id ?? '')).map((item) =>
             ({ id: item.id, state: item.state }))).slice(-700);
           registered = entries.some((item) =>
-            item?.id === fixture.id && item?.state?.status === 'active');
+            item?.id === descriptor.id && item?.state?.status === 'active');
           if (registered) break;
         }
       } catch { /* bounded native startup */ }
@@ -128,36 +128,36 @@ async function smokeNative(profile, env, temp, executable, version, modelBridge)
   }
 }
 
-export async function exerciseRPCPackage({ nativeBin, modelBridge } = {}) {
+export async function exerciseRPCPackage({ nativeBin, modelBridge, descriptor = fixture } = {}) {
   const temp = await mkdtemp(join(tmpdir(), 'webbridge-g81-rpc-package-'));
   const env = isolatedEnvironment(temp);
   try {
     await Promise.all(['home', 'tmp', 'appdata', 'localappdata'].map((dir) => mkdir(join(temp, dir))));
     await Promise.all(['blank.npmrc', 'blank-global.npmrc'].map((file) => writeFile(join(temp, file), '')));
-    const a = await pack(temp, '0.0.1', 'original', env, fixture);
-    const repeat = await pack(temp, '0.0.1', 'repeat', env, fixture);
+    const a = await pack(temp, '0.0.1', 'original', env, descriptor);
+    const repeat = await pack(temp, '0.0.1', 'repeat', env, descriptor);
     if (a.hash !== repeat.hash) throw new Error('RPC tarball is not reproducible');
-    const b = await pack(temp, '0.0.2', 'upgrade', env, fixture);
+    const b = await pack(temp, '0.0.2', 'upgrade', env, descriptor);
     if (a.hash === b.hash) throw new Error('RPC upgrade hash did not change');
     const profile = join(temp, 'profile');
     await mkdir(profile);
-    await install(a, a.hash, env, temp, profile, fixture);
-    await install(b, b.hash, env, temp, profile, fixture);
+    await install(a, a.hash, env, temp, profile, descriptor);
+    await install(b, b.hash, env, temp, profile, descriptor);
     const corrupt = join(temp, 'corrupted.tgz');
     await copyFile(a.tarball, corrupt);
     await writeFile(corrupt, Buffer.concat([await readFile(corrupt), Buffer.from('corrupt')]));
     let denied = false;
-    try { await install({ ...a, tarball: corrupt }, a.hash, env, temp, profile, fixture); }
+    try { await install({ ...a, tarball: corrupt }, a.hash, env, temp, profile, descriptor); }
     catch (error) { if (!/SHA256 mismatch/.test(String(error))) throw error; denied = true; }
-    if (!denied || await installed(profile, fixture) !== '0.0.2') {
+    if (!denied || await installed(profile, descriptor) !== '0.0.2') {
       throw new Error('corrupt archive changed the active RPC package');
     }
-    const upgrade = nativeBin ? await smokeNative(profile, env, temp, nativeBin, '0.0.2', modelBridge) : undefined;
-    await install(a, a.hash, env, temp, profile, fixture);
-    const rollback = nativeBin ? await smokeNative(profile, env, temp, nativeBin, '0.0.1', modelBridge) : undefined;
-    npmCLI(['uninstall', fixture.name, '--prefix', profile, '--offline', '--ignore-scripts',
+    const upgrade = nativeBin ? await smokeNative(profile, env, temp, nativeBin, '0.0.2', modelBridge, descriptor) : undefined;
+    await install(a, a.hash, env, temp, profile, descriptor);
+    const rollback = nativeBin ? await smokeNative(profile, env, temp, nativeBin, '0.0.1', modelBridge, descriptor) : undefined;
+    npmCLI(['uninstall', descriptor.name, '--prefix', profile, '--offline', '--ignore-scripts',
       '--no-save', '--no-package-lock', '--no-audit', '--no-fund'], env, temp);
-    if (existsSync(join(profile, 'node_modules', fixture.name))) throw new Error('RPC fixture uninstall failed');
+    if (existsSync(join(profile, 'node_modules', descriptor.name))) throw new Error('RPC fixture uninstall failed');
     return { sha256: a.hash, upgraded: true, rollback: true, tamperDenied: denied,
       uninstalled: true, native: Boolean(nativeBin), nativeChecks: [upgrade, rollback].filter(Boolean) };
   } finally {

@@ -38,18 +38,21 @@ function runCLI(executable, args, env, cwd) {
   });
 }
 
-export const modelBridge = {
+export function createModelBridge({ directoryModel = true } = {}) { return {
   async prepare({ temp, version }) {
     const modelDist = join(dist, 'native-fixture-plugin.js');
-    if (!existsSync(modelDist)) throw new Error('build local fixture first; never rebuild OpenCode');
+    if (directoryModel && !existsSync(modelDist)) throw new Error('build local fixture first; never rebuild OpenCode');
     const { openFixtureServer } = await import(pathToFileURL(join(dist, 'fixture-inference.js')).href);
-    const modelPluginDir = join(temp, 'model-g88-' + version.replaceAll('.', '-'));
-    await mkdir(modelPluginDir);
-    await writeFile(join(modelPluginDir, 'package.json'), JSON.stringify({
-      name: 'g88-local-model-fixture', type: 'module', version: '0.0.0', main: 'index.mjs',
-    }));
-    await writeFile(join(modelPluginDir, 'index.mjs'),
-      'export { default } from ' + JSON.stringify(pathToFileURL(modelDist).href) + ';\n');
+    let modelPluginDir;
+    if (directoryModel) {
+      modelPluginDir = join(temp, 'model-g88-' + version.replaceAll('.', '-'));
+      await mkdir(modelPluginDir);
+      await writeFile(join(modelPluginDir, 'package.json'), JSON.stringify({
+        name: 'g88-local-model-fixture', type: 'module', version: '0.0.0', main: 'index.mjs',
+      }));
+      await writeFile(join(modelPluginDir, 'index.mjs'),
+        'export { default } from ' + JSON.stringify(pathToFileURL(modelDist).href) + ';\n');
+    }
     const modelToken = randomBytes(32).toString('hex');
     let rpcConnection;
     let requests = 0;
@@ -95,6 +98,17 @@ export const modelBridge = {
         WEBBRIDGE_FIXTURE_URL: fake.baseURL },
       async verify({ url, headers, secret, executable, env, temp }) {
         rpcConnection = { url, headers, secret };
+        if (!directoryModel) {
+          const listed = await fetch(url + '/api/plugin', {
+            headers, signal: AbortSignal.timeout(2_000) });
+          if (!listed.ok) throw new Error('native plugin inventory missing');
+          const entries = (await listed.json()).data;
+          if (!Array.isArray(entries) ||
+            !entries.some((x) => x.id === 'opencode.webbridge.g97-combined-test' && x.state?.status === 'active') ||
+            entries.some((x) => x.id === 'opencode.webbridge.fixture' || x.id === 'opencode.webbridge.rpc-package-fixture')) {
+            throw new Error('native provider provenance not exclusively the combined tarball');
+          }
+        }
         const run = await runCLI(executable, ['run', '--server', url, '--model',
           'webbridge-fixture/webbridge-native-fixture', '--format', 'json', prompt], env, temp);
         if (run.code !== 0 || run.overflow || rpcCalls !== 1 || requests < 1 || requests > 12 ||
@@ -112,7 +126,8 @@ export const modelBridge = {
       close: () => fake.close(),
     };
   },
-};
+}; }
+export const modelBridge = createModelBridge();
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (!existsSync(cli)) throw new Error('pinned repository-local OpenCode 2.0.29 CLI required');
