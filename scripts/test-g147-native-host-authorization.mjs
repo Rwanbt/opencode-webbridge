@@ -113,10 +113,13 @@ test('G147 exact official CLI 2.0.32 HTTP origins receive NO OS-trusted RPC cont
       'Content-Type': 'application/json', 'x-desktop-principal': 'verified', 'x-revocation-epoch': '42' };
     let server;
     try {
-      await Promise.all(['home','tmp','appdata','localappdata','config'].map((x) => mkdir(join(temp, x))));
-      const pluginFile = join(temp, 'g147-probe.mjs');
-      await writeFile(pluginFile, entry);
-      const config = JSON.stringify({ plugins: [pathToFileURL(pluginFile).href] });
+      await Promise.all(['home','tmp','appdata','localappdata','config','plugin'].map((x) => mkdir(join(temp, x))));
+      const pluginDir = join(temp, 'plugin');
+      await writeFile(join(pluginDir, 'package.json'), JSON.stringify({
+        name: 'webbridge-g147-probe', version: '0.0.1', type: 'module', main: 'index.mjs',
+      }));
+      await writeFile(join(pluginDir, 'index.mjs'), entry);
+      const config = JSON.stringify({ plugins: [pathToFileURL(pluginDir).href] });
       await writeFile(join(temp, 'config/opencode.json'), config);
       const sandbox = { ...env, OPENCODE_CONFIG_DIR: join(temp,'config'),
         OPENCODE_CONFIG_CONTENT: config, OPENCODE_SERVER_PASSWORD: password };
@@ -129,12 +132,14 @@ test('G147 exact official CLI 2.0.32 HTTP origins receive NO OS-trusted RPC cont
       let diagnostics = '';
       for (const stream of [server.stdout, server.stderr])
         stream.on('data', (chunk) => { diagnostics = (diagnostics + chunk).slice(-1400); });
-      let loaded = false;
+      let loaded = false, inventorySummary = 'not-reported';
       for (let i = 0; i < 90 && server.exitCode === null; i++) {
         try {
           const response = await fetch(origin + '/api/plugin', { headers, signal: AbortSignal.timeout(700) });
           if (response.ok) {
             const inventory = await response.json();
+            inventorySummary = JSON.stringify(inventory?.data?.map((p) =>
+              ({ id: p.id, state: p.state })) ?? []).slice(-1100);
             loaded = inventory?.data?.some((p) => p.id === 'opencode.webbridge.g147-probe' &&
               p.state?.status === 'active') === true;
             if (loaded) break;
@@ -142,7 +147,8 @@ test('G147 exact official CLI 2.0.32 HTTP origins receive NO OS-trusted RPC cont
         } catch { /* bounded startup retry */ }
         await new Promise((done) => setTimeout(done, 150));
       }
-      assert.ok(loaded, 'official CLI probe plugin not active: ' + diagnostics.replaceAll(password,'[REDACTED]'));
+      assert.ok(loaded, 'official CLI probe plugin not active: inventory=' + inventorySummary +
+        ' log=' + diagnostics.replaceAll(password,'[REDACTED]'));
       const body = { claimedElectron: true, peerPID: process.pid,
         verified: true, ipcSession: 'claimed-electron-main', revocationEpoch: 42 };
       const endpoint = origin + '/api/rpc/webbridge-g147-probe/inspect';
