@@ -43,11 +43,18 @@ function launch(bin, args, cwd, env) {
     shell: process.platform === 'win32' && /\.cmd$/i.test(bin) });
 }
 
-function stop(child) {
-  if (!child) return;
+async function stop(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  let timeout;
+  const closed = new Promise((resolve) => {
+    child.once('close', resolve);
+    timeout = setTimeout(resolve, 5_000);
+  });
   if (process.platform === 'win32' && child.pid) {
     spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
   } else child.kill();
+  await closed;
+  clearTimeout(timeout);
 }
 
 const temp = await mkdtemp(join(tmpdir(), 'webbridge-g4-e2e-'));
@@ -189,11 +196,11 @@ try {
   console.error(`G4 native E2E FAILED: ${safe}; diagnostic=${serverError.slice(-550).replaceAll(secret, '[REDACTED]')}`);
 } finally {
   active = false;
-  stop(runner);
-  stop(server);
+  await stop(runner);
+  await stop(server);
   if (fake) await fake.close();
   if (browserCompanion) await browserCompanion.close();
   if (localPage) await localPage.close();
-  await rm(temp, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
-  await rm(journalDir, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
+  await rm(temp, { recursive: true, force: true, maxRetries: 12, retryDelay: 500 });
+  await rm(journalDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 500 });
 }
