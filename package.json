@@ -19,6 +19,7 @@
     "smoke:browser": "npm run build && node scripts/smoke-native-provider.mjs --browser-fixture",
     "smoke:rpc": "npm run build && node scripts/smoke-rpc-relay.mjs",
     "smoke:e2e": "npm run build && node scripts/smoke-model-rpc-e2e.mjs",
+    "smoke:page": "npm run build && node scripts/smoke-model-rpc-e2e.mjs --real-page",
     "issues:dry-run": "node scripts/sync-github-issues.mjs",
     "issues:sync": "node scripts/sync-github-issues.mjs --apply"
   },
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "playwright": "1.64.1",
     "typescript": "^5.9.3"
   }
 }

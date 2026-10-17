@@ -34,3 +34,6 @@ jobs:
       - run: npm run smoke:browser
       - run: npm run smoke:rpc
       - run: npm run smoke:e2e
+      - name: Install isolated headless Chromium
+        run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run smoke:page

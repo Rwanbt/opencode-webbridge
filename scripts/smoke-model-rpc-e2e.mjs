@@ -1,5 +1,6 @@
 /** Full native model -> authenticated loopback -> OpenCode RPC -> fake companion -> answer. */
 import { randomBytes } from 'node:crypto';
+import { strict as assert } from 'node:assert';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -9,8 +10,11 @@ import { pathToFileURL } from 'node:url';
 import { openFixtureServer } from '../dist/src/testing/fixture-inference.js';
 import { browserFixtureResponder } from '../dist/src/testing/browser-fixture-relay.js';
 import { RpcBrowserFixturePort } from '../dist/src/testing/rpc-browser-port.js';
+import { openLocalChatPage } from '../dist/src/testing/local-chat-page.js';
+import { openLocalBrowserCompanion, submitLocalPageTurn } from '../dist/src/testing/local-browser-companion.js';
 
-const EXPECTED = 'WEBBRIDGE_MODEL_RPC_END_TO_END_OK';
+const useRealPage = process.argv.includes('--real-page');
+const EXPECTED = useRealPage ? 'WEBBRIDGE_LOCAL_PAGE_OK:' : 'WEBBRIDGE_MODEL_RPC_END_TO_END_OK';
 const binding = { sessionID: 'fixture-session', tabID: 'fixture-tab', providerID: 'qwen', accountRef: 'fixture-account' };
 const secret = randomBytes(32).toString('hex');
 const password = randomBytes(32).toString('hex');
@@ -54,6 +58,8 @@ const headers = { Authorization: `Basic ${Buffer.from(`opencode:${password}`).to
 let server;
 let runner;
 let fake;
+let localPage;
+let browserCompanion;
 let serverError = '';
 let active = true;
 let companionJobs = 0;
@@ -122,6 +128,18 @@ try {
     await delay(200);
   }
   if (!ready) throw new Error('isolated OpenCode server startup failed');
+  if (useRealPage) {
+    localPage = await openLocalChatPage();
+    browserCompanion = await openLocalBrowserCompanion();
+    await assert.rejects(
+      submitLocalPageTurn(browserCompanion.page, 'https://example.com/', 'refuse external pages'),
+      /only explicit local test page URLs/,
+    );
+    await assert.rejects(
+      submitLocalPageTurn(browserCompanion.page, new URL('/admin', localPage.url).href, 'refuse other paths'),
+      /only explicit local test page URLs/,
+    );
+  }
 
   const companion = (async () => {
     while (active) {
@@ -130,7 +148,13 @@ try {
       companionJobs++;
       if (typeof next.prompt !== 'string') throw new Error('companion got invalid prompt');
       if (next.prompt.includes('WEBBRIDGE_G4_QUESTION')) sawPrompt = true;
-      const done = await rpc('complete', { turnID: next.turnID, response: EXPECTED });
+      const answer = useRealPage
+        ? await submitLocalPageTurn(browserCompanion.page, localPage.url, next.prompt)
+        : EXPECTED;
+      if (useRealPage && !answer.includes('WEBBRIDGE_G4_QUESTION')) {
+        throw new Error('browser page did not echo the submitted prompt');
+      }
+      const done = await rpc('complete', { turnID: next.turnID, response: answer });
       if (done.accepted !== true) throw new Error('companion completion rejected');
     }
   })().catch((error) => { companionFailure = error; active = false; });
@@ -156,7 +180,7 @@ try {
   if (result !== 0 || !output.includes(EXPECTED) || companionJobs < 1 || !sawPrompt || fake.requests() < 1) {
     throw new Error(`native session or relay incomplete: exit=${result}; jobs=${companionJobs}; receivedPrompt=${sawPrompt}; HTTP=${fake.requests()}`);
   }
-  console.log(`G4 native model-to-RPC-to-companion E2E PASS: HTTP=${fake.requests()}, companionJobs=${companionJobs}, RPC=${rpcCalls}, response=true`);
+  console.log(`G4 native model-to-RPC-to-${useRealPage ? 'real-local-browser' : 'fake-companion'} E2E PASS: HTTP=${fake.requests()}, companionJobs=${companionJobs}, RPC=${rpcCalls}, response=true`);
 } catch (error) {
   process.exitCode = 1;
   const safe = String(error).replaceAll(secret, '[REDACTED]').replaceAll(password, '[REDACTED]').replaceAll(modelToken, '[REDACTED]');
@@ -166,5 +190,7 @@ try {
   stop(runner);
   stop(server);
   if (fake) await fake.close();
+  if (browserCompanion) await browserCompanion.close();
+  if (localPage) await localPage.close();
   await rm(temp, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
 }
