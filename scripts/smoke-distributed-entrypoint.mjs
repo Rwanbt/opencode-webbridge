@@ -180,9 +180,14 @@ async function nativeProof(temp, env, entry, bin, fixture) {
       await fixture.beforeNativeTurn?.({ base, headers, temp });
       const run = await runCLI(bin, ['run', '--server', base, '--model',
         'webbridge-fixture/webbridge-native-fixture', '--format', 'json',
-        fixture.prompt ?? 'G150_LOCAL_TEST_MODEL_PROMPT'], sandbox, temp, { timeoutMs: 50_000 });
-      if (run.code !== 0 || !run.stdout.includes(fixture.expected ?? 'G150_ACTUAL_ROOT_LOCAL_OK') ||
-          !fixture.requests()) throw new Error('G150 selected actual root fixture model CLI native SSE failed');
+        fixture.prompt ?? 'G150_LOCAL_TEST_MODEL_PROMPT'], sandbox, temp,
+        { timeoutMs: fixture.timeoutMs ?? 50_000 });
+      const outputSeen = run.stdout.includes(fixture.expected ?? 'G150_ACTUAL_ROOT_LOCAL_OK');
+      const requestSeen = Boolean(fixture.requests());
+      if (run.code !== 0 || run.overflow || !outputSeen || !requestSeen)
+        throw new Error('G150 selected actual root fixture model CLI native SSE failed' +
+          ' (exit=' + run.code + ', overflow=' + run.overflow +
+          ', expectedOutput=' + outputSeen + ', requests=' + requestSeen + ')');
       await fixture.afterNativeTurn?.({ base, headers, temp });
     }
     proof = Object.freeze({ officialCLI: true, rootPluginActive: true,

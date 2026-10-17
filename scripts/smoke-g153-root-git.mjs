@@ -6,8 +6,13 @@ import { createG153GitToolHost } from './g153-git-tool-host.mjs';
 if (process.platform !== 'linux') throw new Error('G153 true Git root CI Linux only');
 const result = await proveActualEntrypoint({
   native: true,
-  localFactory: (input) => createG152RootVerticalHost({
-    ...input, hostFactory: createG153GitToolHost,
+  localFactory: async (input) => ({
+    ...await createG152RootVerticalHost({
+      ...input, hostFactory: createG153GitToolHost,
+    }),
+    // Three fsynced Git tool receipts + native model turn contend with ten
+    // other hosted CI jobs. Keep a bounded per-G153 budget, not a global bump.
+    timeoutMs: 120_000,
   }),
 });
 assert.equal(result.rootPluginActive, true);
