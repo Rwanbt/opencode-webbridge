@@ -95,3 +95,19 @@ test('a cross-session caller can never obtain another session receipt', () => {
   const e = b.executed(r1.operation.operationID);
   assert.ok(e && e.status === 'executed');
 });
+
+test('an uncertain operation is terminal: never relabelled, never retried', () => {
+  const b = new ToolBroker();
+  const r = b.reserve(base);
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  assert.equal(b.uncertain(r.operation.operationID), null); // only from consented
+  b.consent(r.operation.operationID, 2);
+  const u = b.uncertain(r.operation.operationID);
+  assert.ok(u && u.status === 'uncertain');
+  // Terminal: never relabelled applied/not-applied, never re-consented, never re-run.
+  assert.equal(b.fail(r.operation.operationID, 'failed'), null);
+  assert.equal(b.executed(r.operation.operationID), null);
+  assert.equal(b.consent(r.operation.operationID, 3), null);
+  assert.equal(b.uncertain(r.operation.operationID), null);
+});

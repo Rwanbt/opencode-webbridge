@@ -6,7 +6,7 @@
  * new ID. Reservation alone is NOT execution authorization.
  */
 
-export type OperationStatus = 'reserved' | 'consented' | 'executed' | 'failed' | 'cancelled';
+export type OperationStatus = 'reserved' | 'consented' | 'executed' | 'failed' | 'cancelled' | 'uncertain';
 
 export interface Operation {
   readonly operationID: string;
@@ -94,11 +94,25 @@ export class ToolBroker {
     return next;
   }
 
+  /**
+   * Mark an operation UNCERTAIN after an execution attempt whose outcome
+   * cannot be proven (executor failure, lost/revoked authority after the
+   * effect may have run). Terminal: it can never be relabelled as applied or
+   * not-applied and can never be auto-retried; reconciliation decides.
+   */
+  uncertain(operationID: string): Operation | null {
+    const op = this.ops.get(operationID);
+    if (!op || op.status !== 'consented') return null;
+    const next: Operation = { ...op, status: 'uncertain' };
+    this.ops.set(operationID, next);
+    return next;
+  }
+
   /** Mark failed/cancelled. */
   fail(operationID: string, status: 'failed' | 'cancelled'): Operation | null {
     const op = this.ops.get(operationID);
     if (!op) return null;
-    if (op.status === 'executed') return null; // terminal success is immutable
+    if (op.status === 'executed' || op.status === 'uncertain') return null; // terminal states are immutable
     const next: Operation = { ...op, status };
     this.ops.set(operationID, next);
     return next;
