@@ -6,4 +6,6 @@ Le relais WebBridge G3–G10 délivrait sa réponse seulement à la fin. Le nouv
 
 Le `BrowserPort` de test consomme maintenant les événements ordonnés du RPC plutôt que de reconstituer toute la réponse à partir du seul résultat final. Les smokes de modèle OpenCode 2.0.29 + RPC + Chromium local doivent couvrir `submit → take → progress → complete → observe`, sans accès aux cinq services commerciaux.
 
+**Régression G12 RED→GREEN :** un client qui avait déjà consommé le fragment `seq=1` pouvait recevoir immédiatement des listes vides en demandant `observe(afterSeq=1)`, épuiser son budget de lectures et déclarer prématurément le tour incertain. Le relais attend maintenant **un événement avec `seq > afterSeq`**, pas simplement la présence d'un fragment historique. Le test spécifique vérifie que `observe` reste bloqué jusqu'à l'arrivée du fragment suivant.
+
 **Limites :** cela valide l'infrastructure de streaming et ses invariants, pas le streaming DOM d'un véritable site. Aucun outil ni compte web n'est activé. L'interruption d'un travail déjà remis au navigateur reste **incertaine**, jamais faussement signalée comme arrêtée. Il faut encore instrumenter et valider la progression réelle auprès d'une API navigateur autorisée et relier les événements au rendu natif de session.

@@ -98,3 +98,23 @@ test('progress enforces ownership, lease, size and event count before any mutati
   assert.equal((await relay.events(binding, 'stream-1', 0)).length, 63);
   await relay.release(binding);
 });
+
+test('observe with a consumed cursor waits for the NEXT event instead of spinning empty', async () => {
+  const relay = new RpcRelayPort(secret);
+  await relay.claim(binding);
+  await relay.submit(binding, { turnID: 'progress-wait', prompt: 'hello' });
+  relay.take(secret, binding);
+  relay.append(secret, binding, 'progress-wait', 'first');
+  assert.equal((await relay.events(binding, 'progress-wait', 0)).length, 1);
+  let returned = false;
+  const next = relay.events(binding, 'progress-wait', 1).then((events) => { returned = true; return events; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(returned, false, 'consumed cursor must block until newer progress/terminal event');
+  relay.append(secret, binding, 'progress-wait', '-second');
+  assert.deepEqual(await next, [
+    { seq: 2, kind: 'text', turnID: 'progress-wait', value: '-second' },
+  ]);
+  relay.complete(secret, binding, 'progress-wait', 'first-second');
+  await relay.release(binding);
+});
