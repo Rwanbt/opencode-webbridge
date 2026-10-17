@@ -4,7 +4,7 @@ index 14732fdd75..a8230b27ae 100644
 +++ b/packages/core/src/agent.ts
 @@ -38,6 +38,8 @@ export type Editor = {
  }
-
+ 
  export interface Interface extends State.Transformable<Editor> {
 +  /** Synchronous in-process policy invalidation epoch. */
 +  readonly revision?: () => number
@@ -17,7 +17,7 @@ index 14732fdd75..a8230b27ae 100644
      }
 +    // Callers must not mutate State without passing through transform/reload (and its revision).
 +    const snapshot = (info: Info | undefined) => (info ? structuredClone(info) : undefined)
-
+ 
      return Service.of({
 +      revision: state.revision,
        transform: state.transform,
@@ -62,7 +62,7 @@ index 2aecebb0ce..758726c33c 100644
  import { PluginHooks } from "./plugin/hooks.js"
 +import { BrowserLease } from "./plugin/browser-lease.js"
 +import { SessionEvent } from "@opencode/schema/session-event"
-
+ 
  const PermissionEffect = Permission.Effect
  export { PermissionEffect as Effect }
 @@ -108,6 +110,9 @@ export interface Interface {
@@ -73,7 +73,7 @@ index 2aecebb0ce..758726c33c 100644
 +  /** Optional in test doubles; real Permission.Service always supplies this authority. */
 +  readonly browserRead?: ReturnType<typeof BrowserLease.make>
  }
-
+ 
  export class Service extends Context.Service<Service, Interface>()("@opencode/Permission") {}
 @@ -129,9 +134,13 @@ const layer = Layer.effect(
      const hooks = yield* PluginHooks.Service
@@ -82,7 +82,7 @@ index 2aecebb0ce..758726c33c 100644
 +    let agentRevision = agents.revision?.()
 +    let savedRevision = saved.revision?.()
 +    let hookRevision = hooks.permissionRevision?.()
-
+ 
      const close = Effect.gen(function* () {
        closed = true
 +      browserRead.retire()
@@ -92,7 +92,7 @@ index 2aecebb0ce..758726c33c 100644
 @@ -228,7 +237,7 @@ const layer = Layer.effect(
        return { id: value.id, effect: result.effect }
      })
-
+ 
 -    const assert = Effect.fn("Permission.assert")((input: AssertInput) =>
 +    const assert = Effect.fn("Permission.assert")((input: AssertInput, options?: { readonly forceInteractive?: boolean }) =>
        Effect.gen(function* () {
@@ -112,7 +112,7 @@ index 2aecebb0ce..758726c33c 100644
 @@ -262,6 +273,58 @@ const layer = Layer.effect(
        }),
      )
-
+ 
 +    // Core authority owns the lease epoch, not a plugin-supplied predicate. This deliberately
 +    // supports only a read action; external session/agent/saved-rule changes still require
 +    // an atomic mutation hook before this can be trusted for browser effect dispatch.
@@ -170,7 +170,7 @@ index 2aecebb0ce..758726c33c 100644
          Effect.gen(function* () {
 @@ -274,6 +337,7 @@ const layer = Layer.effect(
            })
-
+ 
            if (input.reply === "reject") {
 +            browserRead.revoke()
              yield* Deferred.fail(
@@ -179,19 +179,19 @@ index 2aecebb0ce..758726c33c 100644
 @@ -336,7 +400,7 @@ const layer = Layer.effect(
        return Array.from(pending.values(), (item) => item.request).filter((request) => request.sessionID === sessionID)
      })
-
+ 
 -    return Service.of({ ask, assert, reply, get, forSession, list, close })
 +    return Service.of({ ask, assert, reply, get, forSession, list, close, browserRead })
    }),
  )
-
+ 
 diff --git a/packages/core/src/permission/saved.ts b/packages/core/src/permission/saved.ts
 index 8ba50b16be..3a65c4141a 100644
 --- a/packages/core/src/permission/saved.ts
 +++ b/packages/core/src/permission/saved.ts
 @@ -27,6 +27,7 @@ export const AddInput = Schema.Struct({
  export type AddInput = typeof AddInput.Type
-
+ 
  export interface Interface {
 +  readonly revision?: () => number
    readonly list: (input?: ListInput) => Effect.Effect<ReadonlyArray<Info>>
@@ -202,11 +202,11 @@ index 8ba50b16be..3a65c4141a 100644
    Effect.gen(function* () {
      const db = (yield* Database.Service).db
 +    let revision = 0
-
+ 
      const list = Effect.fnUntraced(function* (input?: ListInput) {
        const rows = yield* db
 @@ -62,6 +64,7 @@ const layer = Layer.effect(
-
+ 
      const add = Effect.fn("PermissionSaved.add")(function* (input: AddInput) {
        if (!input.resources.length) return
 +      revision++ // Invalidates permission leases before asynchronous DB mutation.
@@ -219,18 +219,18 @@ index 8ba50b16be..3a65c4141a 100644
          .pipe(Effect.orDie)
 +      revision++ // A concurrent read made during the mutation must also be invalidated.
      })
-
+ 
      const remove = Effect.fn("PermissionSaved.remove")(function* (id: ID) {
 +      revision++
        yield* db.delete(PermissionTable).where(eq(PermissionTable.id, id)).run().pipe(Effect.orDie)
 +      revision++
      })
-
+ 
 -    return Service.of({ list, add, remove })
 +    return Service.of({ list, add, remove, revision: () => revision })
    }),
  )
-
+ 
 diff --git a/packages/core/src/plugin.ts b/packages/core/src/plugin.ts
 index 8ade682658..218870e15a 100644
 --- a/packages/core/src/plugin.ts
@@ -242,7 +242,7 @@ index 8ade682658..218870e15a 100644
 +import { PluginInternal } from "./plugin/internal.js"
  import { type Failure, type Generation, Service } from "./plugin/service.js"
  import { State } from "./state.js"
-
+ 
 @@ -61,9 +62,15 @@ const layer = Layer.effect(
            release: holdUnsafe(),
          })
@@ -264,10 +264,10 @@ index 8ade682658..218870e15a 100644
          Effect.updateContext((context: Context.Context<never>) =>
 diff --git a/packages/core/src/plugin/browser-lease.ts b/packages/core/src/plugin/browser-lease.ts
 new file mode 100644
-index 0000000000..383f9516ea
+index 0000000000..49887aafe8
 --- /dev/null
 +++ b/packages/core/src/plugin/browser-lease.ts
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,147 @@
 +export * as BrowserLease from "./browser-lease.js"
 +
 +import { Effect, Exit } from "effect"
@@ -313,6 +313,8 @@ index 0000000000..383f9516ea
 +  readonly authorizeTimeoutMs?: number
 +}) {
 +  const pending = new Map<string, { binding: Binding; epoch: number; expires: number }>()
++  // Keep only consumed leases for the host-side revalidation window; not a durable ledger.
++  const consumed = new Map<string, { binding: Binding; epoch: number; expires: number }>()
 +  const reserved = new Set<string>()
 +  const clock = input.clock ?? (() => performance.now())
 +  const ttlMs = input.ttlMs ?? 5000
@@ -383,7 +385,7 @@ index 0000000000..383f9516ea
 +      const item = pending.get(ticket.id)
 +      if (!item) return false
 +      pending.delete(ticket.id) // Fail closed even on a mismatched or expired attempt.
-+      return (
++      const accepted = (
 +        !retired &&
 +        now() < item.expires &&
 +        valid(actual) &&
@@ -391,6 +393,17 @@ index 0000000000..383f9516ea
 +        input.live(actual) &&
 +        item.epoch === epoch
 +      )
++      if (accepted) consumed.set(ticket.id, item)
++      return accepted
++    },
++    /** Revalidate a consumed read's authoritative epoch at host commit and before accepting its result. */
++    current: (ticket: Ticket, actual: Binding) => {
++      const item = consumed.get(ticket.id)
++      if (!item) return false
++      const permitted = !retired && now() < item.expires && valid(actual) &&
++        same(item.binding, actual) && input.live(actual) && item.epoch === epoch
++      if (!permitted) consumed.delete(ticket.id)
++      return permitted
 +    },
 +    revoke,
 +    retire: () => {
@@ -404,10 +417,10 @@ index 0000000000..383f9516ea
 +}
 diff --git a/packages/core/src/plugin/browser.ts b/packages/core/src/plugin/browser.ts
 new file mode 100644
-index 0000000000..e703690bed
+index 0000000000..0ed6d6bead
 --- /dev/null
 +++ b/packages/core/src/plugin/browser.ts
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,113 @@
 +export * as PluginBrowser from "./browser.js"
 +
 +import type { BrowserDomain, BrowserDriver } from "@opencode/plugin/effect/browser"
@@ -484,7 +497,8 @@ index 0000000000..e703690bed
 +            if (driver !== owner || retired || !BrowserTurn.valid(input.context) ||
 +                !authority.consume(ticket, binding) || !BrowserTurn.consume(input.context))
 +              return Effect.fail(new Error("Browser grant expired or already consumed"))
-+            return bound.read()
++            // The host MUST check again after RPC retrieval, before Desktop commit.
++            return bound.read(() => driver === owner && !retired && authority.current(ticket, binding))
 +          })
 +        }),
 +      tabs: (input) =>
@@ -526,7 +540,7 @@ index 1325837f9d..4b42cdcdd5 100644
 +++ b/packages/core/src/plugin/hooks.ts
 @@ -40,6 +40,8 @@ const eventProviderID = (event: unknown) => {
  }
-
+ 
  export interface Interface {
 +  /** Synchronous invalidation for permission-hook registrations and removals. */
 +  readonly permissionRevision?: () => number
@@ -539,7 +553,7 @@ index 1325837f9d..4b42cdcdd5 100644
      const callbacks = new Map<string, Entry[]>()
 +    let permissionRevision = 0
      const key = (domain: keyof Domains, name: PropertyKey) => `${domain}.${String(name)}`
-
+ 
      const register: Interface["register"] = Effect.fn("PluginHooks.register")(
 @@ -73,12 +76,14 @@ const layer = Layer.effect(
          let active = true
@@ -559,12 +573,12 @@ index 1325837f9d..4b42cdcdd5 100644
 @@ -101,7 +106,7 @@ const layer = Layer.effect(
          ),
        )
-
+ 
 -    return Service.of({ has, register, trigger })
 +    return Service.of({ has, register, trigger, permissionRevision: () => permissionRevision })
    }),
  )
-
+ 
 diff --git a/packages/core/src/plugin/host.ts b/packages/core/src/plugin/host.ts
 index d6d2781ad2..7def490eab 100644
 --- a/packages/core/src/plugin/host.ts
@@ -576,7 +590,7 @@ index d6d2781ad2..7def490eab 100644
 +import { PluginBrowser } from "./browser.js"
  import type { Interface } from "../plugin.js"
  import { LayerNode } from "@opencode/util/effect/layer-node"
-
+ 
 @@ -67,8 +68,12 @@ export const make = Effect.fn("PluginHost.make")(function* (
    const websearch = yield* WebSearch.Service
    const generate = yield* Generate.Service
@@ -609,7 +623,7 @@ index d6d2781ad2..7def490eab 100644
 +    readonly browserFor: typeof browser
 +  }
  })
-
+ 
  export const requirements = LayerNode.group([
 diff --git a/packages/core/src/plugin/internal.ts b/packages/core/src/plugin/internal.ts
 index f6239be4cb..d2e5b04ced 100644
@@ -618,7 +632,7 @@ index f6239be4cb..d2e5b04ced 100644
 @@ -273,16 +273,21 @@ const post = [
  // organization statements, so plugin remove operations skip these IDs.
  export const guarded: ReadonlySet<string> = new Set([OpencodePlugin.id, ConfigPolicyPlugin.Plugin.id])
-
+ 
 +// A generation's `source` is descriptive metadata, not proof of builtin provenance.
 +// Remember the precise first-party function created by this loader; plugins cannot
 +// acquire driver authority by omitting source or borrowing the builtin's ID.
@@ -758,10 +772,10 @@ index 0000000000..6a3e974291
 +}
 diff --git a/packages/core/test/permission-browser-lease.test.ts b/packages/core/test/permission-browser-lease.test.ts
 new file mode 100644
-index 0000000000..f9566894b7
+index 0000000000..a3ac1e1cb4
 --- /dev/null
 +++ b/packages/core/test/permission-browser-lease.test.ts
-@@ -0,0 +1,437 @@
+@@ -0,0 +1,446 @@
 +import { Tool } from "@opencode/schema/tool"
 +import { SessionMessage } from "@opencode/schema/session-message"
 +import { BrowserTurn } from "@opencode/core/tool/browser-turn"
@@ -1167,6 +1181,7 @@ index 0000000000..f9566894b7
 +      workspaceID: "wrk_scoped" as never })
 +    let lookups = 0
 +    let reads = 0
++    let hostProof: (() => boolean) | undefined
 +    let revokeBeforeConsume = false
 +    const broker = PluginBrowser.make(permission, {
 +      location,
@@ -1182,7 +1197,12 @@ index 0000000000..f9566894b7
 +      snapshot: () => Effect.die("legacy snapshot must stay blocked"),
 +      bindSnapshot: () => Effect.succeed({
 +        binding: { connectionID: "local_fixture", tabGeneration: 1 },
-+        read: () => Effect.sync(() => { reads++; return { content: "offline", truncated: false } }),
++        read: (stillAuthorized) => Effect.sync(() => {
++          hostProof = stillAuthorized
++          if (!stillAuthorized()) throw new Error("Core permission revoked before Desktop read")
++          reads++
++          return { content: "offline", truncated: false }
++        }),
 +      }),
 +    })
 +    const context = (id: string) => ({
@@ -1192,6 +1212,9 @@ index 0000000000..f9566894b7
 +    const first = context("call_approved")
 +    expect((yield* BrowserTurn.withContext(first, caller.snapshotOnce({ context: first, tabID: "tab_local" }))).content)
 +      .toBe("offline")
++    expect(hostProof?.()).toBe(true)
++    permission.browserRead!.revoke()
++    expect(hostProof?.()).toBe(false) // A host delayed beyond Core consume may no longer commit.
 +    revokeBeforeConsume = true
 +    const denied = context("call_revoked")
 +    expect(Exit.isFailure(yield* Effect.exit(BrowserTurn.withContext(denied,
@@ -1940,15 +1963,31 @@ index 108846d5ac..0ca9e11d0d 100644
      transform: (callback) =>
        providers.transform((editor) =>
 diff --git a/packages/gui-extensions/src/browser/pane.ts b/packages/gui-extensions/src/browser/pane.ts
-index 91de480703..7dd3e1e9b9 100644
+index 91de480703..521354877f 100644
 --- a/packages/gui-extensions/src/browser/pane.ts
 +++ b/packages/gui-extensions/src/browser/pane.ts
-@@ -238,7 +238,30 @@ export function createBrowserPane(input: {
+@@ -13,6 +13,7 @@ import { destinationOrigin, fileURLWithin, refusal } from "./policy"
+ import { createRefs } from "./refs"
+ import type { PaneEvent } from "./ipc"
+ import { createBrowserRestoreStore } from "./restore"
++import { desktopReadCommitGate } from "./read-commit-gate"
+ 
+ type Target = { readonly server: string; readonly session: string; readonly restore?: Browser.State }
+ 
+@@ -238,7 +239,38 @@ export function createBrowserPane(input: {
                    entry.requests.set(message.requestID, { abort })
                    yield* rpc.command({ ...attachment, requestID: message.requestID }, options).pipe(
                      Effect.flatMap((command) =>
 -                      Effect.promise(async () => {
 +                      Effect.gen(function* () {
++                        // Even a forged direct Desktop RPC may not fetch document text
++                        // without a host-issued one-use read commit. Read tickets do
++                        // not authorize other commands.
++                        if (!desktopReadCommitGate(command.action.type, command.readCommit)) {
++                          reply(message.requestID, { type: "failure", code: "unavailable",
++                            message: "Browser snapshot requires native read authorization." })
++                          return
++                        }
 +                        if (command.readCommit) {
 +                          const live = () =>
 +                            command.action.type === "snapshot" &&
@@ -1975,7 +2014,7 @@ index 91de480703..7dd3e1e9b9 100644
                          entry.requests.set(
                            message.requestID,
                            "tabID" in command.action ? { abort, tabID: command.action.tabID } : { abort },
-@@ -250,6 +273,7 @@ export function createBrowserPane(input: {
+@@ -250,6 +282,7 @@ export function createBrowserPane(input: {
                              (cause: unknown) => browserFailure(command.action, cause),
                            ),
                          )
@@ -1983,22 +2022,68 @@ index 91de480703..7dd3e1e9b9 100644
                        }),
                      ),
                      Effect.ensuring(Effect.sync(() => entry.requests.delete(message.requestID))),
+diff --git a/packages/gui-extensions/src/browser/read-commit-gate.test.ts b/packages/gui-extensions/src/browser/read-commit-gate.test.ts
+new file mode 100644
+index 0000000000..07d138bde3
+--- /dev/null
++++ b/packages/gui-extensions/src/browser/read-commit-gate.test.ts
+@@ -0,0 +1,24 @@
++import { expect, test } from "bun:test"
++import { desktopReadCommitGate } from "./read-commit-gate"
++
++test("direct IPC snapshot without native host read commit is denied before any effect", () => {
++  let effects = 0
++  const dispatch = (type: string, ticket?: unknown) => {
++    if (!desktopReadCommitGate(type, ticket)) return false
++    effects++
++    return true
++  }
++  for (const forged of [undefined, null, "", false, 0]) {
++    expect(dispatch("snapshot", forged)).toBe(false)
++  }
++  expect(effects).toBe(0)
++  expect(dispatch("snapshot", "one-use-host-ticket")).toBe(true)
++  expect(effects).toBe(1)
++})
++
++test("a snapshot ticket never upgrades another desktop command", () => {
++  for (const action of ["navigate", "click", "fill", "submit", "tabs.list"]) {
++    expect(desktopReadCommitGate(action, "borrowed-read-ticket")).toBe(false)
++  }
++  expect(desktopReadCommitGate("tabs.list", undefined)).toBe(true)
++})
+diff --git a/packages/gui-extensions/src/browser/read-commit-gate.ts b/packages/gui-extensions/src/browser/read-commit-gate.ts
+new file mode 100644
+index 0000000000..96a8254930
+--- /dev/null
++++ b/packages/gui-extensions/src/browser/read-commit-gate.ts
+@@ -0,0 +1,9 @@
++/**
++ * Browser snapshots disclose page content. Never execute one from an IPC
++ * command unless the command carries a one-use Core/host read-commit ticket.
++ * Other actions cannot borrow this snapshot authority.
++ */
++export function desktopReadCommitGate(actionType: string, ticket: unknown): boolean {
++  if (actionType === "snapshot") return typeof ticket === "string" && ticket.length > 0
++  return ticket === undefined
++}
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
-index 4c6838c70f..8f14f69791 100644
+index 4c6838c70f..e902c8f6e4 100644
 --- a/packages/plugin-browser/src/connection.ts
 +++ b/packages/plugin-browser/src/connection.ts
-@@ -12,7 +12,9 @@ type Attachment = {
+@@ -12,7 +12,10 @@ type Attachment = {
    connectionID: string
    state: Browser.State
    closed: Deferred.Deferred<"closed" | "replaced">
 -  pending: Map<string, { command: Browser.Command; result: Deferred.Deferred<Browser.Result, Tool.Error> }>
 +  pending: Map<string, { command: Browser.Command; result: Deferred.Deferred<Browser.Result, Tool.Error>;
 +    read?: { readonly ticket: string; readonly tabID: Browser.TabID; readonly generation: number;
-+      readonly expires: number; consumed: boolean; committed: boolean } }>
++      readonly expires: number; readonly authorized: () => boolean;
++      consumed: boolean; committed: boolean } }>
    tunnels: BrowserTunnel.Tunnels
  }
-
-@@ -80,7 +82,10 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+ 
+@@ -80,7 +83,10 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
            const session = yield* ctx.session
              .get({ sessionID: input.sessionID })
              .pipe(Effect.mapError(() => call.error("unavailable", "Session not found.", {})))
@@ -2010,7 +2095,7 @@ index 4c6838c70f..8f14f69791 100644
              return yield* Effect.fail(call.error("unavailable", "Session belongs to another location.", {}))
            const browser = yield* Effect.acquireRelease(
              Effect.gen(function* () {
-@@ -120,6 +125,17 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -120,6 +126,18 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              return yield* Effect.fail(call.error("unavailable", "Browser request is no longer available.", {}))
            return pending.command
          }),
@@ -2022,23 +2107,24 @@ index 4c6838c70f..8f14f69791 100644
 +          if (!read || read.consumed) return false
 +          read.consumed = true // Burn BEFORE any comparison; no second guess or retry.
 +          read.committed = performance.now() < read.expires && read.ticket === input.ticket &&
++            read.authorized() &&
 +            browser.state.tabs.some((tab) => tab.id === read.tabID && tab.generation === read.generation)
 +          return read.committed
 +        }),
        result: (input, call) =>
          Effect.gen(function* () {
            const browser = browsers.get(input.sessionID)
-@@ -127,6 +143,9 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -127,6 +145,9 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              return yield* Effect.fail(call.error("unavailable", "Browser is unavailable.", {}))
            const pending = browser.pending.get(input.requestID)
            if (!pending) return
-+          if (pending.read && (!pending.read.committed || !browser.state.tabs.some((tab) =>
++          if (pending.read && (!pending.read.committed || !pending.read.authorized() || !browser.state.tabs.some((tab) =>
 +            tab.id === pending.read!.tabID && tab.generation === pending.read!.generation)))
 +            return yield* Effect.fail(call.error("unavailable", "Uncommitted or stale read cannot return a result.", {}))
            if (input.outcome.type === "failure")
              return yield* Deferred.fail(
                pending.result,
-@@ -177,8 +196,10 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -177,8 +198,10 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              "[browser.tab_unavailable] This tab is closed or does not belong to the connected session. Call browser.tabs.list({}) and use an exact returned tabID. If no tabs exist, use browser.tabs.open({}). Never substitute a request ID, file ID, or element ref for tabID.",
          })
        // Keep the selected attachment and document, even while permissions or file IO wait.
@@ -2049,7 +2135,7 @@ index 4c6838c70f..8f14f69791 100644
          inspect: () =>
            request(rpc, browser, action, tab, [], { inspect: true }).pipe(
              Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
-@@ -194,7 +215,31 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -194,7 +217,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              ),
            ),
          request: (files: readonly Browser.File[], target?: Browser.Target) =>
@@ -2068,45 +2154,47 @@ index 4c6838c70f..8f14f69791 100644
 +            return yield* request(rpc, browser, action, tab, files, { target })
 +          }),
 +        /** Core-authorized read only; never grants a write action. */
-+        requestOnce: (files: readonly Browser.File[]) =>
++        requestOnce: (files: readonly Browser.File[], stillAuthorized?: () => boolean) =>
 +          Effect.gen(function* () {
-+            if (once || action.type !== "snapshot" || !tab || files.length) {
++            if (once || action.type !== "snapshot" || !tab || files.length || !stillAuthorized) {
 +              return yield* new Tool.Error({ message: "Read-only one-shot snapshot unavailable or already consumed." })
 +            }
 +            once = true // Burn before any asynchronous work, including disconnection.
++            if (!stillAuthorized())
++              return yield* new Tool.Error({ message: "Core permission was revoked before snapshot dispatch." })
 +            if (!active || browsers.get(sessionID) !== browser ||
 +              browser.state.tabs.find((item) => item.id === tab.id)?.generation !== tab.generation)
 +              return yield* new Tool.Error({ message: "Read-only snapshot attachment or tab changed." })
-+            return yield* request(rpc, browser, action, tab, [], {}, true)
++            return yield* request(rpc, browser, action, tab, [], {}, stillAuthorized)
 +          }),
        }
      }),
    }
-@@ -207,6 +252,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -207,6 +256,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
    tab: Browser.Tab | undefined,
    files: readonly Browser.File[],
    inspection: Pick<Browser.Command, "inspect" | "target">,
-+  readOnce = false,
++  readGuard?: () => boolean,
  ) {
    const requestID = crypto.randomUUID()
    const pending = yield* Deferred.make<Browser.Result, Tool.Error>()
-@@ -214,9 +260,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -214,9 +264,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
      (action.type === "files.upload" || action.type === "files.drop") && !inspection.inspect
        ? { ...action, paths: files.map((file) => file.name) }
        : action
-+  const ticket = readOnce ? crypto.randomUUID() : undefined
++  const ticket = readGuard ? crypto.randomUUID() : undefined
    browser.pending.set(requestID, {
 -    command: { action: command, ...(tab ? { generation: tab.generation } : {}), files, ...inspection },
 +    command: { action: command, ...(tab ? { generation: tab.generation } : {}), files, ...inspection,
 +      ...(ticket ? { readCommit: ticket } : {}) },
      result: pending,
 +    ...(ticket && tab ? { read: { ticket, tabID: tab.id, generation: tab.generation,
-+      expires: performance.now() + 5000, consumed: false, committed: false } } : {}),
++      expires: performance.now() + 5000, authorized: readGuard!, consumed: false, committed: false } } : {}),
    })
    return yield* rpc.events.emit("control", { type: "command", connectionID: browser.connectionID, requestID }).pipe(
      Effect.mapError(
 diff --git a/packages/plugin-browser/src/index.ts b/packages/plugin-browser/src/index.ts
-index 3ef7c6b877..7e3550a906 100644
+index 3ef7c6b877..67ff73dcd1 100644
 --- a/packages/plugin-browser/src/index.ts
 +++ b/packages/plugin-browser/src/index.ts
 @@ -1,13 +1,46 @@
@@ -2118,7 +2206,7 @@ index 3ef7c6b877..7e3550a906 100644
 +import { Browser } from "./rpc.js"
 +
 +const Snapshot = Schema.Struct({ content: Schema.String, truncated: Schema.Boolean })
-
+ 
  export default Plugin.define({
    id: "opencode.browser",
    effect: (ctx) =>
@@ -2146,9 +2234,9 @@ index 3ef7c6b877..7e3550a906 100644
 +              const target = yield* connection.target(input.sessionID, { type: "snapshot", tabID })
 +              return {
 +                binding: target.binding,
-+                read: () =>
++                read: (stillAuthorized) =>
 +                  target
-+                    .requestOnce([])
++                    .requestOnce([], stillAuthorized)
 +                    .pipe(Effect.flatMap((result) => Schema.decodeUnknownEffect(Snapshot)(result.value))),
 +              }
 +            }),
@@ -2249,10 +2337,10 @@ index 0000000000..cbfd5b5d12
 +})
 diff --git a/packages/plugin-browser/test/read-commit.test.ts b/packages/plugin-browser/test/read-commit.test.ts
 new file mode 100644
-index 0000000000..07dff63c0b
+index 0000000000..c1427a3a5d
 --- /dev/null
 +++ b/packages/plugin-browser/test/read-commit.test.ts
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,184 @@
 +import { expect, test } from "bun:test"
 +import { Deferred, Effect, Exit, Fiber, Stream } from "effect"
 +import { AbsolutePath } from "@opencode/schema/schema"
@@ -2312,7 +2400,7 @@ index 0000000000..07dff63c0b
 +
 +test("read-only host commit burns one grant before rendering and rejects forged/duplicate commit", async () => {
 +  await harness(({ target, commands, next, base }) => Effect.gen(function* () {
-+    const first = yield* target.requestOnce([]).pipe(Effect.forkScoped({ startImmediately: true }))
++    const first = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
 +    const requestID = yield* Deferred.await(next)
 +    const caller = { error: (_: string, msg: string) => new Error(msg) }
 +    const command = yield* commands.command({ ...base, requestID }, caller)
@@ -2324,13 +2412,13 @@ index 0000000000..07dff63c0b
 +      value: { content: "WEBBRIDGE_LOCAL_PAGE_OK:fixture", truncated: false }, files: [],
 +    } } }, caller)))).toBe(true)
 +    yield* Fiber.interrupt(first)
-+    expect(Exit.isFailure(yield* Effect.exit(target.requestOnce([])))).toBe(true)
++    expect(Exit.isFailure(yield* Effect.exit(target.requestOnce([], () => true)))).toBe(true)
 +  }))
 +})
 +
 +test("single valid host commit authorizes one read-only snapshot response", async () => {
 +  await harness(({ target, commands, next, base }) => Effect.gen(function* () {
-+    const reading = yield* target.requestOnce([]).pipe(Effect.forkScoped({ startImmediately: true }))
++    const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
 +    const requestID = yield* Deferred.await(next)
 +    const caller = { error: (_: string, msg: string) => new Error(msg) }
 +    const command = yield* commands.command({ ...base, requestID }, caller)
@@ -2341,13 +2429,13 @@ index 0000000000..07dff63c0b
 +    } } }, caller)
 +    const response = (yield* Fiber.join(reading)) as { value: { content: string } }
 +    expect(response.value.content).toBe("WEBBRIDGE_LOCAL_PAGE_OK:fixture")
-+    expect(Exit.isFailure(yield* Effect.exit(target.requestOnce([])))).toBe(true)
++    expect(Exit.isFailure(yield* Effect.exit(target.requestOnce([], () => true)))).toBe(true)
 +  }))
 +})
 +
 +test("read commit refuses stale tab generation and refuses a second consumption", async () => {
 +  await harness(({ target, commands, next, base }) => Effect.gen(function* () {
-+    const first = yield* target.requestOnce([]).pipe(Effect.forkScoped({ startImmediately: true }))
++    const first = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
 +    const requestID = yield* Deferred.await(next)
 +    const caller = { error: (_: string, msg: string) => new Error(msg) }
 +    const command = yield* commands.command({ ...base, requestID }, caller)
@@ -2361,8 +2449,8 @@ index 0000000000..07dff63c0b
 +test("read-only commit refuses cross-connection attempts and never issues for browser writes", async () => {
 +  await harness(({ target, scope, commands, next, base }) => Effect.gen(function* () {
 +    const navigation = yield* scope.target(sessionID, { type: "navigate", tabID, url: "http://127.0.0.1:3000/" })
-+    expect(Exit.isFailure(yield* Effect.exit(navigation.requestOnce([])))).toBe(true)
-+    const reading = yield* target.requestOnce([]).pipe(Effect.forkScoped({ startImmediately: true }))
++    expect(Exit.isFailure(yield* Effect.exit(navigation.requestOnce([], () => true)))).toBe(true)
++    const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
 +    const requestID = yield* Deferred.await(next)
 +    const caller = { error: (_: string, msg: string) => new Error(msg) }
 +    const command = yield* commands.command({ ...base, requestID }, caller)
@@ -2385,7 +2473,7 @@ index 0000000000..07dff63c0b
 +
 +test("a tab replacement after a successful commit cannot return stale document text", async () => {
 +  await harness(({ target, commands, next, base }) => Effect.gen(function* () {
-+    const reading = yield* target.requestOnce([]).pipe(Effect.forkScoped({ startImmediately: true }))
++    const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
 +    const requestID = yield* Deferred.await(next)
 +    const caller = { error: (_: string, msg: string) => new Error(msg) }
 +    const command = yield* commands.command({ ...base, requestID }, caller)
@@ -2393,6 +2481,46 @@ index 0000000000..07dff63c0b
 +    yield* commands.state({ ...base, state: state(2) }, caller)
 +    expect(Exit.isFailure(yield* Effect.exit(commands.result({ ...base, requestID,
 +      outcome: { type: "success", result: { value: { content: "stale", truncated: false }, files: [] } },
++    }, caller)))).toBe(true)
++    yield* Fiber.interrupt(reading)
++  }))
++})
++
++test("direct first-party requestOnce without Core receipt fails closed before RPC dispatch", async () => {
++  await harness(({ target, next }) => Effect.gen(function* () {
++    expect(Exit.isFailure(yield* Effect.exit(target.requestOnce([])))).toBe(true)
++    expect(Exit.isFailure(yield* Effect.exit(Deferred.await(next).pipe(Effect.timeout("100 millis"))))).toBe(true)
++  }))
++})
++
++test("policy revocation between Core dispatch and Desktop read.commit burns the ticket", async () => {
++  await harness(({ target, next, commands, base }) => Effect.gen(function* () {
++    let permitted = true
++    const reading = yield* target.requestOnce([], () => permitted).pipe(
++      Effect.forkScoped({ startImmediately: true }))
++    const requestID = yield* Deferred.await(next)
++    const caller = { error: (_: string, message: string) => new Error(message) }
++    const command = yield* commands.command({ ...base, requestID }, caller)
++    permitted = false // The epoch changes after dispatch, before Desktop asks to commit.
++    expect(yield* commands["read.commit"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(false)
++    permitted = true // A later re-allow must never resurrect a burned commit.
++    expect(yield* commands["read.commit"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(false)
++    yield* Fiber.interrupt(reading)
++  }))
++})
++
++test("policy revoked after Desktop commit refuses read response; effect outcome is uncertain", async () => {
++  await harness(({ target, next, commands, base }) => Effect.gen(function* () {
++    let permitted = true
++    const reading = yield* target.requestOnce([], () => permitted).pipe(
++      Effect.forkScoped({ startImmediately: true }))
++    const requestID = yield* Deferred.await(next)
++    const caller = { error: (_: string, message: string) => new Error(message) }
++    const command = yield* commands.command({ ...base, requestID }, caller)
++    expect(yield* commands["read.commit"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(true)
++    permitted = false // Desktop might have already observed the DOM; refuse disclosure anyway.
++    expect(Exit.isFailure(yield* Effect.exit(commands.result({ ...base, requestID,
++      outcome: { type: "success", result: { value: { content: "sensitive", truncated: false }, files: [] } },
 +    }, caller)))).toBe(true)
 +    yield* Fiber.interrupt(reading)
 +  }))
@@ -2459,7 +2587,7 @@ index b19fac7e57..c7c356321a 100644
  import type { EventDomain } from "./event.js"
  import type { IntegrationDomain } from "./integration.js"
 @@ -25,6 +26,7 @@ import type { WorktreeDomain } from "./worktree.js"
-
+ 
  export interface Context {
    readonly app: App
 +  readonly browser: BrowserDomain
@@ -2471,7 +2599,7 @@ index ff5efd107e..73e68e97eb 100644
 --- a/packages/plugin/src/promise/adapter.ts
 +++ b/packages/plugin/src/promise/adapter.ts
 @@ -290,6 +290,12 @@ export function fromPromise(plugin: Plugin) {
-
+ 
          const context2: PromiseContext = {
            app: host.app,
 +          browser: {
@@ -2512,7 +2640,7 @@ index ed94b09302..ea317fa062 100644
  import type { EventDomain } from "./event.js"
  import type { IntegrationDomain } from "./integration.js"
 @@ -25,6 +26,7 @@ import type { WorktreeDomain } from "./worktree.js"
-
+ 
  export interface Context {
    readonly app: App
 +  readonly browser: BrowserDomain

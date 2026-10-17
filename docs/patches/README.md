@@ -4,7 +4,7 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `1C76F576A1918E68845D784CAB14731F08F4D873FDB03F2D65DA9FB25D3455B0`.
+Patch SHA-256: `2DBF6D2C1FF0DCBC0B2861C2F2ECCC69B8CC727577413E7B6836C3B6931B5969`.
 
 Follow-up to #110: [ADR 0004](../ADR/0004-core-permission-browser-read-epoch.md) adds a real, read-only `Permission.Service.browserRead` authority with policy-version invalidation and RED→GREEN Core integration tests. This ledger is **not invoked by Desktop or existing browser tools**, and cannot grant native writes.
 
@@ -15,6 +15,8 @@ Further isolated security follow-up to Draft #120: `Permission.Service.browserRe
 Independent integration on top of #123 composes [Core hook/precise interactive consent](../ADR/0004-core-permission-browser-read-epoch.md) and [Desktop one-use read commit](../ADR/0004-v2-desktop-read-commit.fr.md) with the fail-closed [G37 authority and legacy snapshot gates](../ADR/0005-native-read-authority-gate.fr.md) in a **single pinned official upstream patch**. `snapshotOnce` now issues and consumes a real `Permission.Service.browserRead` lease before dispatch; a revoked epoch refuses the read. The older plugin snapshot and Code Mode `browser.snapshot` are temporarily refused. **Other browser read tools are not all covered; Core→Desktop revocation remains non-atomic; no writes are enabled.** The old `ctx.browser.snapshot` usage shown below is historical and is deliberately refused by this security follow-up.
 
 The next stacked Draft adds the **Core-only BrowserLease reference contract** and adversarial tests. Its non-integrated nature and the missing atomic Desktop grant consumption are recorded in [ADR 0003](../ADR/0003-v2-transactional-browser-grant-tcb.md). **No native read/write dispatch uses this new ledger yet**; prior `snapshotOnce` is unchanged.
+
+G52 host-read follow-up: the bound Core lease is rechecked synchronously by a trusted in-process predicate at `read.commit` and when accepting the returned snapshot. A snapshot without an explicit `readCommit` is now **refused in the Desktop GUI pane itself**, even if a legacy or direct IPC caller constructs a command; a read ticket cannot authorize a different browser action. The new native host regression tests cover revoked leases and one-use tickets. This is not a cross-process atomic effect transaction: revocation after `read.commit` and before Chromium's actual read remains a NO-GO; see [ADR 0006](../ADR/0006-v2-read-host-post-consume-guard.fr.md).
 
 Independent E2 follow-up: the Core reference ledger now snapshots the entire validated binding **before** asynchronous authorization, refuses mutation during the await, and preserves spent-call tombstones through `revoke()` to prevent replay of the same call in a later epoch. Tickets use a bounded monotonic lifetime. Regression tests exercise forged plugin/session/action mutation, post-revoke replay, and clock rollback; the ledger remains disconnected from Desktop and **does not authorize writes**.
 
