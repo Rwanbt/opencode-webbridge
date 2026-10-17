@@ -4,11 +4,13 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { proveG125 } from './smoke-g125-v2032.mjs';
 import { createG149VerticalHost } from './g149-vertical-host.mjs';
+import { runPageProof as runG149Page } from './g149-combined-page.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export async function proveG149({ openPage, openBrowser } = {}) {
   const result = await proveG125({
     openPage, openBrowser, receiptFactory: createG149VerticalHost,
+    runPage: runG149Page,
   });
   assert.equal(result.readAckReceipts?.length, 6);
   assert.ok(result.readAckReceipts.every((item) =>

@@ -15,6 +15,11 @@ la chaîne d'outil, puis ne validait son journal avant une trame SSE.
 
 La nouvelle factory `createG149VerticalHost` est appelée avec le
 `sessionID` créé et persisté par **le serveur OpenCode officiel 2.0.32**.
+La variante `scripts/g149-combined-page.mjs` est une copie du runner
+G125/G130 validé, avec **trois lignes de hook uniquement**. Le script
+original `scripts/smoke-combined-page.mjs` est conservé byte-exact pour
+le garde de provenance `check-g119-cross-stream` ; cette séparation est
+nécessaire pour ne jamais affaiblir les preuves antérieures.
 Elle constitue un scope outil lié à cette session et au tour DOM réel,
 crée des fichiers temporaires, un témoin et une clé **strictement locaux**
 et configure l'orchestrateur G145. Au premier événement native RPC
