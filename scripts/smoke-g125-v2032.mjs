@@ -8,7 +8,8 @@ import { runPageProof, PROMPT } from './smoke-combined-page.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const cli = join(root, 'node_modules/.bin/opencode');
 
-export async function proveG125({ runPage = runPageProof, openPage, openBrowser, nativeBin = cli } = {}) {
+export async function proveG125({ runPage = runPageProof, openPage, openBrowser,
+  nativeBin = cli, receiptFactory } = {}) {
   if (process.platform !== 'linux') throw new Error('G125 local Chromium must run only in Linux hosted CI');
   const version = await runCLI(nativeBin, ['--version'], process.env, root, { timeoutMs: 5000 });
   assert.equal(version.code, 0);
@@ -20,7 +21,7 @@ export async function proveG125({ runPage = runPageProof, openPage, openBrowser,
       const browser = await openBrowser();
       try {
         const result = await runPage({ browser, localPage: page, nativeBin,
-          adversarialScenario: scenario, persistSession: true });
+          adversarialScenario: scenario, persistSession: true, receiptFactory });
         assert.equal(result.nativeChecks.length, 2);
         for (const check of result.nativeChecks) {
           assert.equal(check.model?.pageDOM, true);
@@ -34,14 +35,21 @@ export async function proveG125({ runPage = runPageProof, openPage, openBrowser,
         assert.equal(result.adversarial?.sseDone, 0);
         assert.equal(result.adversarial?.persistedAfterRestart, true);
         assert.equal(result.adversarial?.assistantComplete, false);
+        if (receiptFactory) {
+          assert.ok(result.nativeChecks.every((check) => check.model.g130?.terminal === 'finished'));
+          assert.equal(result.adversarial.g130?.terminal, 'cancelled');
+        }
         assert.equal(scenario === 'tab-change'
           ? result.adversarial?.nativeTabChange : result.adversarial?.nativePageClosed, true);
         evidence.push({ scenario, nativeModelRPCBrowserSSE: true, persistedAfterRestart: true,
-          uncertaintyPersisted: true, outputFrames: result.nativeChecks.map((x) => x.model.sseFrames) });
+          uncertaintyPersisted: true, outputFrames: result.nativeChecks.map((x) => x.model.sseFrames),
+          ...(receiptFactory ? { readAckReceipts: [...result.nativeChecks.map((x) => x.model.g130),
+            result.adversarial.g130] } : {}) });
       } finally { await browser.close(); }
     }
     return { cliVersion: '2.0.32', onlyInstalledTarball: true, localChromium: true,
-      sessionPersistenceAfterHostRestart: true, cases: evidence };
+      sessionPersistenceAfterHostRestart: true, cases: evidence,
+      ...(receiptFactory ? { readAckReceipts: evidence.flatMap((item) => item.readAckReceipts) } : {}) };
   } finally { await page.close(); }
 }
 

@@ -20,12 +20,13 @@ const fresh = () => randomBytes(32).toString('hex');
 
 /** The two native CLI profile runs share ONE browser and local page server. */
 export async function runPageProof({ browser, localPage, nativeBin = cli,
-  adversarialScenario, persistSession = false } = {}) {
+  adversarialScenario, persistSession = false, receiptFactory } = {}) {
   if (!existsSync(nativeBin)) throw new Error('pinned local official CLI missing');
+  if (receiptFactory && !persistSession) throw new Error('G130 native session binding required');
   const { openFixtureServer } = await import(pathToFileURL(join(dist, 'fixture-inference.js')).href);
   const { submitLocalPageTurn } = await import(pathToFileURL(join(dist, 'local-browser-companion.js')).href);
   const pageBridge = {
-    async prepare({ version, scenario }) {
+    async prepare({ temp, version, scenario }) {
       const token = fresh();
       let connection;
       let companion;
@@ -39,6 +40,8 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
       const cancellation = new AbortController();
       let turnStarted;
       let sessionProof;
+      let prior;
+      let receipt;
       const chunks = [];
       const turnID = randomBytes(16).toString('hex');
       const rpc = async (method, input = {}) => {
@@ -57,11 +60,18 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
           const submitted = await rpc('submit', { turnID, prompt: PROMPT });
           if (submitted?.accepted !== true) throw new Error('G99 native submit not accepted');
           accepted++;
+          if (receiptFactory) {
+            const created = (await listSessionIDs(connection.url, connection.headers))
+              .filter((id) => !prior.has(id));
+            if (created.length !== 1) throw new Error('G130 must bind receipt to exactly one native session');
+            receipt = await receiptFactory({ temp, version, scenario, turnID, sessionID: created[0] });
+          }
           let afterSeq = 0;
           for (let count = 0; count < 160 && active; count++) {
             const events = (await rpc('poll', { turnID, afterSeq })).events;
             for (const event of events) {
               if (event.turnID !== turnID || event.seq !== afterSeq + 1) throw new Error('G99 RPC event sequence mismatch');
+              await receipt?.acknowledge(event); // fsync encrypted host receipt before ANY SSE forwarding.
               afterSeq++;
               if (event.kind === 'text') chunks.push(event.value);
               else if (event.kind === 'finished') {
@@ -99,7 +109,7 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
           WEBBRIDGE_FIXTURE_URL: fake.baseURL },
         async verify({ url, headers, secret, executable, env, temp }) {
           connection = { url, headers, secret };
-          const prior = persistSession ? new Set(await listSessionIDs(url, headers)) : null;
+          prior = persistSession ? new Set(await listSessionIDs(url, headers)) : null;
           const inventory = await fetch(url + '/api/plugin', { headers, signal: AbortSignal.timeout(3000) });
           if (!inventory.ok) throw new Error('native inventory unavailable');
           const plugins = (await inventory.json()).data?.filter((entry) => entry.id?.includes('webbridge')) ?? [];
@@ -209,10 +219,19 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
           return { pageDOM: true, installedCombined: true, rpcProgress: progress,
             localHttp: fake.requests(), sseFrames: fake.streamFrames(), version };
         },
-        async close() { active = false; await fake.close(); },
+        async close() { active = false; await fake.close(); receipt?.close(); },
         ...(persistSession ? { verifyRestart: (input) => {
           if (!sessionProof) throw new Error('G125 no completed session proof for restart');
-          return verifyAfterRestart({ ...input, ...sessionProof });
+          return verifyAfterRestart({ ...input, ...sessionProof }).then(async (session) => {
+            if (!receiptFactory) return session;
+            if (!receipt) throw new Error('G130 no native RPC receipts persisted');
+            const g130 = await receipt.verifyRestored(interruptedScenario(scenario)
+              ? ['text', 'cancelled'] : ['text', 'text', 'text', 'finished']);
+            if (g130.terminal === 'finished' && !session.assistantComplete ||
+                g130.terminal === 'cancelled' && session.assistantComplete)
+              throw new Error('G130 restored native session contradicts durable read receipt');
+            return { ...session, g130 };
+          });
         } } : {}),
       };
     },

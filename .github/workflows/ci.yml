@@ -118,6 +118,25 @@ jobs:
       - name: G125 full native single-tarball positive and both adversarial persisted sessions
         run: npm run smoke:g125-native
 
+  g130-official-v2032-durable-read-receipts:
+    name: G130 CLI 2.0.32 DOM→RPC→encrypted durable host ACK→SSE→restart
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - name: Install isolated headless Chromium for localhost only
+        run: npx playwright install --with-deps --only-shell chromium
+      - name: RED→GREEN G130 encrypted host-sink lost ACK and wrong scope
+        run: npm run build && node --test scripts/test-g130-receipt-host.mjs
+      - name: Real installed CLI single-tarball DOM/RPC/SSE and durable receipts after restart
+        run: node scripts/smoke-g130-v2032.mjs
+
   windows-progressive-relay:
     name: Windows bounded RPC progress (no Chromium)
     runs-on: windows-latest
