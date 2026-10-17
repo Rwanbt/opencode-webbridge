@@ -1,4 +1,4 @@
-# ADR 0064 — G119 : coexistence du patch Core G106 et du modèle/page G113
+# ADR 0068 — G119 : coexistence du patch Core G106 et du modèle/page G113
 
 **Statut : intégration reproductible, Linux CI uniquement, NO-GO produit.**
 

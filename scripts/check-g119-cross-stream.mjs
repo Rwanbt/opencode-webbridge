@@ -11,16 +11,22 @@ export const G113 = 'e1a04479876fcb469309cbbb9526639964bf35e3';
 export const ARTIFACT = 'docs/patches/opencode-v2-4617210-browser-plugin-capability.patch';
 export const EXPECTED = Object.freeze({
   [ARTIFACT]: 'fe5ae887ca3feb1c2a2e170a12b7a9c89e79684e80ee5ce656c7377604f753e8',
-  'scripts/smoke-combined-page.mjs': '9e7aff83bd420645a6e66f5e898b4c219186ceda412c3dac446892cfe48bcf74',
-  'fixtures/g97-combined-preview.mjs': '6a43f437cdfed073ca8289cc6a0c000ad05c6df5e70e1c3f51e79a9df8a2fc5b',
-  'scripts/offline-rpc-package.mjs': 'e36110616ccd14bf31753e50473ee9a3e663e9a9e9e92c096c17c24c199ed241',
+  'scripts/smoke-combined-page.mjs': '8e4b3be8416f7e85445c9b3deeb75ba5418e60680485129c4dd5aabfdafda95d',
+  'fixtures/g97-combined-preview.mjs': '474d653b41c54c840125b04488ceb975022935ef409eb911cfa7f5a6481c5468',
+  'scripts/offline-rpc-package.mjs': 'dd0c96a561ade756bd09739d14c596de4525a4bb4ff6e219251e93050447abc5',
 });
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+// Git for Windows may check out the pre-existing G113 *.mjs files in CRLF,
+// while hosted Linux checks out LF. Canonicalize ONLY fixture text. The G106
+// security patch is hashed as exact bytes, without altering its vetted SHA.
+const fixtureDigest = (bytes) => digest(Buffer.from(
+  bytes.toString('utf8').replaceAll('\r\n', '\n'), 'utf8'));
 
 export function inspect(files) {
   for (const [path, hash] of Object.entries(EXPECTED)) {
     const body = files[path];
-    if (!Buffer.isBuffer(body) || digest(body) !== hash)
+    if (!Buffer.isBuffer(body) ||
+      (path === ARTIFACT ? digest(body) : fixtureDigest(body)) !== hash)
       throw new Error('G119 exact G106 patch / G113 executable fixture mismatch: ' + path);
   }
   const patch = files[ARTIFACT].toString('utf8');
