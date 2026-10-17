@@ -18,6 +18,7 @@ jobs:
       - run: npm run check:backlog
       - run: npm run check:progress
       - run: npm run check:policy
+      - run: npm run check:compat
       - name: G119 prove exact G106 full patch and G113 standalone browser fixture on one SHA
         run: npm run check:g119
       - run: npm test
