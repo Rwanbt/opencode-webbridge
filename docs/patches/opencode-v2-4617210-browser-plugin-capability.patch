@@ -770,6 +770,28 @@ index 0000000000..6a3e974291
 +    claim.agent === context.agent
 +  )
 +}
+diff --git a/packages/core/test/browser-idle.test.ts b/packages/core/test/browser-idle.test.ts
+index a7db22b729..db2c2537e3 100644
+--- a/packages/core/test/browser-idle.test.ts
++++ b/packages/core/test/browser-idle.test.ts
+@@ -53,7 +53,7 @@ it.live(
+       const attachment = { sessionID: session.id, connectionID: crypto.randomUUID() }
+       const state = { ...attachment, state: { tabs: [], focusedTabID: null } }
+       const pending = yield* rpc
+-        .attach({ ...attachment, version: 4 })
++        .attach({ ...attachment, version: 5 })
+         .pipe(Effect.provide(locations.get(ref)), Effect.flip, Effect.forkScoped)
+       yield* rpc.state(state).pipe(
+         Effect.retry({
+@@ -71,7 +71,7 @@ it.live(
+       const replacement = yield* locations.contextEffect(ref)
+       yield* Plugin.awaitActivation.pipe(Effect.provideContext(replacement))
+       const fresh = Context.get(replacement, Rpc.Service).client(Browser.Definition)
+-      const resumed = yield* fresh.attach({ ...attachment, version: 4 }).pipe(Effect.forkScoped)
++      const resumed = yield* fresh.attach({ ...attachment, version: 5 }).pipe(Effect.forkScoped)
+       yield* fresh.state(state).pipe(
+         Effect.retry({
+           while: (error) => "type" in error && error.type === "unavailable",
 diff --git a/packages/core/test/permission-browser-lease.test.ts b/packages/core/test/permission-browser-lease.test.ts
 new file mode 100644
 index 0000000000..a3ac1e1cb4

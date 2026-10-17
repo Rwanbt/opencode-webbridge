@@ -4,7 +4,7 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `A2C9443B3050D5710CE92649804E7339116AD58141FA386D632287119EC21579`.
+Patch SHA-256: `9D7657FE2AC3C65BA0E547B3E5291D2AD2E793872AB3C95C83BE878643F89CFB`.
 
 Follow-up to #110: [ADR 0004](../ADR/0004-core-permission-browser-read-epoch.md) adds a real, read-only `Permission.Service.browserRead` authority with policy-version invalidation and RED→GREEN Core integration tests. This ledger is **not invoked by Desktop or existing browser tools**, and cannot grant native writes.
 
