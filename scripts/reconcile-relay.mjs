@@ -1,6 +1,6 @@
 /** Offline-only administrative inspection/attestation. Never opens a browser. */
 import { createHash } from 'node:crypto';
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { DurableRelayJournal } from '../dist/src/core/durable-relay-journal.js';
 
@@ -49,6 +49,13 @@ function verifyEvidence(file, dir, claimedHash) {
     if (!stats.isFile() || stats.size < 1 || stats.size > 64_000) {
       throw new Error('evidence file size or type invalid');
     }
+    // An ancestor junction can make a lexically external path point inside the
+    // journal. A hard link can make an external name share an internal inode.
+    const physicalRelative = relative(realpathSync(dir), realpathSync(file));
+    if (!physicalRelative || (!physicalRelative.startsWith('..') && !isAbsolute(physicalRelative))) {
+      throw new Error('evidence must be physically external to journal');
+    }
+    if (stats.nlink !== 1) throw new Error('evidence hard-linked file is not independently trusted');
     const hash = createHash('sha256').update(readFileSync(fd)).digest('hex');
     if (hash !== claimedHash) throw new Error('evidence SHA256 does not match reviewed file');
   } finally { closeSync(fd); }
