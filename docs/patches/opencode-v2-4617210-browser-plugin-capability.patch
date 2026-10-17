@@ -2,17 +2,14 @@ diff --git a/packages/core/src/agent.ts b/packages/core/src/agent.ts
 index 14732fdd75..a8230b27ae 100644
 --- a/packages/core/src/agent.ts
 +++ b/packages/core/src/agent.ts
-@@ -38,6 +38,8 @@ export type Editor = {
- }
+@@ -39,4 +39,6 @@ export type Editor = {
  
  export interface Interface extends State.Transformable<Editor> {
 +  /** Synchronous in-process policy invalidation epoch. */
 +  readonly revision?: () => number
    readonly get: (id: ID) => Effect.Effect<Info | undefined>
    readonly resolve: (id?: ID | string) => Effect.Effect<Info | undefined>
-   readonly select: (id?: ID | string) => Effect.Effect<Selection>
-@@ -84,30 +86,33 @@ const layer = Layer.effect(
-         if (fallback) return fallback
+@@ -85,21 +87,24 @@ const layer = Layer.effect(
        }
      }
 +    // Callers must not mutate State without passing through transform/reload (and its revision).
@@ -42,7 +39,7 @@ index 14732fdd75..a8230b27ae 100644
 +        const info = snapshot(selectedDefault())
          return { id: info?.id ?? defaultID, info }
        }),
-       list: Effect.fn("Agent.list")(function* () {
+@@ -107,6 +112,6 @@ const layer = Layer.effect(
          const agents = Array.fromIterable(state.get().agents.values())
          const selected = selectedDefault()
 -        if (!selected) return agents
@@ -51,22 +48,18 @@ index 14732fdd75..a8230b27ae 100644
 +        return [selected, ...agents.filter((agent) => agent.id !== selected.id)].map((agent) => structuredClone(agent))
        }),
      })
-   }),
 diff --git a/packages/core/src/permission.ts b/packages/core/src/permission.ts
 index 2aecebb0ce..758726c33c 100644
 --- a/packages/core/src/permission.ts
 +++ b/packages/core/src/permission.ts
-@@ -12,6 +12,8 @@ import { SessionStore } from "./session/store.js"
- import { Wildcard } from "./util/wildcard.js"
+@@ -13,4 +13,6 @@ import { Wildcard } from "./util/wildcard.js"
  import { PermissionSaved } from "./permission/saved.js"
  import { PluginHooks } from "./plugin/hooks.js"
 +import { BrowserLease } from "./plugin/browser-lease.js"
 +import { SessionEvent } from "@opencode/schema/session-event"
  
  const PermissionEffect = Permission.Effect
- export { PermissionEffect as Effect }
-@@ -108,6 +110,9 @@ export interface Interface {
-   readonly get: (id: ID) => Effect.Effect<Request | undefined>
+@@ -109,4 +111,7 @@ export interface Interface {
    readonly forSession: (sessionID: SessionSchema.ID) => Effect.Effect<ReadonlyArray<Request>>
    readonly list: () => Effect.Effect<ReadonlyArray<Request>>
 +  /** Restricted Core-only reference authority: does not authorize Desktop browser effects. */
@@ -74,9 +67,7 @@ index 2aecebb0ce..758726c33c 100644
 +  readonly browserRead?: ReturnType<typeof BrowserLease.make>
  }
  
- export class Service extends Context.Service<Service, Interface>()("@opencode/Permission") {}
-@@ -129,9 +134,13 @@ const layer = Layer.effect(
-     const hooks = yield* PluginHooks.Service
+@@ -130,7 +135,11 @@ const layer = Layer.effect(
      const pending = new Map<ID, Pending>()
      let closed = false
 +    let agentRevision = agents.revision?.()
@@ -88,18 +79,14 @@ index 2aecebb0ce..758726c33c 100644
 +      browserRead.retire()
        yield* Effect.forEach(Array.from(pending.values()), (item) =>
          bus
-           .publish(Permission.Event.Replied, {
-@@ -228,7 +237,7 @@ const layer = Layer.effect(
-       return { id: value.id, effect: result.effect }
+@@ -229,5 +238,5 @@ const layer = Layer.effect(
      })
  
 -    const assert = Effect.fn("Permission.assert")((input: AssertInput) =>
 +    const assert = Effect.fn("Permission.assert")((input: AssertInput, options?: { readonly forceInteractive?: boolean }) =>
        Effect.gen(function* () {
          if (closed) return yield* Effect.die(new DeclinedError())
-         const result = yield* evaluateInput(input)
-@@ -242,7 +251,9 @@ const layer = Layer.effect(
-                 reason: result.message,
+@@ -243,5 +252,7 @@ const layer = Layer.effect(
                })
              }
 -            if (result.effect === "allow") return
@@ -108,9 +95,7 @@ index 2aecebb0ce..758726c33c 100644
 +            if (result.effect === "allow" && !options?.forceInteractive) return
              const item = yield* create(request(input, result.message), input.agent)
              return yield* restore(Deferred.await(item.deferred)).pipe(
-               // Deliberate defect tunnel: leaves wrap execution in blanket `mapError`, which
-@@ -262,6 +273,58 @@ const layer = Layer.effect(
-       }),
+@@ -263,4 +274,56 @@ const layer = Layer.effect(
      )
  
 +    // Core authority owns the lease epoch, not a plugin-supplied predicate. This deliberately
@@ -167,54 +152,42 @@ index 2aecebb0ce..758726c33c 100644
 +
      const reply = Effect.fn("Permission.reply")((input: ReplyInput) =>
        Effect.uninterruptible(
-         Effect.gen(function* () {
-@@ -274,6 +337,7 @@ const layer = Layer.effect(
-           })
+@@ -275,4 +338,5 @@ const layer = Layer.effect(
  
            if (input.reply === "reject") {
 +            browserRead.revoke()
              yield* Deferred.fail(
                existing.deferred,
-               input.message ? new CorrectedError({ feedback: input.message }) : new DeclinedError(),
-@@ -336,7 +400,7 @@ const layer = Layer.effect(
-       return Array.from(pending.values(), (item) => item.request).filter((request) => request.sessionID === sessionID)
+@@ -337,5 +401,5 @@ const layer = Layer.effect(
      })
  
 -    return Service.of({ ask, assert, reply, get, forSession, list, close })
 +    return Service.of({ ask, assert, reply, get, forSession, list, close, browserRead })
    }),
  )
- 
 diff --git a/packages/core/src/permission/saved.ts b/packages/core/src/permission/saved.ts
 index 8ba50b16be..3a65c4141a 100644
 --- a/packages/core/src/permission/saved.ts
 +++ b/packages/core/src/permission/saved.ts
-@@ -27,6 +27,7 @@ export const AddInput = Schema.Struct({
- export type AddInput = typeof AddInput.Type
+@@ -28,4 +28,5 @@ export type AddInput = typeof AddInput.Type
  
  export interface Interface {
 +  readonly revision?: () => number
    readonly list: (input?: ListInput) => Effect.Effect<ReadonlyArray<Info>>
    readonly add: (input: AddInput) => Effect.Effect<void>
-   readonly remove: (id: ID) => Effect.Effect<void>
-@@ -38,6 +39,7 @@ const layer = Layer.effect(
-   Service,
+@@ -39,4 +40,5 @@ const layer = Layer.effect(
    Effect.gen(function* () {
      const db = (yield* Database.Service).db
 +    let revision = 0
  
      const list = Effect.fnUntraced(function* (input?: ListInput) {
-       const rows = yield* db
-@@ -62,6 +64,7 @@ const layer = Layer.effect(
- 
+@@ -63,4 +65,5 @@ const layer = Layer.effect(
      const add = Effect.fn("PermissionSaved.add")(function* (input: AddInput) {
        if (!input.resources.length) return
 +      revision++ // Invalidates permission leases before asynchronous DB mutation.
        yield* db
          .insert(PermissionTable)
-         .values(
-@@ -75,13 +78,16 @@ const layer = Layer.effect(
-         .onConflictDoNothing()
+@@ -76,11 +79,14 @@ const layer = Layer.effect(
          .run()
          .pipe(Effect.orDie)
 +      revision++ // A concurrent read made during the mutation must also be invalidated.
@@ -230,21 +203,17 @@ index 8ba50b16be..3a65c4141a 100644
 +    return Service.of({ list, add, remove, revision: () => revision })
    }),
  )
- 
 diff --git a/packages/core/src/plugin.ts b/packages/core/src/plugin.ts
 index 8ade682658..218870e15a 100644
 --- a/packages/core/src/plugin.ts
 +++ b/packages/core/src/plugin.ts
-@@ -9,6 +9,7 @@ import { Cause, Context, Effect, Exit, Latch, Layer, Logger, Queue, References,
- import { Bus } from "./bus.js"
+@@ -10,4 +10,5 @@ import { Bus } from "./bus.js"
  import { KV } from "./kv.js"
  import { PluginHost } from "./plugin/host.js"
 +import { PluginInternal } from "./plugin/internal.js"
  import { type Failure, type Generation, Service } from "./plugin/service.js"
  import { State } from "./state.js"
- 
-@@ -61,9 +62,15 @@ const layer = Layer.effect(
-           release: holdUnsafe(),
+@@ -62,7 +63,13 @@ const layer = Layer.effect(
          })
        })
 -      const exit = yield* Effect.suspend(() =>
@@ -261,7 +230,6 @@ index 8ade682658..218870e15a 100644
 +      }).pipe(
          grouped,
          inherit,
-         Effect.updateContext((context: Context.Context<never>) =>
 diff --git a/packages/core/src/plugin/browser-lease.ts b/packages/core/src/plugin/browser-lease.ts
 new file mode 100644
 index 0000000000..49887aafe8
@@ -538,61 +506,49 @@ diff --git a/packages/core/src/plugin/hooks.ts b/packages/core/src/plugin/hooks.
 index 1325837f9d..4b42cdcdd5 100644
 --- a/packages/core/src/plugin/hooks.ts
 +++ b/packages/core/src/plugin/hooks.ts
-@@ -40,6 +40,8 @@ const eventProviderID = (event: unknown) => {
- }
+@@ -41,4 +41,6 @@ const eventProviderID = (event: unknown) => {
  
  export interface Interface {
 +  /** Synchronous invalidation for permission-hook registrations and removals. */
 +  readonly permissionRevision?: () => number
    readonly has: <Domain extends keyof Domains>(
      domain: Domain,
-     name: keyof Domains[Domain] & keyof Failures[Domain],
-@@ -64,6 +66,7 @@ const layer = Layer.effect(
-   Service,
+@@ -65,4 +67,5 @@ const layer = Layer.effect(
    Effect.gen(function* () {
      const callbacks = new Map<string, Entry[]>()
 +    let permissionRevision = 0
      const key = (domain: keyof Domains, name: PropertyKey) => `${domain}.${String(name)}`
  
-     const register: Interface["register"] = Effect.fn("PluginHooks.register")(
-@@ -73,12 +76,14 @@ const layer = Layer.effect(
-         let active = true
+@@ -74,4 +77,5 @@ const layer = Layer.effect(
          const entry = { callback, options }
          callbacks.set(id, [...(callbacks.get(id) ?? []), entry])
 +        if (domain === "permission") permissionRevision++
          const dispose = Effect.sync(() => {
            if (!active) return
-           active = false
-           const next = (callbacks.get(id) ?? []).filter((item) => item !== entry)
+@@ -80,4 +84,5 @@ const layer = Layer.effect(
            if (next.length === 0) callbacks.delete(id)
            else callbacks.set(id, next)
 +          if (domain === "permission") permissionRevision++
          })
          yield* Scope.addFinalizer(scope, dispose)
-         return { dispose }
-@@ -101,7 +106,7 @@ const layer = Layer.effect(
-         ),
+@@ -102,5 +107,5 @@ const layer = Layer.effect(
        )
  
 -    return Service.of({ has, register, trigger })
 +    return Service.of({ has, register, trigger, permissionRevision: () => permissionRevision })
    }),
  )
- 
 diff --git a/packages/core/src/plugin/host.ts b/packages/core/src/plugin/host.ts
 index d6d2781ad2..7def490eab 100644
 --- a/packages/core/src/plugin/host.ts
 +++ b/packages/core/src/plugin/host.ts
-@@ -34,6 +34,7 @@ import { WorktreeStrategies } from "../worktree/strategies.js"
- import { Generate } from "../generate.js"
+@@ -35,4 +35,5 @@ import { Generate } from "../generate.js"
  import { Permission } from "../permission.js"
  import { PluginHooks } from "./hooks.js"
 +import { PluginBrowser } from "./browser.js"
  import type { Interface } from "../plugin.js"
  import { LayerNode } from "@opencode/util/effect/layer-node"
- 
-@@ -67,8 +68,12 @@ export const make = Effect.fn("PluginHost.make")(function* (
-   const websearch = yield* WebSearch.Service
+@@ -68,6 +69,10 @@ export const make = Effect.fn("PluginHost.make")(function* (
    const generate = yield* Generate.Service
    const permission = yield* Permission.Service
 -  const hooks = yield* PluginHooks.Service
@@ -604,17 +560,13 @@ index d6d2781ad2..7def490eab 100644
 +  const hooks = yield* PluginHooks.Service
    const persistentPty = yield* PersistentPty.Service
    const locations = yield* LocationServiceMap.Service
-   const worktrees = yield* Worktree.Service
-@@ -114,6 +119,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
-   // Keep the instance graph's inferred types independent of Session handles.
+@@ -115,4 +120,5 @@ export const make = Effect.fn("PluginHost.make")(function* (
    const context: Plugin.Context = {
      app,
 +    browser: browser(pluginID),
      location: locationInfo(),
      options: {},
-     rpc: Object.assign(rpc.client, { register: rpc.register }),
-@@ -575,7 +581,10 @@ export const make = Effect.fn("PluginHost.make")(function* (
-       context: (input) => sessions.context(input.sessionID),
+@@ -576,5 +582,8 @@ export const make = Effect.fn("PluginHost.make")(function* (
      },
    }
 -  return context
@@ -624,13 +576,11 @@ index d6d2781ad2..7def490eab 100644
 +  }
  })
  
- export const requirements = LayerNode.group([
 diff --git a/packages/core/src/plugin/internal.ts b/packages/core/src/plugin/internal.ts
 index f6239be4cb..d2e5b04ced 100644
 --- a/packages/core/src/plugin/internal.ts
 +++ b/packages/core/src/plugin/internal.ts
-@@ -273,16 +273,21 @@ const post = [
- // organization statements, so plugin remove operations skip these IDs.
+@@ -274,14 +274,19 @@ const post = [
  export const guarded: ReadonlySet<string> = new Set([OpencodePlugin.id, ConfigPolicyPlugin.Plugin.id])
  
 +// A generation's `source` is descriptive metadata, not proof of builtin provenance.
@@ -656,21 +606,17 @@ index f6239be4cb..d2e5b04ced 100644
 +    })
    return {
      pre: resolve(pre),
-     post: resolve(post),
 diff --git a/packages/core/src/tool.ts b/packages/core/src/tool.ts
 index a07468a61e..537bb73f0a 100644
 --- a/packages/core/src/tool.ts
 +++ b/packages/core/src/tool.ts
-@@ -13,6 +13,7 @@ import { Image } from "./image.js"
- import { Permission } from "./permission.js"
+@@ -14,4 +14,5 @@ import { Permission } from "./permission.js"
  import { PluginHooks } from "./plugin/hooks.js"
  import { SessionMessage } from "./session/message.js"
 +import { BrowserTurn } from "./tool/browser-turn.js"
  import { SessionSchema } from "./session/schema.js"
  import { State } from "./state.js"
- import { definition, effectiveName, execute, normalizedName, normalizeContent } from "./tool/runtime.js"
-@@ -268,19 +269,24 @@ const layer = Layer.effect(
-                 id: Tool.CallID.make(input.call.id),
+@@ -269,17 +270,22 @@ const layer = Layer.effect(
                  progress: input.progress ?? (() => Effect.void),
                }
 -              const event = yield* beforeExecute(input.call.name, input.call.input, context)
@@ -706,7 +652,6 @@ index a07468a61e..537bb73f0a 100644
 +              )
              }),
            }
-         }),
 diff --git a/packages/core/src/tool/browser-turn.ts b/packages/core/src/tool/browser-turn.ts
 new file mode 100644
 index 0000000000..6a3e974291
@@ -1927,8 +1872,7 @@ diff --git a/packages/core/test/plugin/host.ts b/packages/core/test/plugin/host.
 index 108846d5ac..0ca9e11d0d 100644
 --- a/packages/core/test/plugin/host.ts
 +++ b/packages/core/test/plugin/host.ts
-@@ -28,6 +28,12 @@ export function host(overrides: Overrides = {}): Plugin.Context {
-         },
+@@ -29,4 +29,10 @@ export function host(overrides: Overrides = {}): Plugin.Context {
        }),
      options: {},
 +    browser: overrides.browser ?? {
@@ -1939,9 +1883,7 @@ index 108846d5ac..0ca9e11d0d 100644
 +    },
      rpc:
        overrides.rpc ??
-       Object.assign(
-@@ -231,13 +237,15 @@ export function providerHost(providers: Provider.Interface): Plugin.Context["pro
-   return {
+@@ -232,11 +238,13 @@ export function providerHost(providers: Provider.Interface): Plugin.Context["pro
      list: () => providers.available().pipe(Effect.map(located)),
      get: (input) =>
 -      providers.get(Provider.ID.make(input.providerID)).pipe(
@@ -1961,21 +1903,17 @@ index 108846d5ac..0ca9e11d0d 100644
 -      ),
      reload: providers.reload,
      transform: (callback) =>
-       providers.transform((editor) =>
 diff --git a/packages/gui-extensions/src/browser/pane.ts b/packages/gui-extensions/src/browser/pane.ts
 index 91de480703..d86a7279ae 100644
 --- a/packages/gui-extensions/src/browser/pane.ts
 +++ b/packages/gui-extensions/src/browser/pane.ts
-@@ -13,6 +13,7 @@ import { destinationOrigin, fileURLWithin, refusal } from "./policy"
- import { createRefs } from "./refs"
+@@ -14,4 +14,5 @@ import { createRefs } from "./refs"
  import type { PaneEvent } from "./ipc"
  import { createBrowserRestoreStore } from "./restore"
 +import { desktopReadCommitGate, startCommittedRead } from "./read-commit-gate"
  
  type Target = { readonly server: string; readonly session: string; readonly restore?: Browser.State }
- 
-@@ -238,18 +239,52 @@ export function createBrowserPane(input: {
-                   entry.requests.set(message.requestID, { abort })
+@@ -239,5 +240,38 @@ export function createBrowserPane(input: {
                    yield* rpc.command({ ...attachment, requestID: message.requestID }, options).pipe(
                      Effect.flatMap((command) =>
 -                      Effect.promise(async () => {
@@ -2015,8 +1953,7 @@ index 91de480703..d86a7279ae 100644
 +                        return yield* Effect.promise(async () => {
                          entry.requests.set(
                            message.requestID,
-                           "tabID" in command.action ? { abort, tabID: command.action.tabID } : { abort },
-                         )
+@@ -246,9 +280,10 @@ export function createBrowserPane(input: {
                          reply(
                            message.requestID,
 -                          await execute(entry, command, abort.signal).then(
@@ -2028,9 +1965,7 @@ index 91de480703..d86a7279ae 100644
 +                        })
                        }),
                      ),
-                     Effect.ensuring(Effect.sync(() => entry.requests.delete(message.requestID))),
-@@ -528,7 +563,8 @@ export function createBrowserPane(input: {
-     return page
+@@ -529,5 +564,6 @@ export function createBrowserPane(input: {
    }
  
 -  async function execute(entry: Entry, command: Browser.Command, signal: AbortSignal) {
@@ -2038,9 +1973,7 @@ index 91de480703..d86a7279ae 100644
 +    liveRead?: () => boolean) {
      const action = command.action
  
-     if (signal.aborted)
-@@ -579,6 +615,12 @@ export function createBrowserPane(input: {
-     }
+@@ -580,4 +616,10 @@ export function createBrowserPane(input: {
  
      const page = entry.pages.get(action.tabID) ?? create(entry, true, undefined, tab)
 +    if (action.type === "snapshot") {
@@ -2051,15 +1984,15 @@ index 91de480703..d86a7279ae 100644
 +    }
      await page.ready
      const result = await page.execute(command, signal)
-     publishState(entry)
 diff --git a/packages/gui-extensions/src/browser/read-commit-gate.test.ts b/packages/gui-extensions/src/browser/read-commit-gate.test.ts
 new file mode 100644
-index 0000000000..dd03be9b5c
+index 0000000000..6c12bca495
 --- /dev/null
 +++ b/packages/gui-extensions/src/browser/read-commit-gate.test.ts
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,80 @@
 +import { expect, test } from "bun:test"
 +import { desktopReadCommitGate, startCommittedRead } from "./read-commit-gate"
++import { Browser } from "@opencode/plugin-browser/rpc"
 +
 +test("direct IPC snapshot without native host read commit is denied before any effect", () => {
 +  let effects = 0
@@ -2080,7 +2013,21 @@ index 0000000000..dd03be9b5c
 +  for (const action of ["navigate", "click", "fill", "submit", "tabs.list"]) {
 +    expect(desktopReadCommitGate(action, "borrowed-read-ticket")).toBe(false)
 +  }
-+  expect(desktopReadCommitGate("tabs.list", undefined)).toBe(true)
++  expect(desktopReadCommitGate("tabs.list", undefined)).toBe(false)
++})
++
++test("direct IPC cannot bypass Core read authority through other page-content operations", () => {
++  for (const action of ["tabs.list", "frames", "find", "evaluate", "screenshot", "wait", "dialog",
++    "network.list", "network.get", "console", "files.list", "files.get", "trace.stop", "cpu.stop",
++    "heap.snapshot", "heap.object", "lighthouse", "arbitrary-future-read"]) {
++    expect(desktopReadCommitGate(action, undefined)).toBe(false)
++    expect(desktopReadCommitGate(action, "stolen-snapshot-token")).toBe(false)
++  }
++  // Keep host and Core connection policies in lockstep as operations evolve.
++  for (const operation of Browser.Operations) {
++    if (operation.name === "snapshot") continue
++    expect(desktopReadCommitGate(operation.name, undefined)).toBe(Browser.legacyActionAllowed(operation.name))
++  }
 +})
 +
 +test("revoking the Desktop tab while page.ready is pending prevents browser execution", async () => {
@@ -2125,10 +2072,16 @@ index 0000000000..dd03be9b5c
 +})
 diff --git a/packages/gui-extensions/src/browser/read-commit-gate.ts b/packages/gui-extensions/src/browser/read-commit-gate.ts
 new file mode 100644
-index 0000000000..060d499e06
+index 0000000000..597a8602b2
 --- /dev/null
 +++ b/packages/gui-extensions/src/browser/read-commit-gate.ts
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,28 @@
++const legacyEffects = new Set([
++  "tabs.open", "tabs.focus", "tabs.close", "preview", "navigate", "back", "forward", "reload", "stop",
++  "click", "hover", "drag", "fill", "fill_form", "select", "check", "press", "scroll",
++  "files.upload", "files.drop",
++])
++
 +/**
 + * Browser snapshots disclose page content. Never execute one from an IPC
 + * command unless the command carries a one-use Core/host read-commit ticket.
@@ -2136,7 +2089,9 @@ index 0000000000..060d499e06
 + */
 +export function desktopReadCommitGate(actionType: string, ticket: unknown): boolean {
 +  if (actionType === "snapshot") return typeof ticket === "string" && ticket.length > 0
-+  return ticket === undefined
++  // Fail closed for every other content/inspection/capture command, including
++  // unknown future types. A snapshot grant is never interchangeable with them.
++  return ticket === undefined && legacyEffects.has(actionType)
 +}
 +
 +/** The GUI may wait for a tab to load after read.commit. Revalidate *after*
@@ -2150,11 +2105,10 @@ index 0000000000..060d499e06
 +  return result
 +}
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
-index 4c6838c70f..e902c8f6e4 100644
+index 4c6838c70f..bef8cf44b5 100644
 --- a/packages/plugin-browser/src/connection.ts
 +++ b/packages/plugin-browser/src/connection.ts
-@@ -12,7 +12,10 @@ type Attachment = {
-   connectionID: string
+@@ -13,5 +13,8 @@ type Attachment = {
    state: Browser.State
    closed: Deferred.Deferred<"closed" | "replaced">
 -  pending: Map<string, { command: Browser.Command; result: Deferred.Deferred<Browser.Result, Tool.Error> }>
@@ -2164,9 +2118,7 @@ index 4c6838c70f..e902c8f6e4 100644
 +      consumed: boolean; committed: boolean } }>
    tunnels: BrowserTunnel.Tunnels
  }
- 
-@@ -80,7 +83,10 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
-           const session = yield* ctx.session
+@@ -81,5 +84,8 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              .get({ sessionID: input.sessionID })
              .pipe(Effect.mapError(() => call.error("unavailable", "Session not found.", {})))
 -          if (session.location.directory !== ctx.location.directory)
@@ -2176,9 +2128,7 @@ index 4c6838c70f..e902c8f6e4 100644
 +          )
              return yield* Effect.fail(call.error("unavailable", "Session belongs to another location.", {}))
            const browser = yield* Effect.acquireRelease(
-             Effect.gen(function* () {
-@@ -120,6 +126,18 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
-             return yield* Effect.fail(call.error("unavailable", "Browser request is no longer available.", {}))
+@@ -121,4 +127,16 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
            return pending.command
          }),
 +      "read.commit": (input) =>
@@ -2195,9 +2145,7 @@ index 4c6838c70f..e902c8f6e4 100644
 +        }),
        result: (input, call) =>
          Effect.gen(function* () {
-           const browser = browsers.get(input.sessionID)
-@@ -127,6 +145,9 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
-             return yield* Effect.fail(call.error("unavailable", "Browser is unavailable.", {}))
+@@ -128,4 +146,7 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
            const pending = browser.pending.get(input.requestID)
            if (!pending) return
 +          if (pending.read && (!pending.read.committed || !pending.read.authorized() || !browser.state.tabs.some((tab) =>
@@ -2205,9 +2153,7 @@ index 4c6838c70f..e902c8f6e4 100644
 +            return yield* Effect.fail(call.error("unavailable", "Uncommitted or stale read cannot return a result.", {}))
            if (input.outcome.type === "failure")
              return yield* Deferred.fail(
-               pending.result,
-@@ -177,8 +198,10 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
-             "[browser.tab_unavailable] This tab is closed or does not belong to the connected session. Call browser.tabs.list({}) and use an exact returned tabID. If no tabs exist, use browser.tabs.open({}). Never substitute a request ID, file ID, or element ref for tabID.",
+@@ -178,8 +199,12 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
          })
        // Keep the selected attachment and document, even while permissions or file IO wait.
 +      let once = false
@@ -2215,18 +2161,21 @@ index 4c6838c70f..e902c8f6e4 100644
          tab,
 +        binding: { connectionID: browser.connectionID, tabGeneration: tab?.generation ?? 0 },
          inspect: () =>
-           request(rpc, browser, action, tab, [], { inspect: true }).pipe(
+-          request(rpc, browser, action, tab, [], { inspect: true }).pipe(
++          (Browser.legacyActionAllowed(action.type)
++            ? request(rpc, browser, action, tab, [], { inspect: true })
++            : Effect.fail(new Tool.Error({ message: "Uncommitted browser read/inspection is disabled." }))).pipe(
              Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
-@@ -194,7 +217,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
-             ),
+             Effect.mapError(
+@@ -195,5 +220,31 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
            ),
          request: (files: readonly Browser.File[], target?: Browser.Target) =>
 -          request(rpc, browser, action, tab, files, { target }),
 +          Effect.gen(function* () {
 +            // Legacy Code Mode snapshots never carry a Core Permission epoch or Desktop commit.
 +            // Refuse this read; only snapshotOnce may issue a committed snapshot command.
-+            if (action.type === "snapshot")
-+              return yield* new Tool.Error({ message: "Legacy browser.snapshot lacks Core read authority; use snapshotOnce." })
++            if (!Browser.legacyActionAllowed(action.type))
++              return yield* new Tool.Error({ message: "Legacy browser content read lacks Core authority; use snapshotOnce for snapshots." })
 +            if (
 +              !active ||
 +              browsers.get(sessionID) !== browser ||
@@ -2251,17 +2200,13 @@ index 4c6838c70f..e902c8f6e4 100644
 +          }),
        }
      }),
-   }
-@@ -207,6 +256,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
-   tab: Browser.Tab | undefined,
+@@ -208,4 +259,5 @@ const request = Effect.fn("BrowserConnection.request")(function* (
    files: readonly Browser.File[],
    inspection: Pick<Browser.Command, "inspect" | "target">,
 +  readGuard?: () => boolean,
  ) {
    const requestID = crypto.randomUUID()
-   const pending = yield* Deferred.make<Browser.Result, Tool.Error>()
-@@ -214,9 +264,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
-     (action.type === "files.upload" || action.type === "files.drop") && !inspection.inspect
+@@ -215,7 +267,11 @@ const request = Effect.fn("BrowserConnection.request")(function* (
        ? { ...action, paths: files.map((file) => file.name) }
        : action
 +  const ticket = readGuard ? crypto.randomUUID() : undefined
@@ -2274,12 +2219,11 @@ index 4c6838c70f..e902c8f6e4 100644
 +      expires: performance.now() + 5000, authorized: readGuard!, consumed: false, committed: false } } : {}),
    })
    return yield* rpc.events.emit("control", { type: "command", connectionID: browser.connectionID, requestID }).pipe(
-     Effect.mapError(
 diff --git a/packages/plugin-browser/src/index.ts b/packages/plugin-browser/src/index.ts
 index 3ef7c6b877..67ff73dcd1 100644
 --- a/packages/plugin-browser/src/index.ts
 +++ b/packages/plugin-browser/src/index.ts
-@@ -1,13 +1,46 @@
+@@ -1,6 +1,9 @@
  import { Plugin } from "@opencode/plugin/effect"
 -import { Effect } from "effect"
 +import { Effect, Schema } from "effect"
@@ -2290,8 +2234,7 @@ index 3ef7c6b877..67ff73dcd1 100644
 +const Snapshot = Schema.Struct({ content: Schema.String, truncated: Schema.Boolean })
  
  export default Plugin.define({
-   id: "opencode.browser",
-   effect: (ctx) =>
+@@ -9,4 +12,34 @@ export default Plugin.define({
      Effect.gen(function* () {
        const connection = yield* BrowserConnection.make(ctx)
 +      yield* ctx.browser
@@ -2326,28 +2269,40 @@ index 3ef7c6b877..67ff73dcd1 100644
 +        .pipe(Effect.orDie)
        yield* BrowserTools.register(ctx, connection)
      }),
- })
 diff --git a/packages/plugin-browser/src/rpc.ts b/packages/plugin-browser/src/rpc.ts
-index aaba261a16..c42d92c4a6 100644
+index aaba261a16..ecc360bf0e 100644
 --- a/packages/plugin-browser/src/rpc.ts
 +++ b/packages/plugin-browser/src/rpc.ts
-@@ -508,6 +508,8 @@ export const Command = Schema.Struct({
-   files: Schema.Array(File),
+@@ -496,4 +496,16 @@ export const Operations = [
+ export type Operation = (typeof Operations)[number]
+ export type Method = Operation["name"]
++// Conservative compatibility list: every page-content/read/capture action,
++// including future unknown actions, needs a distinct Core-bound authority.
++// Existing trusted Code Mode effects use their separate browser permissions;
++// none of these actions is a WebBridge write grant.
++const LEGACY_NO_CONTENT = new Set<string>([
++  "tabs.open", "tabs.focus", "tabs.close", "preview", "navigate", "back", "forward", "reload", "stop",
++  "click", "hover", "drag", "fill", "fill_form", "select", "check", "press", "scroll",
++  "files.upload", "files.drop",
++])
++export function legacyActionAllowed(actionType: string): boolean {
++  return LEGACY_NO_CONTENT.has(actionType)
++}
+ export const Action = Schema.Union(Operations.map((operation) => operation.action)).annotate({
+   identifier: "Browser.Action",
+@@ -509,4 +521,6 @@ export const Command = Schema.Struct({
    inspect: optional(Schema.Boolean),
    target: optional(Target),
 +  /** Desktop must commit this exact one-use read before a snapshot is executed. Not a write grant. */
 +  readCommit: optional(Schema.String.check(Schema.isPattern(/^[a-f0-9-]{36}$/u))),
  }).annotate({ identifier: "Browser.Command" })
  export interface Command extends Schema.Schema.Type<typeof Command> {}
- export const Result = Schema.Struct({ value: Schema.Json, files: Schema.Array(File) }).annotate({
-@@ -555,6 +557,7 @@ export const Definition = Rpc.define({
-     },
+@@ -556,4 +570,5 @@ export const Definition = Rpc.define({
      state: { input: Schema.Struct({ ...attachment, state: State }), output: Schema.Void, errors },
      command: { input: Schema.Struct(request), output: Command, errors },
 +    "read.commit": { input: Schema.Struct({ ...request, ticket: short }), output: Schema.Boolean, errors },
      result: { input: Schema.Struct({ ...request, outcome: Outcome }), output: Schema.Void, errors },
      "tunnel.open": { input: Schema.Struct({ ...attachment, target: TunnelTarget }), output: short, errors },
-     "tunnel.read": { input: Schema.Struct(tunnel), output: TunnelRead, errors },
 diff --git a/packages/plugin-browser/test/connection-location.test.ts b/packages/plugin-browser/test/connection-location.test.ts
 new file mode 100644
 index 0000000000..cbfd5b5d12
@@ -2419,10 +2374,10 @@ index 0000000000..cbfd5b5d12
 +})
 diff --git a/packages/plugin-browser/test/read-commit.test.ts b/packages/plugin-browser/test/read-commit.test.ts
 new file mode 100644
-index 0000000000..c1427a3a5d
+index 0000000000..9cdefcb6f8
 --- /dev/null
 +++ b/packages/plugin-browser/test/read-commit.test.ts
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,199 @@
 +import { expect, test } from "bun:test"
 +import { Deferred, Effect, Exit, Fiber, Stream } from "effect"
 +import { AbsolutePath } from "@opencode/schema/schema"
@@ -2553,6 +2508,21 @@ index 0000000000..c1427a3a5d
 +  }))
 +})
 +
++test("legacy find and evaluate cannot dispatch uncommitted page-content RPCs or inspect targets", async () => {
++  await harness(({ scope, next }) => Effect.gen(function* () {
++    for (const action of [
++      { type: "find", tabID, text: "session secret" },
++      { type: "evaluate", tabID, script: "document.cookie" },
++      { type: "network.get", tabID, id: "request-secret" },
++    ] as const) {
++      const target = yield* scope.target(sessionID, action)
++      expect(Exit.isFailure(yield* Effect.exit(target.inspect()))).toBe(true)
++      expect(Exit.isFailure(yield* Effect.exit(target.request([])))).toBe(true)
++    }
++    expect(Exit.isFailure(yield* Effect.exit(Deferred.await(next).pipe(Effect.timeout("100 millis"))))).toBe(true)
++  }))
++})
++
 +test("a tab replacement after a successful commit cannot return stale document text", async () => {
 +  await harness(({ target, commands, next, base }) => Effect.gen(function* () {
 +    const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
@@ -2661,28 +2631,23 @@ diff --git a/packages/plugin/src/effect/plugin.ts b/packages/plugin/src/effect/p
 index b19fac7e57..c7c356321a 100644
 --- a/packages/plugin/src/effect/plugin.ts
 +++ b/packages/plugin/src/effect/plugin.ts
-@@ -5,6 +5,7 @@ import type { PluginOptions } from "../options.js"
- import type { App } from "../app.js"
+@@ -6,4 +6,5 @@ import type { App } from "../app.js"
  import type { AgentDomain } from "./agent.js"
  import type { AISDKDomain } from "./aisdk.js"
 +import type { BrowserDomain } from "./browser.js"
  import type { CommandDomain } from "./command.js"
  import type { EventDomain } from "./event.js"
- import type { IntegrationDomain } from "./integration.js"
-@@ -25,6 +26,7 @@ import type { WorktreeDomain } from "./worktree.js"
- 
+@@ -26,4 +27,5 @@ import type { WorktreeDomain } from "./worktree.js"
  export interface Context {
    readonly app: App
 +  readonly browser: BrowserDomain
    readonly location: Location.Info
    readonly options: PluginOptions
-   readonly agent: AgentDomain
 diff --git a/packages/plugin/src/promise/adapter.ts b/packages/plugin/src/promise/adapter.ts
 index ff5efd107e..73e68e97eb 100644
 --- a/packages/plugin/src/promise/adapter.ts
 +++ b/packages/plugin/src/promise/adapter.ts
-@@ -290,6 +290,12 @@ export function fromPromise(plugin: Plugin) {
- 
+@@ -291,4 +291,10 @@ export function fromPromise(plugin: Plugin) {
          const context2: PromiseContext = {
            app: host.app,
 +          browser: {
@@ -2693,7 +2658,6 @@ index ff5efd107e..73e68e97eb 100644
 +          },
            location: host.location,
            options: host.options,
-           agent: {
 diff --git a/packages/plugin/src/promise/browser.ts b/packages/plugin/src/promise/browser.ts
 new file mode 100644
 index 0000000000..24a5dcaf67
@@ -2714,19 +2678,15 @@ diff --git a/packages/plugin/src/promise/plugin.ts b/packages/plugin/src/promise
 index ed94b09302..ea317fa062 100644
 --- a/packages/plugin/src/promise/plugin.ts
 +++ b/packages/plugin/src/promise/plugin.ts
-@@ -5,6 +5,7 @@ import type { PluginOptions } from "../options.js"
- import type { App } from "../app.js"
+@@ -6,4 +6,5 @@ import type { App } from "../app.js"
  import type { AgentDomain } from "./agent.js"
  import type { AISDKDomain } from "./aisdk.js"
 +import type { BrowserDomain } from "./browser.js"
  import type { CommandDomain } from "./command.js"
  import type { EventDomain } from "./event.js"
- import type { IntegrationDomain } from "./integration.js"
-@@ -25,6 +26,7 @@ import type { WorktreeDomain } from "./worktree.js"
- 
+@@ -26,4 +27,5 @@ import type { WorktreeDomain } from "./worktree.js"
  export interface Context {
    readonly app: App
 +  readonly browser: BrowserDomain
    readonly location: Location.Info
    readonly options: PluginOptions
-   readonly agent: AgentDomain

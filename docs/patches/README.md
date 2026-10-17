@@ -4,7 +4,7 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `E500F042D503699705C85F29268C746C70AEFEDE551430495BC9282C2D9DEA7C`.
+Patch SHA-256: `63D89581919694887DA2235E6712505D2009D2A9C0A908208254246E1179A7D7`.
 
 Follow-up to #110: [ADR 0004](../ADR/0004-core-permission-browser-read-epoch.md) adds a real, read-only `Permission.Service.browserRead` authority with policy-version invalidation and RED→GREEN Core integration tests. This ledger is **not invoked by Desktop or existing browser tools**, and cannot grant native writes.
 
@@ -21,6 +21,8 @@ G52 host-read follow-up: the bound Core lease is rechecked synchronously by a tr
 G56 follow-up closes a *local* readiness TOCTOU: after `read.commit`, `pane.execute` used to await `page.ready` before invoking the Chromium driver without rechecking the tab/cancellation/attachment. The GUI now checks its live local binding **after readiness**, directly before initiating `page.execute`; a deferred-ready negative test proves zero driver invocations when the binding changes during the wait. See [ADR 0007](../ADR/0007-desktop-read-ready-boundary.fr.md). This is not an atomic Core↔GUI policy revocation guarantee, and the read-only patch is not certified in a distributed Electron build.
 
 G57 follow-up additionally rejects a **late Chromium result** if the tab, connection or local Desktop attachment is invalidated while `page.execute` is pending. An adversarial deferred-result test was RED before this correction and GREEN after it, using the actual upstream helper. This prevents the GUI from returning page content in that local race, but does not undo a read already attempted or close cross-process Core revocation. See [ADR 0008](../ADR/0008-desktop-read-late-result.fr.md).
+
+G58 denies the remaining **legacy page-content/capture actions** at both `BrowserConnection.target.request/inspect` and the direct Desktop GUI IPC action gate until there is a matching Core-bound one-use read contract. A conservative allowlist preserves existing separately permissioned *effect* actions; the legacy `tabs.list` metadata listing is intentionally disabled because URLs/titles can carry private data. All new/unrecognized operation names default to denial. Runtime Bun RED→GREEN regression plus server/GUI negative tests and parity check; see [ADR 0009](../ADR/0009-native-legacy-read-deny.fr.md). This intentionally reduces the official Code Mode read-tool surface on the patched build: it is **not production-compatible without individual read-authority replacements**, and no new WebBridge write capability is granted.
 
 Independent E2 follow-up: the Core reference ledger now snapshots the entire validated binding **before** asynchronous authorization, refuses mutation during the await, and preserves spent-call tombstones through `revoke()` to prevent replay of the same call in a later epoch. Tickets use a bounded monotonic lifetime. Regression tests exercise forged plugin/session/action mutation, post-revoke replay, and clock rollback; the ledger remains disconnected from Desktop and **does not authorize writes**.
 
