@@ -111,3 +111,44 @@ test('uncertain tool execution stays blocked across a process restart and cannot
     assert.equal(reapprovals, 0);
   } finally { second.close(); rmSync(path, { force: true, recursive: true }); }
 });
+
+test('authorization cannot be swapped to a different tool or argument across async grant', async () => {
+  await harness(async (journal) => {
+    const original = structuredClone(sample);
+    const gate = new NativeToolHandoff(scope, journal, new Set(['safe_echo']),
+      (name, args) => name === 'safe_echo' && args.text === 'check');
+    let invoked = 0;
+    const response = await gate.dispatch(original, async (request) => {
+      assert.equal(request.tool.name, 'safe_echo');
+      original.tool.name = 'bash';
+      original.tool.arguments.text = 'run arbitrary command';
+      return true;
+    }, async (request) => {
+      invoked++;
+      assert.equal(request.tool.name, 'safe_echo');
+      assert.deepEqual(request.tool.arguments, { text: 'check' });
+      assert.equal(Object.isFrozen(request.tool.arguments), true);
+      assert.equal(Object.isFrozen(request.tool), true);
+      return 'done';
+    });
+    assert.equal(response.status, 'completed');
+    assert.equal(invoked, 1);
+  });
+});
+
+test('top-level getter and concealed fields cannot become an authorized tool request', () => {
+  const lazy = Object.defineProperty({ ...sample }, 'operationID', {
+    enumerable: true, get() { throw new Error('untrusted getter executed'); },
+  });
+  assert.throws(() => parseToolProposal(lazy, scope), /structured|plain|fields/);
+  const hidden = Object.defineProperty({ ...sample }, 'secret', {
+    enumerable: false, value: 'hidden credential',
+  });
+  assert.throws(() => parseToolProposal(hidden, scope), /structured|fields/);
+  const symbol = { ...sample, [Symbol.for('injected')]: true };
+  assert.throws(() => parseToolProposal(symbol, scope), /structured|fields/);
+  const nested = { ...sample, tool: { ...sample.tool, arguments: {
+    text: 'check', [Symbol.for('hidden')]: 'injected',
+  } } };
+  assert.throws(() => parseToolProposal(nested, scope), /plain JSON|forbidden/);
+});

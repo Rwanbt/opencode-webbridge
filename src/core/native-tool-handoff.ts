@@ -18,7 +18,10 @@ export type ToolProposal = {
 };
 
 const exact = (obj: Record<string, unknown>, fields: readonly string[]): boolean =>
-  Object.keys(obj).length === fields.length && fields.every((field) => Object.hasOwn(obj, field));
+  Reflect.ownKeys(obj).length === fields.length && fields.every((field) => {
+    const descriptor = Object.getOwnPropertyDescriptor(obj, field);
+    return descriptor?.enumerable === true && Object.hasOwn(descriptor, 'value');
+  });
 const plain = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
 
@@ -31,19 +34,33 @@ function safeJSON(value: unknown, seen = new Set<object>(), depth = 0, budget = 
   if (typeof value !== 'object' || seen.has(value)) throw new Error('tool arguments not bounded plain JSON');
   seen.add(value);
   if (Array.isArray(value)) {
-    if (Object.keys(value).length !== value.length) throw new Error('tool arguments not bounded plain JSON');
+    if (Object.keys(value).length !== value.length || Reflect.ownKeys(value).length !== value.length + 1) {
+      throw new Error('tool arguments not bounded plain JSON');
+    }
     for (const item of value) safeJSON(item, seen, depth + 1, budget);
   } else {
     if (!plain(value)) throw new Error('tool arguments not bounded plain JSON');
-    for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== 'string') throw new Error('tool arguments not bounded plain JSON');
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
       if (key === '__proto__' || key === 'prototype' || key === 'constructor' || key.length > 128) {
         throw new Error('tool arguments contain forbidden fields');
       }
-      if (!Object.hasOwn(descriptor, 'value')) throw new Error('tool arguments not bounded plain JSON');
+      if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) {
+        throw new Error('tool arguments not bounded plain JSON');
+      }
       safeJSON(descriptor.value, seen, depth + 1, budget);
     }
   }
   seen.delete(value);
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object') {
+    for (const entry of Object.values(value)) deepFreeze(entry);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 /** Does not extract tool requests from arbitrary web text, Markdown or DOM. */
@@ -67,8 +84,11 @@ export function parseToolProposal(raw: unknown, scope: NativeScope, tools?: Read
   if (tools && !tools.has(raw.tool.name)) throw new Error('tool is not registered in native OpenCode');
   if (!plain(raw.tool.arguments)) throw new Error('tool arguments must be plain JSON');
   safeJSON(raw.tool.arguments);
-  if (JSON.stringify(raw).length > 16_000) throw new Error('tool proposal too large');
-  return raw as ToolProposal;
+  const encoded = JSON.stringify(raw);
+  if (encoded.length > 16_000) throw new Error('tool proposal too large');
+  // The browser's mutable object is NEVER handed to either native authority or
+  // executor. Both see one detached, deeply frozen snapshot of the same action.
+  return deepFreeze(JSON.parse(encoded) as ToolProposal);
 }
 
 export type NativeAuthorization = (proposal: ToolProposal) => Promise<boolean>;
@@ -79,10 +99,13 @@ export type NativeExecutor<T> = (proposal: ToolProposal) => Promise<T>;
  * tool-schema validation; this module does not grant permissions or publish tools.
  */
 export class NativeToolHandoff {
-  constructor(private readonly scope: NativeScope, private readonly journal: DurableRelayJournal,
+  private readonly scope: NativeScope;
+  constructor(scope: NativeScope, private readonly journal: DurableRelayJournal,
     private readonly registered: ReadonlySet<string>,
     private readonly validateArguments: (name: string, args: Readonly<Record<string, unknown>>) => boolean) {
-    journal.assertBinding(scope);
+    for (const [key, value] of Object.entries(scope)) assertOpaqueID(value, key);
+    this.scope = Object.freeze({ ...scope });
+    journal.assertBinding(this.scope);
   }
 
   async dispatch<T>(raw: unknown, nativeAuthorize: NativeAuthorization,
