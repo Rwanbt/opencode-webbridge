@@ -4,7 +4,9 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `D80B67786DF01D081732C06EBA31E6D047EC28E70DF50732DE38DDE51DF4D996`.
+Patch SHA-256: `28D7C0CB42A409B11F278B7EA29B498BB2C27BF5E301A7DEEE145E9017DBA01C`.
+
+Follow-up to #110: [ADR 0004](../ADR/0004-core-permission-browser-read-epoch.md) adds a real, read-only `Permission.Service.browserRead` authority with policy-version invalidation and RED→GREEN Core integration tests. This ledger is **not invoked by Desktop or existing browser tools**, and cannot grant native writes.
 
 The next stacked Draft adds the **Core-only BrowserLease reference contract** and adversarial tests. Its non-integrated nature and the missing atomic Desktop grant consumption are recorded in [ADR 0003](../ADR/0003-v2-transactional-browser-grant-tcb.md). **No native read/write dispatch uses this new ledger yet**; prior `snapshotOnce` is unchanged.
 

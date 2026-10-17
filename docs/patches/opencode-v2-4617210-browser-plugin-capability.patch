@@ -1,3 +1,180 @@
+diff --git a/packages/core/src/agent.ts b/packages/core/src/agent.ts
+index 14732fdd75..aed8051b87 100644
+--- a/packages/core/src/agent.ts
++++ b/packages/core/src/agent.ts
+@@ -38,6 +38,8 @@ export type Editor = {
+ }
+ 
+ export interface Interface extends State.Transformable<Editor> {
++  /** Synchronous in-process policy invalidation epoch. */
++  readonly revision?: () => number
+   readonly get: (id: ID) => Effect.Effect<Info | undefined>
+   readonly resolve: (id?: ID | string) => Effect.Effect<Info | undefined>
+   readonly select: (id?: ID | string) => Effect.Effect<Selection>
+@@ -86,6 +88,7 @@ const layer = Layer.effect(
+     }
+ 
+     return Service.of({
++      revision: state.revision,
+       transform: state.transform,
+       reload: state.reload,
+       get: Effect.fn("Agent.get")(function* (id) {
+diff --git a/packages/core/src/permission.ts b/packages/core/src/permission.ts
+index 2aecebb0ce..bffc78b254 100644
+--- a/packages/core/src/permission.ts
++++ b/packages/core/src/permission.ts
+@@ -12,6 +12,8 @@ import { SessionStore } from "./session/store.js"
+ import { Wildcard } from "./util/wildcard.js"
+ import { PermissionSaved } from "./permission/saved.js"
+ import { PluginHooks } from "./plugin/hooks.js"
++import { BrowserLease } from "./plugin/browser-lease.js"
++import { SessionEvent } from "@opencode/schema/session-event"
+ 
+ const PermissionEffect = Permission.Effect
+ export { PermissionEffect as Effect }
+@@ -108,6 +110,9 @@ export interface Interface {
+   readonly get: (id: ID) => Effect.Effect<Request | undefined>
+   readonly forSession: (sessionID: SessionSchema.ID) => Effect.Effect<ReadonlyArray<Request>>
+   readonly list: () => Effect.Effect<ReadonlyArray<Request>>
++  /** Restricted Core-only reference authority: does not authorize Desktop browser effects. */
++  /** Optional in test doubles; real Permission.Service always supplies this authority. */
++  readonly browserRead?: ReturnType<typeof BrowserLease.make>
+ }
+ 
+ export class Service extends Context.Service<Service, Interface>()("@opencode/Permission") {}
+@@ -129,9 +134,12 @@ const layer = Layer.effect(
+     const hooks = yield* PluginHooks.Service
+     const pending = new Map<ID, Pending>()
+     let closed = false
++    let agentRevision = agents.revision?.()
++    let savedRevision = saved.revision?.()
+ 
+     const close = Effect.gen(function* () {
+       closed = true
++      browserRead.retire()
+       yield* Effect.forEach(Array.from(pending.values()), (item) =>
+         bus
+           .publish(Permission.Event.Replied, {
+@@ -262,6 +270,56 @@ const layer = Layer.effect(
+       }),
+     )
+ 
++    // Core authority owns the lease epoch, not a plugin-supplied predicate. This deliberately
++    // supports only a read action; external session/agent/saved-rule changes still require
++    // an atomic mutation hook before this can be trusted for browser effect dispatch.
++    const browserRead = BrowserLease.make({
++      live: () => {
++        const a = agents.revision?.()
++        const s = saved.revision?.()
++        if (a === undefined || s === undefined) return false
++        if (a !== agentRevision || s !== savedRevision) {
++          agentRevision = a
++          savedRevision = s
++          browserRead.revoke() // Synchronous before any next issue/consume.
++        }
++        return !closed
++      },
++      authorize: (binding) =>
++        Effect.gen(function* () {
++          if (binding.action !== "snapshot.once")
++            return yield* Effect.fail(new Error("Browser write authority is unavailable"))
++          const sessionID = SessionSchema.ID.make(binding.sessionID)
++          const session = yield* sessions.get(sessionID)
++          if (!session || session.location.workspaceID !== binding.workspaceID)
++            return yield* Effect.fail(new Error("Browser session/workspace mismatch"))
++          const agent = Agent.ID.make(binding.agentID)
++          const resource = [
++            binding.pluginID,
++            binding.pluginGeneration,
++            binding.action,
++            binding.workspaceID,
++            binding.sessionID,
++            binding.turnID,
++            binding.callID,
++            binding.connectionID,
++            binding.tabID,
++            binding.tabGeneration,
++          ].join(":")
++          yield* assert({ sessionID, agent, action: "browser", resources: ["*"], save: [] })
++          yield* assert({ sessionID, agent, action: "browser_plugin", resources: [resource], save: [] })
++        }).pipe(Effect.mapError((error) => new Error(error.message))),
++    })
++    // Durable session mutations revoke before their publication transaction returns.
++    // This is a conservative global invalidation, not a complete cross-service epoch.
++    for (const event of [
++      SessionEvent.Permissions,
++      SessionEvent.AgentSelected,
++      SessionEvent.Moved,
++      SessionEvent.Deleted,
++    ])
++      yield* bus.project(event, () => Effect.sync(() => browserRead.revoke()))
++
+     const reply = Effect.fn("Permission.reply")((input: ReplyInput) =>
+       Effect.uninterruptible(
+         Effect.gen(function* () {
+@@ -274,6 +332,7 @@ const layer = Layer.effect(
+           })
+ 
+           if (input.reply === "reject") {
++            browserRead.revoke()
+             yield* Deferred.fail(
+               existing.deferred,
+               input.message ? new CorrectedError({ feedback: input.message }) : new DeclinedError(),
+@@ -336,7 +395,7 @@ const layer = Layer.effect(
+       return Array.from(pending.values(), (item) => item.request).filter((request) => request.sessionID === sessionID)
+     })
+ 
+-    return Service.of({ ask, assert, reply, get, forSession, list, close })
++    return Service.of({ ask, assert, reply, get, forSession, list, close, browserRead })
+   }),
+ )
+ 
+diff --git a/packages/core/src/permission/saved.ts b/packages/core/src/permission/saved.ts
+index 8ba50b16be..3a65c4141a 100644
+--- a/packages/core/src/permission/saved.ts
++++ b/packages/core/src/permission/saved.ts
+@@ -27,6 +27,7 @@ export const AddInput = Schema.Struct({
+ export type AddInput = typeof AddInput.Type
+ 
+ export interface Interface {
++  readonly revision?: () => number
+   readonly list: (input?: ListInput) => Effect.Effect<ReadonlyArray<Info>>
+   readonly add: (input: AddInput) => Effect.Effect<void>
+   readonly remove: (id: ID) => Effect.Effect<void>
+@@ -38,6 +39,7 @@ const layer = Layer.effect(
+   Service,
+   Effect.gen(function* () {
+     const db = (yield* Database.Service).db
++    let revision = 0
+ 
+     const list = Effect.fnUntraced(function* (input?: ListInput) {
+       const rows = yield* db
+@@ -62,6 +64,7 @@ const layer = Layer.effect(
+ 
+     const add = Effect.fn("PermissionSaved.add")(function* (input: AddInput) {
+       if (!input.resources.length) return
++      revision++ // Invalidates permission leases before asynchronous DB mutation.
+       yield* db
+         .insert(PermissionTable)
+         .values(
+@@ -75,13 +78,16 @@ const layer = Layer.effect(
+         .onConflictDoNothing()
+         .run()
+         .pipe(Effect.orDie)
++      revision++ // A concurrent read made during the mutation must also be invalidated.
+     })
+ 
+     const remove = Effect.fn("PermissionSaved.remove")(function* (id: ID) {
++      revision++
+       yield* db.delete(PermissionTable).where(eq(PermissionTable.id, id)).run().pipe(Effect.orDie)
++      revision++
+     })
+ 
+-    return Service.of({ list, add, remove })
++    return Service.of({ list, add, remove, revision: () => revision })
+   }),
+ )
+ 
 diff --git a/packages/core/src/plugin.ts b/packages/core/src/plugin.ts
 index 8ade682658..218870e15a 100644
 --- a/packages/core/src/plugin.ts
@@ -31,10 +208,10 @@ index 8ade682658..218870e15a 100644
          Effect.updateContext((context: Context.Context<never>) =>
 diff --git a/packages/core/src/plugin/browser-lease.ts b/packages/core/src/plugin/browser-lease.ts
 new file mode 100644
-index 0000000000..0e2e41c422
+index 0000000000..383f9516ea
 --- /dev/null
 +++ b/packages/core/src/plugin/browser-lease.ts
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,134 @@
 +export * as BrowserLease from "./browser-lease.js"
 +
 +import { Effect, Exit } from "effect"
@@ -113,8 +290,7 @@ index 0000000000..0e2e41c422
 +  return {
 +    issue: (binding: Binding) =>
 +      Effect.gen(function* () {
-+        if (!valid(binding))
-+          return yield* Effect.fail(new Error("Browser lease binding invalid or unavailable"))
++        if (!valid(binding)) return yield* Effect.fail(new Error("Browser lease binding invalid or unavailable"))
 +        const pinned = Object.freeze({ ...binding })
 +        if (!valid(pinned) || retired || !input.live(pinned))
 +          return yield* Effect.fail(new Error("Browser lease binding invalid or unavailable"))
@@ -137,7 +313,7 @@ index 0000000000..0e2e41c422
 +          ),
 +        )
 +        return yield* Effect.sync(() => {
-+          if (retired || epoch !== observed || !valid(binding) || !same(binding, pinned) || !input.live(pinned))
++          if (!input.live(pinned) || retired || epoch !== observed || !valid(binding) || !same(binding, pinned))
 +            throw new Error("Browser lease revoked during authorization")
 +          const time = now()
 +          if (!Number.isFinite(time)) throw new Error("Browser lease clock unavailable or rolled back")
@@ -153,11 +329,11 @@ index 0000000000..0e2e41c422
 +      pending.delete(ticket.id) // Fail closed even on a mismatched or expired attempt.
 +      return (
 +        !retired &&
-+        item.epoch === epoch &&
 +        now() < item.expires &&
 +        valid(actual) &&
 +        same(item.binding, actual) &&
-+        input.live(actual)
++        input.live(actual) &&
++        item.epoch === epoch
 +      )
 +    },
 +    revoke,
@@ -480,6 +656,255 @@ index 0000000000..5f9baa6050
 +    claim.id === context.id
 +  )
 +}
+diff --git a/packages/core/test/permission-browser-lease.test.ts b/packages/core/test/permission-browser-lease.test.ts
+new file mode 100644
+index 0000000000..aa3ef778e7
+--- /dev/null
++++ b/packages/core/test/permission-browser-lease.test.ts
+@@ -0,0 +1,243 @@
++import { expect } from "bun:test"
++import { Agent } from "@opencode/core/agent"
++import { Bus } from "@opencode/core/bus"
++import { Database } from "@opencode/core/database/database"
++import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
++import { Location } from "@opencode/core/location"
++import { Permission } from "@opencode/core/permission"
++import { PermissionSaved } from "@opencode/core/permission/saved"
++import { Project } from "@opencode/core/project"
++import { ProjectTable } from "@opencode/core/project/sql"
++import { AbsolutePath } from "@opencode/core/schema"
++import { Session } from "@opencode/core/session"
++import { SessionTable } from "@opencode/core/session/sql"
++import { SessionEvent } from "@opencode/schema/session-event"
++import { SessionStore } from "@opencode/core/session/store"
++import { LayerNode } from "@opencode/util/effect/layer-node"
++import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
++import { location } from "./fixture/location"
++import { testEffect } from "./lib/effect"
++
++const test = testEffect(
++  AppNodeBuilder.build(
++    LayerNode.group([Database.node, Bus.node, SessionStore.node, PermissionSaved.node, Agent.node, Permission.node]),
++    [
++      Location.node.replace(
++        Layer.succeed(Location.Service, Location.Service.of(location({ directory: AbsolutePath.make("/project") }))),
++      ),
++    ],
++  ),
++)
++const sessionID = Session.ID.make("ses_browser_epoch")
++const binding = {
++  pluginID: "example.read",
++  pluginGeneration: "gen-1",
++  agentID: "test",
++  sessionID,
++  workspaceID: "wrk_scoped",
++  turnID: "msg_1",
++  callID: "call_1",
++  connectionID: "desktop_1",
++  tabID: "tab_1",
++  tabGeneration: 1,
++  action: "snapshot.once",
++} as const
++
++const setup = (rules: Permission.Ruleset) =>
++  Effect.gen(function* () {
++    const db = (yield* Database.Service).db
++    yield* db
++      .insert(ProjectTable)
++      .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
++      .onConflictDoNothing()
++      .run()
++      .pipe(Effect.orDie)
++    yield* db
++      .insert(SessionTable)
++      .values({
++        id: sessionID,
++        project_id: Project.ID.global,
++        slug: "test",
++        directory: "/project",
++        workspace_id: "wrk_scoped" as never,
++        title: "test",
++        version: "test",
++        agent: "test",
++      })
++      .onConflictDoNothing()
++      .run()
++      .pipe(Effect.orDie)
++    const agent = yield* Agent.Service
++    yield* agent.transform((editor) =>
++      editor.update(Agent.ID.make("test"), (value) => {
++        value.permissions = [...rules]
++      }),
++    )
++  })
++
++test.effect("Permission.Service owns and gates snapshot-only lease with the real rules", () =>
++  Effect.gen(function* () {
++    yield* setup([
++      { action: "browser", resource: "*", effect: "allow" },
++      { action: "browser_plugin", resource: "*", effect: "allow" },
++    ])
++    const permission = yield* Permission.Service
++    const granted = yield* permission.browserRead!.issue(binding)
++    expect(permission.browserRead!.consume(granted, { ...binding, agentID: "impostor" })).toBe(false)
++    expect(permission.browserRead!.consume(granted, binding)).toBe(false)
++    const fresh = yield* permission.browserRead!.issue({ ...binding, callID: "call_2" })
++    expect(permission.browserRead!.consume(fresh, { ...binding, callID: "call_2" })).toBe(true)
++    expect(Exit.isFailure(yield* Effect.exit(permission.browserRead!.issue({ ...binding, action: "click" })))).toBe(
++      true,
++    )
++  }),
++)
++
++test.effect("Permission.Service consent pending across epoch revoke cannot mint a live lease", () =>
++  Effect.gen(function* () {
++    yield* setup([{ action: "browser", resource: "*", effect: "allow" }])
++    const permission = yield* Permission.Service
++    const asked = yield* Deferred.make<Permission.Request>()
++    const bus = yield* Bus.Service
++    const unsubscribe = yield* bus.listen((event) =>
++      event.type === Permission.Event.Asked.type
++        ? Deferred.succeed(asked, event.data as Permission.Request).pipe(Effect.asVoid)
++        : Effect.void,
++    )
++    yield* Effect.addFinalizer(() => unsubscribe)
++    const attempt = yield* permission.browserRead!.issue(binding).pipe(Effect.exit, Effect.forkScoped)
++    const request = yield* Deferred.await(asked)
++    expect(request.action).toBe("browser_plugin")
++    expect(request.resources).toEqual([
++      [
++        binding.pluginID,
++        binding.pluginGeneration,
++        binding.action,
++        binding.workspaceID,
++        binding.sessionID,
++        binding.turnID,
++        binding.callID,
++        binding.connectionID,
++        binding.tabID,
++        binding.tabGeneration,
++      ].join(":"),
++    ])
++    expect(request.sessionID).toBe(sessionID)
++    permission.browserRead!.revoke()
++    yield* permission.reply({ requestID: request.id, reply: "once" })
++    expect(Exit.isFailure(yield* Fiber.join(attempt))).toBe(true)
++    expect(permission.browserRead!.outstanding).toBe(0)
++  }),
++)
++
++test.effect("Core authority refuses writes, configured denials and forged workspace", () =>
++  Effect.gen(function* () {
++    yield* setup([
++      { action: "browser", resource: "*", effect: "allow" },
++      { action: "browser_plugin", resource: "*", effect: "deny" },
++    ])
++    const permission = yield* Permission.Service
++    expect(Exit.isFailure(yield* Effect.exit(permission.browserRead!.issue(binding)))).toBe(true)
++    expect(
++      Exit.isFailure(yield* Effect.exit(permission.browserRead!.issue({ ...binding, workspaceID: "wrk_other" }))),
++    ).toBe(true)
++    expect(Exit.isFailure(yield* Effect.exit(permission.browserRead!.issue({ ...binding, action: "fill" })))).toBe(true)
++    expect(permission.browserRead!.outstanding).toBe(0)
++  }),
++)
++
++test.effect("Core-owned revocation between read grant and local effect prevents dispatch", () =>
++  Effect.gen(function* () {
++    yield* setup([
++      { action: "browser", resource: "*", effect: "allow" },
++      { action: "browser_plugin", resource: "*", effect: "allow" },
++    ])
++    const permission = yield* Permission.Service
++    const ticket = yield* permission.browserRead!.issue(binding)
++    let effects = 0
++    permission.browserRead!.revoke()
++    if (permission.browserRead!.consume(ticket, binding)) effects++
++    expect(effects).toBe(0)
++    expect(Exit.isFailure(yield* Effect.exit(permission.browserRead!.issue(binding)))).toBe(true)
++    yield* permission.close
++    expect(
++      Exit.isFailure(yield* Effect.exit(permission.browserRead!.issue({ ...binding, callID: "after_close" }))),
++    ).toBe(true)
++  }),
++)
++
++test.effect("committed Session.Permissions event invalidates an issued Core read ticket", () =>
++  Effect.gen(function* () {
++    yield* setup([
++      { action: "browser", resource: "*", effect: "allow" },
++      { action: "browser_plugin", resource: "*", effect: "allow" },
++    ])
++    const permission = yield* Permission.Service
++    const ticket = yield* permission.browserRead!.issue(binding)
++    const bus = yield* Bus.Service
++    yield* bus.publish(SessionEvent.Permissions, {
++      sessionID,
++      permissions: [{ action: "browser_plugin", resource: "*", effect: "deny" }],
++    })
++    expect(permission.browserRead!.consume(ticket, binding)).toBe(false)
++    expect(permission.browserRead!.outstanding).toBe(0)
++  }),
++)
++
++test.effect("session policy mutation while user consent waits poisons the pending lease", () =>
++  Effect.gen(function* () {
++    yield* setup([{ action: "browser", resource: "*", effect: "allow" }])
++    const permission = yield* Permission.Service
++    const bus = yield* Bus.Service
++    const asked = yield* Deferred.make<Permission.Request>()
++    const unsubscribe = yield* bus.listen((event) =>
++      event.type === Permission.Event.Asked.type
++        ? Deferred.succeed(asked, event.data as Permission.Request).pipe(Effect.asVoid)
++        : Effect.void,
++    )
++    yield* Effect.addFinalizer(() => unsubscribe)
++    const attempt = yield* permission.browserRead!.issue(binding).pipe(Effect.exit, Effect.forkScoped)
++    const request = yield* Deferred.await(asked)
++    yield* bus.publish(SessionEvent.Permissions, {
++      sessionID,
++      permissions: [{ action: "browser_plugin", resource: "*", effect: "deny" }],
++    })
++    yield* permission.reply({ requestID: request.id, reply: "once" })
++    expect(Exit.isFailure(yield* Fiber.join(attempt))).toBe(true)
++    expect(permission.browserRead!.outstanding).toBe(0)
++  }),
++)
++
++test.effect("Agent.transform revision invalidates an already-issued read ticket", () =>
++  Effect.gen(function* () {
++    yield* setup([
++      { action: "browser", resource: "*", effect: "allow" },
++      { action: "browser_plugin", resource: "*", effect: "allow" },
++    ])
++    const permission = yield* Permission.Service
++    const ticket = yield* permission.browserRead!.issue(binding)
++    const agents = yield* Agent.Service
++    yield* agents.transform((editor) =>
++      editor.update(Agent.ID.make("test"), (agent) => {
++        agent.permissions = [{ action: "browser_plugin", resource: "*", effect: "deny" }]
++      }),
++    )
++    expect(permission.browserRead!.consume(ticket, binding)).toBe(false)
++    expect(permission.browserRead!.outstanding).toBe(0)
++  }),
++)
++
++test.effect("saved permission revision invalidates a ticket before and after database writes", () =>
++  Effect.gen(function* () {
++    yield* setup([
++      { action: "browser", resource: "*", effect: "allow" },
++      { action: "browser_plugin", resource: "*", effect: "allow" },
++    ])
++    const permission = yield* Permission.Service
++    const ticket = yield* permission.browserRead!.issue(binding)
++    const saved = yield* PermissionSaved.Service
++    yield* saved.add({ projectID: Project.ID.global, action: "browser_plugin", resources: ["*"] })
++    expect(permission.browserRead!.consume(ticket, binding)).toBe(false)
++    expect(permission.browserRead!.outstanding).toBe(0)
++  }),
++)
 diff --git a/packages/core/test/plugin/browser-capability.test.ts b/packages/core/test/plugin/browser-capability.test.ts
 new file mode 100644
 index 0000000000..293ba7aeca
@@ -691,10 +1116,10 @@ index 0000000000..293ba7aeca
 +})
 diff --git a/packages/core/test/plugin/browser-lease.test.ts b/packages/core/test/plugin/browser-lease.test.ts
 new file mode 100644
-index 0000000000..cb7ab332f2
+index 0000000000..6e53adf475
 --- /dev/null
 +++ b/packages/core/test/plugin/browser-lease.test.ts
-@@ -0,0 +1,208 @@
+@@ -0,0 +1,228 @@
 +import { test, expect } from "bun:test"
 +import { BrowserLease } from "@opencode/core/plugin/browser-lease"
 +import { Deferred, Effect, Exit } from "effect"
@@ -859,10 +1284,9 @@ index 0000000000..cb7ab332f2
 +  let checked: BrowserLease.Binding | undefined
 +  const leases = BrowserLease.make({
 +    authorize: (actual) =>
-+      Effect.sync(() => { checked = { ...actual } }).pipe(
-+        Effect.andThen(Deferred.succeed(waiting, undefined)),
-+        Effect.andThen(Deferred.await(resume)),
-+      ),
++      Effect.sync(() => {
++        checked = { ...actual }
++      }).pipe(Effect.andThen(Deferred.succeed(waiting, undefined)), Effect.andThen(Deferred.await(resume))),
 +    live: () => true,
 +  })
 +  const mutable = { ...binding }
@@ -896,12 +1320,33 @@ index 0000000000..cb7ab332f2
 +test("lease expiration uses a monotonic clock and refuses unsafe TTL settings", async () => {
 +  let tick = 100
 +  const leases = BrowserLease.make({
-+    authorize: () => Effect.void, live: () => true, clock: () => tick, ttlMs: 5,
++    authorize: () => Effect.void,
++    live: () => true,
++    clock: () => tick,
++    ttlMs: 5,
 +  })
 +  const issued = await Effect.runPromise(leases.issue(binding))
 +  tick = 90 // Wall-clock regression must never extend the authorization.
 +  expect(leases.consume(issued, binding)).toBe(false)
 +  expect(() => BrowserLease.make({ authorize: () => Effect.void, live: () => true, ttlMs: Infinity })).toThrow()
++})
++
++test("live authority revocation at issuance and at consumption is observed after predicate returns", async () => {
++  let revokeOn = 2
++  let reads = 0
++  let ledger: ReturnType<typeof BrowserLease.make>
++  ledger = BrowserLease.make({
++    authorize: () => Effect.void,
++    live: () => {
++      if (++reads === revokeOn) ledger.revoke()
++      return true
++    },
++  })
++  expect(Exit.isFailure(await Effect.runPromiseExit(ledger.issue(binding)))).toBe(true)
++  revokeOn = 5
++  const next = { ...binding, callID: "after_issue_revoke" }
++  const ticket = await Effect.runPromise(ledger.issue(next))
++  expect(ledger.consume(ticket, next)).toBe(false)
 +})
 diff --git a/packages/core/test/plugin/browser-one-shot.test.ts b/packages/core/test/plugin/browser-one-shot.test.ts
 new file mode 100644
