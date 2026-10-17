@@ -169,3 +169,18 @@ test('truthy or pending schema validator cannot bypass native argument approval'
     assert.deepEqual(journal.status(), [], 'invalid validator cannot allocate durable effect');
   });
 });
+
+test('native tool removed during async permission prompt cannot execute', async () => {
+  await harness(async (journal) => {
+    const tools = new Set(['safe_echo']);
+    const gate = new NativeToolHandoff(scope, journal, tools, () => true);
+    let effects = 0;
+    const response = await gate.dispatch(sample, async () => {
+      tools.delete('safe_echo');
+      return true;
+    }, async () => { effects++; return 'unexpected'; });
+    assert.equal(response.status, 'denied');
+    assert.equal(effects, 0);
+    assert.deepEqual(journal.status().map((x) => x.phase), ['cancelled']);
+  });
+});

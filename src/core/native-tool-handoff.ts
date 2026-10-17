@@ -126,6 +126,13 @@ export class NativeToolHandoff {
     try { allowed = await nativeAuthorize(request) === true; }
     catch { this.journal.cancelled(durableID); throw new Error('native permission unavailable'); }
     if (!allowed) { this.journal.cancelled(durableID); return { status: 'denied' }; }
+    // Native registrations can be revoked while asynchronous permission UI is
+    // open. Treat a missing or changed schema gate as denial before leasing.
+    if (!this.registered.has(request.tool.name) ||
+      this.validateArguments(request.tool.name, request.tool.arguments) !== true) {
+      this.journal.cancelled(durableID);
+      return { status: 'denied' };
+    }
     // Durable lease BEFORE external terminal, filesystem, Git or sub-agent effects.
     this.journal.leased(durableID);
     try {
