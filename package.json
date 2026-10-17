@@ -31,6 +31,7 @@
     "preview:g97": "node scripts/smoke-combined-package.mjs",
     "smoke:g97-native": "npm run build && node scripts/smoke-combined-package.mjs --native",
     "smoke:g125-native": "npm run build && node scripts/smoke-g125-v2032.mjs",
+    "smoke:g130-native": "npm run build && node scripts/smoke-g130-v2032.mjs",
     "smoke:g99-page": "npm run build && node scripts/smoke-combined-page.mjs",
     "smoke:package-native": "node scripts/offline-package-preview.mjs --native",
     "smoke:native": "npm run build && node scripts/smoke-native-provider.mjs",

@@ -135,7 +135,7 @@ jobs:
       - name: RED→GREEN G130 encrypted host-sink lost ACK and wrong scope
         run: npm run build && node --test scripts/test-g130-receipt-host.mjs
       - name: Real installed CLI single-tarball DOM/RPC/SSE and durable receipts after restart
-        run: node scripts/smoke-g130-v2032.mjs
+        run: npm run smoke:g130-native
 
   windows-progressive-relay:
     name: Windows bounded RPC progress (no Chromium)
