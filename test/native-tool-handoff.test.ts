@@ -184,3 +184,23 @@ test('native tool removed during async permission prompt cannot execute', async 
     assert.deepEqual(journal.status().map((x) => x.phase), ['cancelled']);
   });
 });
+
+test('tool arguments with array element accessors never execute untrusted JavaScript', async () => {
+  await harness(async (journal) => {
+    let getters = 0;
+    let permissions = 0;
+    let effects = 0;
+    const values = ['safe'];
+    Object.defineProperty(values, '0', { configurable: true, enumerable: true,
+      get() { getters++; throw new Error('Bearer SECRET-BROWSER-CREDENTIAL'); },
+    });
+    const poisoned = { ...sample, tool: { name: 'safe_echo', arguments: { values } } };
+    const gate = new NativeToolHandoff(scope, journal, new Set(['safe_echo']), () => true);
+    await assert.rejects(gate.dispatch(poisoned, async () => { permissions++; return true; },
+      async () => { effects++; return 'wrong'; }), /plain JSON|bounded/);
+    assert.equal(getters, 0, 'array accessor must not be invoked during parsing');
+    assert.equal(permissions, 0);
+    assert.equal(effects, 0);
+    assert.deepEqual(journal.status(), []);
+  });
+});

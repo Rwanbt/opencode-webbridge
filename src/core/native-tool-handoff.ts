@@ -37,7 +37,15 @@ function safeJSON(value: unknown, seen = new Set<object>(), depth = 0, budget = 
     if (Object.keys(value).length !== value.length || Reflect.ownKeys(value).length !== value.length + 1) {
       throw new Error('tool arguments not bounded plain JSON');
     }
-    for (const item of value) safeJSON(item, seen, depth + 1, budget);
+    // Iterating an untrusted array invokes accessor indices (and a mutable
+    // Symbol.iterator). Never execute either while validating a tool proposal.
+    for (let i = 0; i < value.length; i++) {
+      const item = Object.getOwnPropertyDescriptor(value, String(i));
+      if (!item?.enumerable || !Object.hasOwn(item, 'value')) {
+        throw new Error('tool arguments not bounded plain JSON');
+      }
+      safeJSON(item.value, seen, depth + 1, budget);
+    }
   } else {
     if (!plain(value)) throw new Error('tool arguments not bounded plain JSON');
     for (const key of Reflect.ownKeys(value)) {
