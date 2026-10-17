@@ -2292,7 +2292,7 @@ index 0000000000..bd830ae574
 +  return result
 +}
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
-index 4c6838c70f..8e7a2498af 100644
+index 4c6838c70f..9ce9839433 100644
 --- a/packages/plugin-browser/src/connection.ts
 +++ b/packages/plugin-browser/src/connection.ts
 @@ -10,9 +10,14 @@ import { BrowserTunnel } from "./tunnel.js"
@@ -2426,7 +2426,27 @@ index 4c6838c70f..8e7a2498af 100644
            if (input.outcome.type === "failure")
              return yield* Deferred.fail(
                pending.result,
-@@ -177,10 +228,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -163,6 +214,19 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+   )
+ 
+   return {
++    /** First-party tab metadata from the V6-authorized Core state mirror.
++     * No page-content or legacy Desktop command is dispatched. */
++    tabs: (sessionID: Session.ID) =>
++      Effect.gen(function* () {
++        const browser = browsers.get(sessionID)
++        if (!browser?.ready)
++          return yield* new Tool.Error({ message: "[browser.disconnected] No authorized Desktop tabs for this session." })
++        // Never expose the mutable connection state to another plugin/tool.
++        return {
++          focusedTabID: browser.state.focusedTabID,
++          tabs: browser.state.tabs.map((tab) => ({ ...tab })),
++        } satisfies Browser.State
++      }),
+     target: Effect.fn("BrowserConnection.target")(function* (sessionID: Session.ID, action: Browser.Action) {
+       const browser = browsers.get(sessionID)
+       if (!browser)
+@@ -177,10 +241,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              "[browser.tab_unavailable] This tab is closed or does not belong to the connected session. Call browser.tabs.list({}) and use an exact returned tabID. If no tabs exist, use browser.tabs.open({}). Never substitute a request ID, file ID, or element ref for tabID.",
          })
        // Keep the selected attachment and document, even while permissions or file IO wait.
@@ -2442,7 +2462,7 @@ index 4c6838c70f..8e7a2498af 100644
              Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
              Effect.mapError(
                (error) =>
-@@ -194,7 +249,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -194,7 +262,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              ),
            ),
          request: (files: readonly Browser.File[], target?: Browser.Target) =>
@@ -2477,7 +2497,7 @@ index 4c6838c70f..8e7a2498af 100644
        }
      }),
    }
-@@ -207,6 +288,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -207,6 +301,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
    tab: Browser.Tab | undefined,
    files: readonly Browser.File[],
    inspection: Pick<Browser.Command, "inspect" | "target">,
@@ -2485,7 +2505,7 @@ index 4c6838c70f..8e7a2498af 100644
  ) {
    const requestID = crypto.randomUUID()
    const pending = yield* Deferred.make<Browser.Result, Tool.Error>()
-@@ -214,9 +296,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -214,9 +309,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
      (action.type === "files.upload" || action.type === "files.drop") && !inspection.inspect
        ? { ...action, paths: files.map((file) => file.name) }
        : action
@@ -2501,7 +2521,7 @@ index 4c6838c70f..8e7a2498af 100644
    return yield* rpc.events.emit("control", { type: "command", connectionID: browser.connectionID, requestID }).pipe(
      Effect.mapError(
 diff --git a/packages/plugin-browser/src/index.ts b/packages/plugin-browser/src/index.ts
-index 3ef7c6b877..67ff73dcd1 100644
+index 3ef7c6b877..5e141bcb52 100644
 --- a/packages/plugin-browser/src/index.ts
 +++ b/packages/plugin-browser/src/index.ts
 @@ -1,13 +1,46 @@
@@ -2523,9 +2543,9 @@ index 3ef7c6b877..67ff73dcd1 100644
 +        .register({
 +          tabs: (input) =>
 +            Effect.gen(function* () {
-+              const target = yield* connection.target(input.sessionID, { type: "tabs.list" })
-+              const result = yield* target.request([])
-+              const state = yield* Schema.decodeUnknownEffect(Browser.State)(result.value)
++              // Core-local V6 state mirror; the legacy tabs.list Desktop RPC
++              // stays denied because URL/title metadata can be sensitive.
++              const state = yield* connection.tabs(input.sessionID)
 +              return state.tabs.map((tab) => ({ id: tab.id, url: tab.url, title: tab.title }))
 +            }),
 +          snapshot: (input) =>
@@ -2622,6 +2642,31 @@ index aaba261a16..35218e4e72 100644
      result: { input: Schema.Struct({ ...request, outcome: Outcome }), output: Schema.Void, errors },
      "tunnel.open": { input: Schema.Struct({ ...attachment, target: TunnelTarget }), output: short, errors },
      "tunnel.read": { input: Schema.Struct(tunnel), output: TunnelRead, errors },
+diff --git a/packages/plugin-browser/src/tools.ts b/packages/plugin-browser/src/tools.ts
+index 7afb621efa..78921c82f4 100644
+--- a/packages/plugin-browser/src/tools.ts
++++ b/packages/plugin-browser/src/tools.ts
+@@ -21,12 +21,14 @@ export const register = Effect.fn("BrowserTools.register")(function* (
+       try: () => normalizeAction(input),
+       catch: (error) => new Tool.Error({ message: invalidURL, error }),
+     })
+-    const target = yield* connection.target(tool.sessionID, action)
+-    const uploads =
+-      action.type === "files.upload" || action.type === "files.drop"
+-        ? yield* BrowserFiles.read(action.paths, ctx.location.directory)
+-        : []
+-    const response = yield* target.request(uploads)
++    const response = action.type === "tabs.list"
++      ? { value: yield* connection.tabs(tool.sessionID), files: [] }
++      : yield* Effect.gen(function* () {
++          const target = yield* connection.target(tool.sessionID, action)
++          const uploads = action.type === "files.upload" || action.type === "files.drop"
++            ? yield* BrowserFiles.read(action.paths, ctx.location.directory) : []
++          return yield* target.request(uploads)
++        })
+     const output = yield* Effect.fromResult(decodeResult(operation, response))
+     return yield* exportResult(output, response.files)
+   })
 diff --git a/packages/plugin-browser/test/connection-location.test.ts b/packages/plugin-browser/test/connection-location.test.ts
 new file mode 100644
 index 0000000000..23935de9c0
@@ -2738,10 +2783,10 @@ index 0000000000..23935de9c0
 +})
 diff --git a/packages/plugin-browser/test/read-commit.test.ts b/packages/plugin-browser/test/read-commit.test.ts
 new file mode 100644
-index 0000000000..93b17c14ea
+index 0000000000..d26051debc
 --- /dev/null
 +++ b/packages/plugin-browser/test/read-commit.test.ts
-@@ -0,0 +1,249 @@
+@@ -0,0 +1,269 @@
 +import { expect, test } from "bun:test"
 +import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect"
 +import { AbsolutePath } from "@opencode/schema/schema"
@@ -2815,6 +2860,26 @@ index 0000000000..93b17c14ea
 +    } } }, caller)))).toBe(true)
 +    yield* Fiber.interrupt(first)
 +    expect(Exit.isFailure(yield* Effect.exit(target.requestOnce([], () => true)))).toBe(true)
++  }))
++})
++
++test("tab metadata uses only the Core session mirror and does not bypass native read.commit", async () => {
++  await harness(({ scope, commands, base, next }) => Effect.gen(function* () {
++    const first = yield* scope.tabs(sessionID)
++    expect(first.tabs.map((tab: Browser.Tab) => tab.title)).toEqual(["Offline chat"])
++    expect(first.focusedTabID).toBe(tabID)
++    // Legacy target.request tabs.list still cannot reach native IPC.
++    const legacy = yield* scope.target(sessionID, { type: "tabs.list" })
++    expect(Exit.isFailure(yield* Effect.exit(legacy.request([])))).toBe(true)
++    const caller = { error: (_: string, message: string) => new Error(message) }
++    const impersonator = { ...base, attachmentProof: crypto.randomUUID() }
++    expect(Exit.isFailure(yield* Effect.exit(commands.state({ ...impersonator, state: state(99) }, caller)))).toBe(true)
++    expect((yield* scope.tabs(sessionID)).tabs[0]?.generation).toBe(1)
++    yield* commands.state({ ...base, state: state(2) }, caller)
++    expect((yield* scope.tabs(sessionID)).tabs[0]?.generation).toBe(2)
++    expect(first.tabs[0]?.generation).toBe(1) // Detached snapshot, not live state.
++    expect(Exit.isFailure(yield* Effect.exit(scope.tabs(Session.ID.make("ses_other"))))).toBe(true)
++    expect(Exit.isFailure(yield* Effect.exit(Deferred.await(next).pipe(Effect.timeout("50 millis"))))).toBe(true)
 +  }))
 +})
 +

@@ -4,7 +4,7 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `AE6BA1508467DA61749B909E5A8DC3F3BEAEB6EA39A6652578B00221247CC8BE`.
+Patch SHA-256: `50C710D21A2397802EE5D99C9A4AFAA12EBA2C6356261CFD38C97909C04F50DA`.
 
 Follow-up to #110: [ADR 0004](../ADR/0004-core-permission-browser-read-epoch.md) adds a real, read-only `Permission.Service.browserRead` authority with policy-version invalidation and RED→GREEN Core integration tests. This ledger is **not invoked by Desktop or existing browser tools**, and cannot grant native writes.
 
@@ -29,6 +29,8 @@ G60 adds a **second Core read.live revalidation after Desktop page.ready**, befo
 G61 introduces a **separate private per-attachment proof** alongside the public `connectionID` in all privileged browser RPC calls, with a mandatory **V6** desktop handshake. It denies a second authenticated API client that knows only the broadcast routing ID from spoofing a connection's state, result or tunnel operations. See [ADR 0011](../ADR/0011-desktop-rpc-attachment-proof.fr.md). This does **not** attest that `attach` came from official Electron Desktop: a separately authenticated client can still initiate its own attachment, so stronger server transport identity is a future requirement. No WebBridge writes or commercial automation are enabled.
 
 G62 closes an attachment-initialization race: before the asynchronous session permission update finishes, **no privileged browser RPC or server TCP tunnel may use the attachment**, even with the correct V6 proof. A displaced attachment cannot become ready when its late permission update returns. A deterministic deferred-authorization native host test and the precise compatibility limitations are in [ADR 0012](../ADR/0012-browser-attachment-activation-gate.fr.md). This is not Desktop process attestation or a cross-process atomic permission-effect boundary.
+
+G63 restores only **first-party browser.tabs.list and plugin ctx.browser.tabs metadata** from the session-isolated Core state mirror after V6 proof-checked `state` updates. The mirror returns detached tab snapshots, while legacy `target.request('tabs.list')`, direct GUI IPC and all content/capture reads remain denied. Normal Core `browser`/`browser_plugin` permissions still apply at tool/plugin entry; see [ADR 0013](../ADR/0013-core-owned-tab-metadata.fr.md). No new WebBridge navigation or writing right is granted; this does not attest the Desktop process or solve cross-process atomicity.
 
 Independent E2 follow-up: the Core reference ledger now snapshots the entire validated binding **before** asynchronous authorization, refuses mutation during the await, and preserves spent-call tombstones through `revoke()` to prevent replay of the same call in a later epoch. Tickets use a bounded monotonic lifetime. Regression tests exercise forged plugin/session/action mutation, post-revoke replay, and clock rollback; the ledger remains disconnected from Desktop and **does not authorize writes**.
 
