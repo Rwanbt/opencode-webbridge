@@ -104,9 +104,14 @@ async function nativeSmoke(profile, env, temp, bin) {
   const port = socket.address().port;
   await new Promise((ok) => socket.close(ok));
   const child = spawn(bin, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], {
-    cwd: temp, env: sandbox, windowsHide: true, stdio: 'ignore',
+    cwd: temp, env: sandbox, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     shell: process.platform === 'win32' && /\.cmd$/i.test(bin),
   });
+  let diagnostics = '';
+  let inventory = '';
+  for (const stream of [child.stdout, child.stderr]) {
+    stream.on('data', (data) => { diagnostics = (diagnostics + data.toString('utf8')).slice(-1500); });
+  }
   try {
     let registered = false;
     for (let i = 0; i < 80 && child.exitCode === null; i++) {
@@ -117,14 +122,14 @@ async function nativeSmoke(profile, env, temp, bin) {
         if (result.ok) {
           const ids = await result.json();
           if (JSON.stringify(ids).includes(ID)) { registered = true; break; }
-          throw new Error('native OpenCode did not register packaged preview');
+          inventory = JSON.stringify(ids).slice(-400);
         }
       } catch (err) {
         if (err.message?.includes('did not register')) throw err;
       }
       await new Promise((r) => setTimeout(r, 150));
     }
-    if (!registered) throw new Error('native OpenCode v2 packaged preview load timed out');
+    if (!registered) throw new Error(`native OpenCode v2 packaged preview unavailable; exit=${child.exitCode}, inventory=${inventory}, diagnostic=${diagnostics}`);
   } finally {
     if (child.exitCode === null) child.kill();
     await Promise.race([new Promise((ok) => child.once('close', ok)),
