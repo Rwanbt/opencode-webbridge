@@ -229,6 +229,24 @@ jobs:
       - name: Real installed root local-only model, DOM, native RPC, tool, SSE and restart
         run: npm run smoke:g152-root-vertical
 
+  g153-real-root-native-git-turn:
+    name: G153 actual installed root CLI2.0.32 Chromium model and Git readonly durable resume
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: npx playwright install --with-deps --only-shell chromium
+      - name: G153 real temporary FS Git status/diff/log and durable restart negatives
+        run: npm run build && node --test scripts/test-g153-host.mjs
+      - name: G153 actual root native selected model DOM RPC Git effects read-only before SSE
+        run: npm run smoke:g153-root-git
+
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
     runs-on: ubuntu-latest

@@ -12,7 +12,9 @@ const turnID = () => randomBytes(16).toString('hex');
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 const load = (name) => import(pathToFileURL(join(process.cwd(), 'dist/src/testing', name)).href);
 
-export async function createG152RootVerticalHost({ temp }) {
+export async function createG152RootVerticalHost({
+  temp, hostFactory = createG149VerticalHost,
+}) {
   if (process.platform !== 'linux') throw new Error('G152 real DOM/root fixture only in Linux CI');
   const [{ openLocalChatPage }, { openLocalBrowserCompanion, submitLocalPageTurn },
     { OfflineSseResumeHost }] = await Promise.all([
@@ -89,7 +91,7 @@ export async function createG152RootVerticalHost({ temp }) {
         assert.equal(created.length, 1, 'G152 must derive exact native CLI session ID');
         sessionID = created[0];
         identity.sessionID = sessionID;
-        original = await createG149VerticalHost({ temp, sessionID, turnID: id });
+        original = await hostFactory({ temp, sessionID, turnID: id });
         resumer = OfflineSseResumeHost.initialize(join(temp, 'g152-sse-' + id),
           identity, id, key, 1000);
         start = resumer.startCursor();

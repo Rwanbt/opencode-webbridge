@@ -36,6 +36,7 @@
     "smoke:actual-package": "npm run build && node scripts/smoke-distributed-entrypoint.mjs",
     "smoke:actual-package-native": "npm run build && node scripts/smoke-distributed-entrypoint.mjs --native",
     "smoke:g152-root-vertical": "npm run build && node scripts/smoke-g152-real-root.mjs",
+    "smoke:g153-root-git": "npm run build && node scripts/smoke-g153-root-git.mjs",
     "smoke:g99-page": "npm run build && node scripts/smoke-combined-page.mjs",
     "smoke:package-native": "node scripts/offline-package-preview.mjs --native",
     "smoke:native": "npm run build && node scripts/smoke-native-provider.mjs",
