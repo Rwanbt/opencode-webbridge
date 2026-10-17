@@ -111,7 +111,11 @@ export class NativeToolHandoff {
   async dispatch<T>(raw: unknown, nativeAuthorize: NativeAuthorization,
     nativeExecute: NativeExecutor<T>): Promise<{ status: 'denied' } | { status: 'completed'; value: T }> {
     const request = parseToolProposal(raw, this.scope, this.registered);
-    if (!this.validateArguments(request.tool.name, request.tool.arguments)) throw new Error('tool arguments violate native schema');
+    // TypeScript types are not runtime authority. A Promise or arbitrary truthy
+    // object must never turn an unvalidated web proposal into a native effect.
+    if (this.validateArguments(request.tool.name, request.tool.arguments) !== true) {
+      throw new Error('tool arguments violate native schema');
+    }
     // Different agents/worktrees cannot accidentally share the same operation ID.
     const durableID = createHash('sha256').update(JSON.stringify([
       this.scope.sessionID, this.scope.providerID, this.scope.tabID, this.scope.accountRef,

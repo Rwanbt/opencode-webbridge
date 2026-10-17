@@ -152,3 +152,20 @@ test('top-level getter and concealed fields cannot become an authorized tool req
   } } };
   assert.throws(() => parseToolProposal(nested, scope), /plain JSON|forbidden/);
 });
+
+test('truthy or pending schema validator cannot bypass native argument approval', async () => {
+  await harness(async (journal) => {
+    const invalid = [Promise.resolve(false), { approved: false }, 1, 'yes'];
+    let authorized = 0;
+    let executed = 0;
+    for (const result of invalid) {
+      const gate = new NativeToolHandoff(scope, journal, new Set(['safe_echo']),
+        (() => result) as unknown as (name: string, args: Readonly<Record<string, unknown>>) => boolean);
+      await assert.rejects(gate.dispatch(sample, async () => { authorized++; return true; },
+        async () => { executed++; return true; }), /native schema/);
+    }
+    assert.equal(authorized, 0);
+    assert.equal(executed, 0);
+    assert.deepEqual(journal.status(), [], 'invalid validator cannot allocate durable effect');
+  });
+});
