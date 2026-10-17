@@ -56,3 +56,45 @@ test('relay refuses unsupported providers before allocating ownership', async ()
   await relay.claim(binding);
   await relay.release(binding);
 });
+
+test('ordered progress is visible before finish and never frees the busy lease', async () => {
+  const relay = new RpcRelayPort(secret);
+  await relay.claim(binding);
+  await relay.submit(binding, { turnID: 'stream-1', prompt: 'hi' });
+  relay.take(secret, binding);
+  relay.append(secret, binding, 'stream-1', 'hel');
+  assert.deepEqual(await relay.events(binding, 'stream-1', 0), [
+    { seq: 1, kind: 'text', turnID: 'stream-1', value: 'hel' },
+  ]);
+  await assert.rejects(relay.submit(binding, { turnID: 'stream-2', prompt: 'must wait' }), /busy/);
+  relay.append(secret, binding, 'stream-1', 'lo');
+  assert.deepEqual(await relay.events(binding, 'stream-1', 1), [
+    { seq: 2, kind: 'text', turnID: 'stream-1', value: 'lo' },
+  ]);
+  assert.throws(() => relay.complete(secret, binding, 'stream-1', 'not-the-stream'), /mismatch/);
+  relay.complete(secret, binding, 'stream-1', 'hello');
+  assert.deepEqual(await relay.events(binding, 'stream-1', 2), [
+    { seq: 3, kind: 'finished', turnID: 'stream-1' },
+  ]);
+  assert.throws(() => relay.append(secret, binding, 'stream-1', 'after-finish'), /not pending/);
+  assert.throws(() => relay.complete(secret, binding, 'stream-1', 'hello'), /not pending/);
+  await relay.submit(binding, { turnID: 'stream-2', prompt: 'now allowed' });
+  assert.equal(relay.take(secret, binding)?.turnID, 'stream-2');
+  await relay.release(binding);
+});
+
+test('progress enforces ownership, lease, size and event count before any mutation', async () => {
+  const relay = new RpcRelayPort(secret);
+  await relay.claim(binding);
+  await relay.submit(binding, { turnID: 'stream-1', prompt: 'hi' });
+  assert.throws(() => relay.append(secret, binding, 'stream-1', 'before-lease'), /not pending/);
+  relay.take(secret, binding);
+  assert.throws(() => relay.append(secret, { ...binding, accountRef: 'wrong' }, 'stream-1', 'x'), /binding/);
+  assert.throws(() => relay.append(secret, binding, 'stream-1', ''), /out of bounds/);
+  assert.throws(() => relay.append(secret, binding, 'stream-1', 'x'.repeat(16_001)), /out of bounds/);
+  for (let i = 0; i < 62; i++) relay.append(secret, binding, 'stream-1', 'x');
+  assert.throws(() => relay.append(secret, binding, 'stream-1', 'x'), /out of bounds/);
+  relay.complete(secret, binding, 'stream-1', 'x'.repeat(62));
+  assert.equal((await relay.events(binding, 'stream-1', 0)).length, 63);
+  await relay.release(binding);
+});

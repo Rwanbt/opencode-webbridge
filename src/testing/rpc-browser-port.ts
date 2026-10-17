@@ -1,7 +1,7 @@
 import type { BrowserPort, TabClaim, TurnEvent, TurnRequest } from '../core/browser-port.js';
 
-export type RelayMethod = 'submit' | 'result';
-export type RelayCaller = (method: RelayMethod, input: { turnID: string; prompt?: string }) => Promise<unknown>;
+export type RelayMethod = 'submit' | 'observe';
+export type RelayCaller = (method: RelayMethod, input: { turnID: string; prompt?: string; afterSeq?: number }) => Promise<unknown>;
 
 /**
  * Test-only BrowserPort adapter for the supported OpenCode plugin RPC transport.
@@ -38,17 +38,13 @@ export class RpcBrowserFixturePort implements BrowserPort {
   async events(binding: TabClaim, turnID: string, afterSeq: number): Promise<readonly TurnEvent[]> {
     this.owned(binding);
     if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new Error('invalid RPC cursor');
-    const response = await this.rpc('result', { turnID });
-    if (!response || typeof response !== 'object' || !('finished' in response) ||
-      typeof response.finished !== 'boolean') throw new Error('malformed RPC result');
-    if (!response.finished) return [];
-    if (!('response' in response) || typeof response.response !== 'string' ||
-      !response.response || response.response.length > 16_000) throw new Error('RPC answer out of bounds');
-    const events: TurnEvent[] = [
-      { seq: 1, kind: 'text', turnID, value: response.response },
-      { seq: 2, kind: 'finished', turnID },
-    ];
-    return events.filter((event) => event.seq > afterSeq);
+    const response = await this.rpc('observe', { turnID, afterSeq });
+    if (!response || typeof response !== 'object' || !('events' in response) ||
+      !Array.isArray(response.events) || response.events.length > 64) {
+      throw new Error('malformed RPC event batch');
+    }
+    // exchangeBrowserTurn validates every event's identity, cursor and content.
+    return response.events as readonly TurnEvent[];
   }
 
   /** Remote cancellation is not yet supported, never falsely acknowledge it. */

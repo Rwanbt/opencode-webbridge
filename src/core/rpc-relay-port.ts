@@ -4,6 +4,7 @@ import { assertOpaqueID, type BrowserPort, type TabClaim, type TurnEvent, type T
 import type { DurableRelayJournal } from './durable-relay-journal.js';
 
 type Job = { readonly turnID: string; readonly prompt: string; claimed: boolean; events: TurnEvent[] };
+const terminal = (job: Job) => job.events.some((event) => event.kind === 'finished' || event.kind === 'cancelled');
 
 /**
  * A bounded, testable relay for a FUTURE user-approved desktop companion.
@@ -49,7 +50,7 @@ export class RpcRelayPort implements BrowserPort {
     assertOpaqueID(request.turnID, 'turnID');
     if (!request.prompt || request.prompt.length > 16_000) throw new Error('relay prompt out of bounds');
     if (this.jobs.has(request.turnID)) throw new Error('relay turn already submitted');
-    if ([...this.jobs.values()].some((job) => !job.events.length)) throw new Error('relay already busy');
+    if ([...this.jobs.values()].some((job) => !terminal(job))) throw new Error('relay already busy');
     if (this.jobs.size >= 16) throw new Error('relay journal full: restart/reconcile required');
     this.journal?.prepare(request.turnID);
     this.jobs.set(request.turnID, { turnID: request.turnID, prompt: request.prompt, claimed: false, events: [] });
@@ -60,7 +61,7 @@ export class RpcRelayPort implements BrowserPort {
   take(secret: string, binding: TabClaim): { turnID: string; prompt: string } | null {
     this.check(secret, binding);
     for (const job of this.jobs.values()) {
-      if (job.claimed || job.events.length) continue;
+      if (job.claimed || terminal(job)) continue;
       this.journal?.leased(job.turnID);
       job.claimed = true;
       return { turnID: job.turnID, prompt: job.prompt };
@@ -68,19 +69,35 @@ export class RpcRelayPort implements BrowserPort {
     return null;
   }
 
+  /** Ordered partial model output; never terminal and never opens the next turn. */
+  append(secret: string, binding: TabClaim, turnID: string, chunk: string): void {
+    this.check(secret, binding);
+    assertOpaqueID(turnID, 'turnID');
+    const job = this.jobs.get(turnID);
+    if (!job || !job.claimed || terminal(job)) throw new Error('relay turn not pending');
+    if (typeof chunk !== 'string' || !chunk || chunk.length > 16_000 ||
+        job.events.length >= 62 ||
+        job.events.filter((e) => e.kind === 'text').reduce((sum, e) => sum + (e.kind === 'text' ? e.value.length : 0), 0) + chunk.length > 16_000) {
+      throw new Error('relay progress out of bounds');
+    }
+    job.events.push({ seq: job.events.length + 1, kind: 'text', turnID, value: chunk });
+    this.notify();
+  }
+
   complete(secret: string, binding: TabClaim, turnID: string, response: string): void {
     this.check(secret, binding);
     assertOpaqueID(turnID, 'turnID');
     const job = this.jobs.get(turnID);
-    if (!job || !job.claimed || job.events.length) throw new Error('relay turn not pending');
+    if (!job || !job.claimed || terminal(job)) throw new Error('relay turn not pending');
     if (typeof response !== 'string' || !response || response.length > 16_000) {
       throw new Error('relay reply out of bounds');
     }
+    const prefix = job.events.map((e) => e.kind === 'text' ? e.value : '').join('');
+    if (prefix && prefix !== response) throw new Error('relay progress/final mismatch');
+    if (job.events.length >= 64) throw new Error('relay event limit exceeded');
     this.journal?.settled(turnID);
-    job.events.push(
-      { seq: 1, kind: 'text', turnID, value: response },
-      { seq: 2, kind: 'finished', turnID },
-    );
+    if (!prefix) job.events.push({ seq: 1, kind: 'text', turnID, value: response });
+    job.events.push({ seq: job.events.length + 1, kind: 'finished', turnID });
     this.notify();
   }
 

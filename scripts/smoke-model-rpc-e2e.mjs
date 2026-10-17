@@ -163,6 +163,9 @@ try {
       if (useRealPage && !answer.includes('WEBBRIDGE_G4_QUESTION')) {
         throw new Error('browser page did not echo the submitted prompt');
       }
+      // Prove an ordered progress event over the actual OpenCode native RPC.
+      const progressive = await rpc('progress', { turnID: next.turnID, chunk: answer });
+      if (progressive.accepted !== true) throw new Error('companion progress rejected');
       const done = await rpc('complete', { turnID: next.turnID, response: answer });
       if (done.accepted !== true) throw new Error('companion completion rejected');
     }

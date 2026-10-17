@@ -27,6 +27,20 @@ export const BrowserRelayRPC = Rpc.define({
         required: [...Object.keys(identity), 'turnID', 'response'], additionalProperties: false },
       output: { type: 'object', properties: { accepted: { type: 'boolean' } }, required: ['accepted'], additionalProperties: false },
     },
+    progress: {
+      input: { type: 'object', properties: { ...identity, turnID: { type: 'string' }, chunk: { type: 'string' } },
+        required: [...Object.keys(identity), 'turnID', 'chunk'], additionalProperties: false },
+      output: { type: 'object', properties: { accepted: { type: 'boolean' } }, required: ['accepted'], additionalProperties: false },
+    },
+    observe: {
+      input: { type: 'object', properties: { ...identity, turnID: { type: 'string' }, afterSeq: { type: 'integer' } },
+        required: [...Object.keys(identity), 'turnID', 'afterSeq'], additionalProperties: false },
+      output: { type: 'object', properties: { events: { type: 'array', maxItems: 64, items: {
+        type: 'object', properties: { seq: { type: 'integer' }, kind: { type: 'string' },
+          turnID: { type: 'string' }, value: { type: 'string' } },
+        required: ['seq', 'kind', 'turnID'], additionalProperties: false,
+      } } }, required: ['events'], additionalProperties: false },
+    },
     result: {
       input: { type: 'object', properties: { ...identity, turnID: { type: 'string' } },
         required: [...Object.keys(identity), 'turnID'], additionalProperties: false },
