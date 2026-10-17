@@ -63,6 +63,7 @@ async function smokeNative(profile, env, temp, executable, version, modelBridge,
     Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`,
     'Content-Type': 'application/json',
   };
+  let proof;
   try {
     let registered = false;
     for (let i = 0; i < 75 && server.exitCode === null; i++) {
@@ -111,7 +112,7 @@ async function smokeNative(profile, env, temp, executable, version, modelBridge,
     }
     const model = extra ? await extra.verify({ url, headers, secret, executable, env: sandbox, temp,
       version }) : undefined;
-    return { version, nativeRpc: true, wrongScopeDenied: true, wrongSecretDenied: true,
+    proof = { version, nativeRpc: true, wrongScopeDenied: true, wrongSecretDenied: true,
       replayDenied: true, ...(model ? { model } : {}) };
   } catch (error) {
     const clean = (pluginDiagnostics.slice(0, 16).join('\n') + '\n' + String(error))
@@ -126,6 +127,11 @@ async function smokeNative(profile, env, temp, executable, version, modelBridge,
     await Promise.race([new Promise((ok) => server.once('close', ok)), pause(3000)]);
     await extra?.close();
   }
+  if (proof && extra?.verifyRestart) {
+    const persisted = await extra.verifyRestart({ executable, env: sandbox, temp, headers, url });
+    return { ...proof, model: { ...proof.model, ...persisted } };
+  }
+  return proof;
 }
 
 export async function exerciseRPCPackage({ nativeBin, modelBridge, descriptor = fixture,
