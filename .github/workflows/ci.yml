@@ -163,6 +163,24 @@ jobs:
       - name: Actual official same-turn model Chromium DOM RPC host fsync tool and SSE
         run: npm run smoke:g149-vertical
 
+  g151-native-v2032-readtool-resumed-sse:
+    name: G151 official CLI 2.0.32 native turn + durable host SSE resumption and OS attestation NO-GO
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: npx playwright install --with-deps --only-shell chromium
+      - name: Native SDK separate-process principal is NOT OS-attested (G147)
+        run: G147_OFFICIAL_CLI=1 node --test scripts/test-g147-native-host-authorization.mjs
+      - name: Single actual CLI turn Chromium RPC read-only tool before durable SSE reconnect (G151)
+        run: npm run smoke:g151-sse-native
+
   windows-progressive-relay:
     name: Windows bounded RPC progress (no Chromium)
     runs-on: windows-latest

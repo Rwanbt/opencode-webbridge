@@ -7,9 +7,11 @@ import { createG149VerticalHost } from './g149-vertical-host.mjs';
 import { runPageProof as runG149Page } from './g149-combined-page.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export async function proveG149({ openPage, openBrowser } = {}) {
+export async function proveG149({
+  openPage, openBrowser, receiptFactory = createG149VerticalHost,
+} = {}) {
   const result = await proveG125({
-    openPage, openBrowser, receiptFactory: createG149VerticalHost,
+    openPage, openBrowser, receiptFactory,
     runPage: runG149Page,
   });
   assert.equal(result.readAckReceipts?.length, 6);
