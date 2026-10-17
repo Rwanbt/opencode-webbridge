@@ -21,6 +21,8 @@ jobs:
       - run: npm test
       - name: Deterministic offline package, upgrade, rollback and uninstall
         run: npm run preview:package
+      - name: Packaged RPC fixture offline upgrade, tamper denial and rollback
+        run: npm run preview:rpc-package
 
   native-fixture-smoke:
     name: Native fixture smoke (OpenCode 2.0.29)
@@ -36,6 +38,8 @@ jobs:
         run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.29
       - name: Verify offline package installed in disposable OpenCode profile
         run: npm run smoke:package-native
+      - name: Native CLI packaged RPC authority, upgrade and rollback (no Chromium)
+        run: npm run smoke:rpc-package-native
       - run: npm run smoke:native
       - run: npm run smoke:browser
       - run: npm run smoke:rpc

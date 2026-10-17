@@ -14,7 +14,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const signature = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const entry = `// G76 offline preview only. No model, browser, hook or tool registration.\nexport default { id: "${ID}", setup() {} };\n`;
 
-function npmCLI(args, env, cwd) {
+export function npmCLI(args, env, cwd) {
   const cli = process.env.npm_execpath;
   if (!cli || !existsSync(cli) || !/npm-cli\.js$/i.test(cli)) {
     throw new Error('run from npm scripts with a pinned npm-cli.js; no system installer fallback');
@@ -28,7 +28,7 @@ function npmCLI(args, env, cwd) {
   return result.stdout;
 }
 
-function isolatedEnvironment(temp) {
+export function isolatedEnvironment(temp) {
   const allow = process.platform === 'win32'
     ? ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PROCESSOR_ARCHITECTURE']
     : ['PATH', 'SHELL', 'LANG', 'LC_ALL'];
@@ -49,18 +49,18 @@ function isolatedEnvironment(temp) {
   };
 }
 
-async function pack(temp, version, label, env) {
+export async function pack(temp, version, label, env, descriptor = { name: NAME, entry }) {
   const directory = join(temp, `src-${version}-${label}`);
   const destination = join(temp, `archives-${label}`);
   await Promise.all([mkdir(directory), mkdir(destination)]);
-  const manifest = { name: NAME, version, type: 'module', main: 'index.mjs',
-    files: ['index.mjs'], description: 'INERT OFFLINE TEST PREVIEW. Not a commercial provider.' };
+  const manifest = { name: descriptor.name, version, type: 'module', main: 'index.mjs',
+    files: ['index.mjs'], description: descriptor.description ?? 'INERT OFFLINE TEST PREVIEW. Not a commercial provider.' };
   await writeFile(join(directory, 'package.json'), JSON.stringify(manifest) + '\n');
-  await writeFile(join(directory, 'index.mjs'), entry);
+  await writeFile(join(directory, 'index.mjs'), descriptor.entry);
   const output = npmCLI(['pack', directory, '--pack-destination', destination,
     '--offline', '--ignore-scripts', '--json'], env, temp);
   const [meta] = JSON.parse(output);
-  if (meta.name !== NAME || meta.version !== version ||
+  if (meta.name !== descriptor.name || meta.version !== version ||
     meta.files.length !== 2 || meta.files.some((file) => !['index.mjs', 'package.json'].includes(file.path))) {
     throw new Error('preview archive contains unexpected files');
   }
@@ -71,24 +71,24 @@ async function pack(temp, version, label, env) {
   return { tarball, hash, version };
 }
 
-async function installed(prefix) {
-  const base = join(prefix, 'node_modules', NAME);
+export async function installed(prefix, descriptor = { name: NAME, entry }) {
+  const base = join(prefix, 'node_modules', descriptor.name);
   const manifest = JSON.parse(await readFile(join(base, 'package.json'), 'utf8'));
   const module = await import(pathToFileURL(join(base, 'index.mjs')).href + `?check=${manifest.version}`);
-  if (manifest.name !== NAME || module.default?.id !== ID ||
-    typeof module.default.setup !== 'function' || await readFile(join(base, 'index.mjs'), 'utf8') !== entry) {
+  if (manifest.name !== descriptor.name || module.default?.id !== (descriptor.id ?? ID) ||
+    typeof module.default.setup !== 'function' || await readFile(join(base, 'index.mjs'), 'utf8') !== descriptor.entry) {
     throw new Error('preview installed unexpected or activated entrypoint');
   }
   return manifest.version;
 }
 
-async function install(item, expectedHash, env, temp, prefix) {
+export async function install(item, expectedHash, env, temp, prefix, descriptor = { name: NAME, entry }) {
   if (signature(await readFile(item.tarball)) !== expectedHash) {
     throw new Error('package SHA256 mismatch: refusing installation');
   }
   npmCLI(['install', item.tarball, '--prefix', prefix, '--offline', '--ignore-scripts',
     '--no-save', '--no-package-lock', '--no-audit', '--no-fund'], env, temp);
-  if (await installed(prefix) !== item.version) throw new Error('installed package version mismatch');
+  if (await installed(prefix, descriptor) !== item.version) throw new Error('installed package version mismatch');
 }
 
 async function nativeSmoke(profile, env, temp, bin) {

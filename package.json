@@ -18,6 +18,8 @@
     "check:progress": "node scripts/check-progress.mjs",
     "check:policy": "node scripts/check-provider-policy.mjs",
     "preview:package": "node scripts/offline-package-preview.mjs",
+    "preview:rpc-package": "node scripts/offline-rpc-package.mjs",
+    "smoke:rpc-package-native": "node scripts/offline-rpc-package.mjs --native",
     "smoke:package-native": "node scripts/offline-package-preview.mjs --native",
     "smoke:native": "npm run build && node scripts/smoke-native-provider.mjs",
     "smoke:browser": "npm run build && node scripts/smoke-native-provider.mjs --browser-fixture",
