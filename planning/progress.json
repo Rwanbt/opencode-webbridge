@@ -64,7 +64,10 @@
     "126": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/126","headSHA":"98c30b06b76d47e3b3bc7329f9e6aa18dca9ec00","review":"draft-not-merged"},
     "128": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/128","headSHA":"d2ab4757343e4b2505ed08950169193aff383290","review":"draft-not-merged"},
     "129": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/129","headSHA":"59f80d007945dfd7101d2e21aacffca942e6df0c","review":"draft-not-merged"},
-    "130": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/130","headSHA":"38f8371f8d8cb016479e234407421a95b757a956","review":"draft-not-merged"}
+    "130": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/130","headSHA":"38f8371f8d8cb016479e234407421a95b757a956","review":"draft-not-merged"},
+    "132": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/132","headSHA":"ac6c8f2f55b121817927fc43c0a971bd9fe668cb","review":"draft-not-merged"},
+    "133": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/133","headSHA":"d254af48fc7e011d496bfbba59309373bfd65e5c","review":"draft-not-merged"},
+    "134": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/134","headSHA":"4cc45e445ff26b0c891cca7620732a703ea41f7b","review":"draft-not-merged"}
   },
   "stories": [
     {"id":"US-E0-01","issue":13,"state":"partial","criteria":["documentation-evidenced","unverified"],"prs":[67,78]},
@@ -79,7 +82,7 @@
     {"id":"US-E1-04","issue":22,"state":"partial","criteria":["unverified","unverified"],"prs":[68,77]},
     {"id":"US-E1-05","issue":23,"state":"partial","criteria":["unverified","unverified"],"prs":[67]},
     {"id":"US-E1-06","issue":24,"state":"partial","criteria":["unverified","unverified"],"prs":[68,76]},
-    {"id":"US-E2-01","issue":25,"state":"partial","criteria":["documentation-evidenced","unverified"],"prs":[78,84,95,106,110,114,115,118,120,123,124,129]},
+    {"id":"US-E2-01","issue":25,"state":"partial","criteria":["documentation-evidenced","unverified"],"prs":[78,84,95,106,110,114,115,118,120,123,124,129,132]},
     {"id":"US-E2-02","issue":26,"state":"partial","criteria":["fixture-evidenced","unverified"],"prs":[67,72,115,118,124,129]},
     {"id":"US-E2-03","issue":27,"state":"partial","criteria":["unverified","unverified"],"prs":[70,73,78,82]},
     {"id":"US-E2-04","issue":28,"state":"blocked","criteria":["blocked","blocked"],"prs":[77,78]},
@@ -90,7 +93,7 @@
     {"id":"US-E3-03","issue":33,"state":"partial","criteria":["fixture-evidenced","unverified"],"prs":[75,111,112]},
     {"id":"US-E3-04","issue":34,"state":"partial","criteria":["fixture-evidenced","unverified"],"prs":[73,75]},
     {"id":"US-E3-05","issue":35,"state":"partial","criteria":["fixture-evidenced","unverified"],"prs":[73,74,86,90,92,93,96,98,101,102]},
-    {"id":"US-E3-06","issue":36,"state":"partial","criteria":["fixture-evidenced","unverified"],"prs":[70,79,87,89,91,105,107,113,117,121,122,125,126,128,130]},
+    {"id":"US-E3-06","issue":36,"state":"partial","criteria":["fixture-evidenced","unverified"],"prs":[70,79,87,89,91,105,107,113,117,121,122,125,126,128,130,134]},
     {"id":"US-E4-01","issue":37,"state":"partial","criteria":["unverified","unverified"],"prs":[75,78,95,97,106,110,111,112,114,118,120,123,124,129]},
     {"id":"US-E4-02","issue":38,"state":"partial","criteria":["fixture-evidenced","unverified"],"prs":[73,75,77,93,98,102]},
     {"id":"US-E4-03","issue":39,"state":"partial","criteria":["fixture-evidenced","unverified"],"prs":[70,73,75,82,91,104,105,128,130]},
@@ -117,7 +120,7 @@
     {"id":"US-E7-06","issue":60,"state":"planned","criteria":["unverified","unverified"],"prs":[]},
     {"id":"US-E8-01","issue":61,"state":"partial","criteria":["fixture-evidenced","unverified"],"prs":[76,83,99,100]},
     {"id":"US-E8-02","issue":62,"state":"partial","criteria":["fixture-evidenced","unverified"],"prs":[72,79,80,100,115,118,121,122,125,126,128,130]},
-    {"id":"US-E8-03","issue":63,"state":"partial","criteria":["fixture-evidenced","unverified"],"prs":[76,85,100,101]},
+    {"id":"US-E8-03","issue":63,"state":"partial","criteria":["fixture-evidenced","unverified"],"prs":[76,85,100,101,133]},
     {"id":"US-E8-04","issue":64,"state":"planned","criteria":["unverified","unverified"],"prs":[]},
     {"id":"US-E8-05","issue":65,"state":"partial","criteria":["documentation-evidenced","unverified"],"prs":[77,78]},
     {"id":"US-E8-06","issue":66,"state":"partial","criteria":["unverified","unverified"],"prs":[77]}
