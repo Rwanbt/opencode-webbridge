@@ -79,6 +79,29 @@ test('tab, session, account and provider are a single owned lease', () => {
   assert.equal(fixture.status(a.binding).health, 'authentication-required');
 });
 
+test('all five offline adapter owners refuse getters and hidden fields before claim or observation', () => {
+  for (const { id } of WEB_PROVIDER_CATALOG) {
+    const fixture = new OfflineAccountAdapterHarness();
+    const safe = context(id, `hostile_${id}`).binding;
+    let getters = 0;
+    const accessor = Object.defineProperty({ ...safe }, 'accountRef', {
+      enumerable: true, get() { getters++; return 'stolen'; },
+    });
+    const hidden = Object.defineProperty({ ...safe }, 'secret', {
+      enumerable: false, value: 'private-auth-data',
+    });
+    assert.throws(() => fixture.claim(accessor), /claim|binding|field|plain/i);
+    assert.throws(() => fixture.claim(hidden), /claim|binding|field|plain/i);
+    assert.equal(getters, 0, 'untrusted owner getter must not be evaluated');
+    fixture.claim(safe);
+    assert.throws(() => fixture.observe(accessor, 'fixture-ui', 1, 'signed-in'), /claim|binding|field|plain/i);
+    assert.throws(() => fixture.status(hidden), /claim|binding|field|plain/i);
+    assert.equal(getters, 0);
+    assert.equal(fixture.status(safe).health, 'authentication-required');
+    fixture.release(safe);
+  }
+});
+
 test('restrictive sources outrank login guesses, higher source wins competing blockers', () => {
   const fixture = new OfflineAccountAdapterHarness();
   const ctx = context('gemini', 'signals');

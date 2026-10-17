@@ -1,5 +1,5 @@
 import { WEB_PROVIDER_CATALOG, type WebProviderID } from '../catalog.js';
-import { assertOpaqueID, type TabClaim } from '../core/browser-port.js';
+import { assertOpaqueID, snapshotTabClaim, type TabClaim } from '../core/browser-port.js';
 import {
   advanceAdapterTurn, assessAdapter, startAdapterTurn, type AdapterContext,
   type AdapterHealthCode, type AdapterProgress, type AdapterTurnState, type ProviderAdapter,
@@ -55,18 +55,18 @@ export class OfflineAccountAdapterHarness {
   private readonly sessions = new Map<string, string>();
 
   claim(binding: TabClaim): void {
-    for (const [name, value] of Object.entries(binding)) assertOpaqueID(value, name);
-    if (!WEB_PROVIDER_CATALOG.some(({ id }) => id === binding.providerID)) throw new Error('unknown provider');
-    if (this.tabs.has(binding.tabID) || this.sessions.has(binding.sessionID)) throw new Error('already owned');
-    this.tabs.set(binding.tabID, { owner: Object.freeze({ ...binding }), signals: new Map(),
+    const owner = snapshotTabClaim(binding);
+    if (this.tabs.has(owner.tabID) || this.sessions.has(owner.sessionID)) throw new Error('already owned');
+    this.tabs.set(owner.tabID, { owner, signals: new Map(),
       highWater: new Map(), turns: new Map(), failures: new Map(), reviews: new Map() });
-    this.sessions.set(binding.sessionID, binding.tabID);
+    this.sessions.set(owner.sessionID, owner.tabID);
   }
 
   private owned(binding: TabClaim): Slot {
-    const slot = this.tabs.get(binding.tabID);
-    if (!slot || this.sessions.get(binding.sessionID) !== binding.tabID ||
-      (Object.keys(slot.owner) as Array<keyof TabClaim>).some((key) => binding[key] !== slot.owner[key])) {
+    const current = snapshotTabClaim(binding);
+    const slot = this.tabs.get(current.tabID);
+    if (!slot || this.sessions.get(current.sessionID) !== current.tabID ||
+      (Object.keys(slot.owner) as Array<keyof TabClaim>).some((key) => current[key] !== slot.owner[key])) {
       throw new Error('account/session/tab ownership mismatch');
     }
     return slot;
