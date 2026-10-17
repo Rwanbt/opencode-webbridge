@@ -38,6 +38,7 @@ test('policy matrix covers every provider and never silently approves automation
 
 test('Qwen consumer May 19 2026 terms prohibit automated extraction, not merely unverified', () => {
   const policy = PROVIDER_POLICY_PROFILES.qwen;
+  assert.equal(policy.automatedInput, 'prohibited');
   assert.equal(policy.automatedOutput, 'prohibited');
   assert.equal(assessAdapter(context, 'turn1'), 'policy-blocked');
 });

@@ -33,7 +33,7 @@ export const PROVIDER_POLICY_PROFILES: Readonly<Record<WebProviderID, ProviderPo
     termsDate: '2026-07-30', reviewedOn: '2026-10-17', automatedInput: 'conditional-unverified',
     automatedOutput: 'conditional-unverified', streaming: 'unverified', tools: 'blocked', attachments: 'blocked' }),
   qwen: Object.freeze({ id: 'qwen', termsURL: 'https://qwen.ai/termsservice',
-    termsDate: '2026-05-19', reviewedOn: '2026-10-17', automatedInput: 'unverified',
+    termsDate: '2026-05-19', reviewedOn: '2026-10-17', automatedInput: 'prohibited',
     automatedOutput: 'prohibited', streaming: 'blocked', tools: 'blocked', attachments: 'blocked' }),
   mistral: Object.freeze({ id: 'mistral', termsURL: 'https://legal.mistral.ai/terms/eu-consumers-terms-of-service/',
     termsDate: '2026-10-08', reviewedOn: '2026-10-17', automatedInput: 'unverified',
