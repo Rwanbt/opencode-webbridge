@@ -19,6 +19,8 @@ jobs:
       - run: npm run check:progress
       - run: npm run check:policy
       - run: npm test
+      - name: G111 verify exact official Desktop source and release without launching Electron
+        run: npm run check:desktop-g111
       - name: Deterministic offline package, upgrade, rollback and uninstall
         run: npm run preview:package
       - name: Packaged RPC fixture offline upgrade, tamper denial and rollback
