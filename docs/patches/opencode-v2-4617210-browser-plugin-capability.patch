@@ -31,10 +31,10 @@ index 8ade682658..218870e15a 100644
          Effect.updateContext((context: Context.Context<never>) =>
 diff --git a/packages/core/src/plugin/browser-lease.ts b/packages/core/src/plugin/browser-lease.ts
 new file mode 100644
-index 0000000000..e6c986c4e7
+index 0000000000..0e2e41c422
 --- /dev/null
 +++ b/packages/core/src/plugin/browser-lease.ts
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,135 @@
 +export * as BrowserLease from "./browser-lease.js"
 +
 +import { Effect, Exit } from "effect"
@@ -81,8 +81,16 @@ index 0000000000..e6c986c4e7
 +}) {
 +  const pending = new Map<string, { binding: Binding; epoch: number; expires: number }>()
 +  const reserved = new Set<string>()
-+  const clock = input.clock ?? Date.now
++  const clock = input.clock ?? (() => performance.now())
 +  const ttlMs = input.ttlMs ?? 5000
++  if (!Number.isFinite(ttlMs) || ttlMs <= 0 || ttlMs > 30_000) throw new Error("Invalid Browser lease TTL")
++  let lastTick = Number.NEGATIVE_INFINITY
++  const now = () => {
++    const tick = clock()
++    if (!Number.isFinite(tick) || tick < lastTick) return Number.NaN
++    lastTick = tick
++    return tick
++  }
 +  let epoch = 0
 +  let retired = false
 +  const valid = (binding: Binding) =>
@@ -100,21 +108,25 @@ index 0000000000..e6c986c4e7
 +  const revoke = () => {
 +    epoch++
 +    pending.clear()
-+    reserved.clear()
++    // An epoch cannot erase a spent turn/call binding: a write may already have committed.
 +  }
 +  return {
 +    issue: (binding: Binding) =>
 +      Effect.gen(function* () {
-+        if (!valid(binding) || retired || !input.live(binding))
++        if (!valid(binding))
++          return yield* Effect.fail(new Error("Browser lease binding invalid or unavailable"))
++        const pinned = Object.freeze({ ...binding })
++        if (!valid(pinned) || retired || !input.live(pinned))
 +          return yield* Effect.fail(new Error("Browser lease binding invalid or unavailable"))
 +        const observed = epoch
-+        const key = keyOf(binding)
++        const key = keyOf(pinned)
 +        yield* Effect.sync(() => {
++          if (reserved.size >= 1024) throw new Error("Browser lease spent-call ledger exhausted")
 +          if (reserved.has(key)) throw new Error("Browser lease binding already reserved or spent")
 +          reserved.add(key)
 +        })
 +        // This may wait for the user. Any intervening revoke poisons the issue.
-+        yield* input.authorize(binding).pipe(
++        yield* input.authorize(pinned).pipe(
 +          Effect.timeout(input.authorizeTimeoutMs ?? 30_000),
 +          Effect.onExit((exit) =>
 +            Exit.isFailure(exit)
@@ -125,10 +137,12 @@ index 0000000000..e6c986c4e7
 +          ),
 +        )
 +        return yield* Effect.sync(() => {
-+          if (retired || epoch !== observed || !input.live(binding))
++          if (retired || epoch !== observed || !valid(binding) || !same(binding, pinned) || !input.live(pinned))
 +            throw new Error("Browser lease revoked during authorization")
++          const time = now()
++          if (!Number.isFinite(time)) throw new Error("Browser lease clock unavailable or rolled back")
 +          const ticket = Object.freeze({ id: crypto.randomUUID() })
-+          pending.set(ticket.id, { binding: Object.freeze({ ...binding }), epoch, expires: clock() + ttlMs })
++          pending.set(ticket.id, { binding: pinned, epoch, expires: time + ttlMs })
 +          return ticket
 +        })
 +      }),
@@ -140,7 +154,7 @@ index 0000000000..e6c986c4e7
 +      return (
 +        !retired &&
 +        item.epoch === epoch &&
-+        clock() < item.expires &&
++        now() < item.expires &&
 +        valid(actual) &&
 +        same(item.binding, actual) &&
 +        input.live(actual)
@@ -677,10 +691,10 @@ index 0000000000..293ba7aeca
 +})
 diff --git a/packages/core/test/plugin/browser-lease.test.ts b/packages/core/test/plugin/browser-lease.test.ts
 new file mode 100644
-index 0000000000..00356b7879
+index 0000000000..cb7ab332f2
 --- /dev/null
 +++ b/packages/core/test/plugin/browser-lease.test.ts
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,208 @@
 +import { test, expect } from "bun:test"
 +import { BrowserLease } from "@opencode/core/plugin/browser-lease"
 +import { Deferred, Effect, Exit } from "effect"
@@ -837,6 +851,57 @@ index 0000000000..00356b7879
 +  allow = true
 +  const ticket = await Effect.runPromise(leases.issue(binding))
 +  expect(leases.consume(ticket, binding)).toBe(true)
++})
++
++test("mutating a caller binding across an awaited permission cannot transfer an authorized principal", async () => {
++  const waiting = Deferred.makeUnsafe<void>()
++  const resume = Deferred.makeUnsafe<void>()
++  let checked: BrowserLease.Binding | undefined
++  const leases = BrowserLease.make({
++    authorize: (actual) =>
++      Effect.sync(() => { checked = { ...actual } }).pipe(
++        Effect.andThen(Deferred.succeed(waiting, undefined)),
++        Effect.andThen(Deferred.await(resume)),
++      ),
++    live: () => true,
++  })
++  const mutable = { ...binding }
++  const attempt = Effect.runPromiseExit(leases.issue(mutable))
++  await Effect.runPromise(Deferred.await(waiting))
++  mutable.pluginID = "impostor"
++  mutable.sessionID = "foreign-session"
++  mutable.action = "click"
++  await Effect.runPromise(Deferred.succeed(resume, undefined))
++  expect(checked).toEqual(binding)
++  expect(Exit.isFailure(await attempt)).toBe(true)
++  expect(leases.outstanding).toBe(0)
++})
++
++test("revoking an epoch cannot un-burn a consumed or in-flight tool call", async () => {
++  const leases = BrowserLease.make({ authorize: () => Effect.void, live: () => true })
++  const first = await Effect.runPromise(leases.issue(binding))
++  expect(leases.consume(first, binding)).toBe(true)
++  leases.revoke()
++  expect(Exit.isFailure(await Effect.runPromiseExit(leases.issue(binding)))).toBe(true)
++  const nextCall = { ...binding, callID: "call_next_epoch" }
++  const pending = await Effect.runPromise(leases.issue(nextCall))
++  leases.revoke()
++  expect(leases.consume(pending, nextCall)).toBe(false)
++  expect(Exit.isFailure(await Effect.runPromiseExit(leases.issue(nextCall)))).toBe(true)
++  const trulyNewCall = { ...binding, callID: "call_after_reconnect", connectionID: "desktop_B" }
++  const newTicket = await Effect.runPromise(leases.issue(trulyNewCall))
++  expect(leases.consume(newTicket, trulyNewCall)).toBe(true)
++})
++
++test("lease expiration uses a monotonic clock and refuses unsafe TTL settings", async () => {
++  let tick = 100
++  const leases = BrowserLease.make({
++    authorize: () => Effect.void, live: () => true, clock: () => tick, ttlMs: 5,
++  })
++  const issued = await Effect.runPromise(leases.issue(binding))
++  tick = 90 // Wall-clock regression must never extend the authorization.
++  expect(leases.consume(issued, binding)).toBe(false)
++  expect(() => BrowserLease.make({ authorize: () => Effect.void, live: () => true, ttlMs: Infinity })).toThrow()
 +})
 diff --git a/packages/core/test/plugin/browser-one-shot.test.ts b/packages/core/test/plugin/browser-one-shot.test.ts
 new file mode 100644
