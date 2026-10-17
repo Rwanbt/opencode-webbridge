@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import { closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync,
   renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assertOpaqueID, type TabClaim } from './browser-port.js';
+import { assertOpaqueID, snapshotTabClaim, type TabClaim } from './browser-port.js';
 import { DurableWitness } from './durable-witness.js';
 
 type Phase = 'prepared' | 'leased' | 'settled' | 'cancelled' | 'reconciled';
@@ -13,9 +13,31 @@ type Payload = { version: 1 | 2; bindingHash: string; entries: Entry[]; witnessR
 type State = Payload & { mac: string };
 
 const digest = (data: string) => createHash('sha256').update(data).digest('hex');
-const identity = (binding: TabClaim) => digest(JSON.stringify([
-  binding.sessionID, binding.providerID, binding.tabID, binding.accountRef,
-]));
+const identity = (binding: TabClaim) => {
+  // NativeToolHandoff supplies a legitimate seven-field scope. Permit those
+  // three named extras, but never evaluate getters or accept hidden credentials.
+  if (!binding || typeof binding !== 'object' || Object.getPrototypeOf(binding) !== Object.prototype) {
+    throw new Error('invalid browser claim shape');
+  }
+  const keys = Reflect.ownKeys(binding);
+  if (keys.length !== 4 && keys.length !== 7) throw new Error('invalid browser claim shape');
+  const field = (name: string): string => {
+    const descriptor = Object.getOwnPropertyDescriptor(binding, name);
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) {
+      throw new Error('browser claim must contain plain data fields');
+    }
+    assertOpaqueID(descriptor.value, name);
+    return descriptor.value;
+  };
+  if (keys.length === 7) {
+    for (const extra of ['agentID', 'worktreeRef', 'turnID']) field(extra);
+  }
+  const fixed = snapshotTabClaim({
+    sessionID: field('sessionID'), providerID: field('providerID') as TabClaim['providerID'],
+    tabID: field('tabID'), accountRef: field('accountRef'),
+  });
+  return digest(JSON.stringify([fixed.sessionID, fixed.providerID, fixed.tabID, fixed.accountRef]));
+};
 const hash = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
 const phase = (v: unknown): v is Phase => v === 'prepared' || v === 'leased' || v === 'settled' || v === 'cancelled' || v === 'reconciled';
 const outcome = (v: unknown): v is Outcome => v === 'observed-applied' || v === 'observed-not-applied';
@@ -43,7 +65,8 @@ export class DurableRelayJournal {
     if (options && (typeof options.witnessDir !== 'string' || !options.witnessDir.trim())) {
       throw new Error('invalid witness directory');
     }
-    for (const [key, id] of Object.entries(binding)) assertOpaqueID(id, key);
+    // Capture identity without invoking caller getters BEFORE touching disk.
+    const bindingHash = identity(snapshotTabClaim(binding));
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     if (!lstatSync(dir).isDirectory()) throw new Error('journal directory must not be a symlink');
     let lockFD: number;
@@ -54,7 +77,6 @@ export class DurableRelayJournal {
       writeFileSync(lockFD, lockTag, 'utf8');
       fsyncSync(lockFD);
       const path = join(dir, 'journal.json');
-      const bindingHash = identity(binding);
       const initial: Payload = options
         ? { version: 2, bindingHash, entries: [], witnessRequired: true }
         : { version: 1, bindingHash, entries: [] };

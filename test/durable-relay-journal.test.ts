@@ -116,3 +116,22 @@ test('modified ownership lock fails closed and cannot be deleted by former owner
     assert.equal(existsSync(lock), true, 'former owner must not delete an alien lock');
   });
 });
+
+test('journal rejects untrusted binding accessors before opening disk state or comparing ownership', async () => {
+  await isolated((dir) => {
+    let getters = 0;
+    const hostile = Object.defineProperty({ ...claim }, 'sessionID', {
+      enumerable: true, get() { getters++; return 'foreign-session'; },
+    });
+    assert.throws(() => DurableRelayJournal.open(dir, hostile as TabClaim, secret), /plain data fields/);
+    assert.equal(getters, 0, 'journal must never evaluate a caller getter');
+    assert.equal(existsSync(join(dir, 'journal.json')), false);
+    const journal = DurableRelayJournal.open(dir, claim, secret);
+    try {
+      assert.throws(() => journal.assertBinding(hostile as TabClaim), /plain data fields/);
+      assert.equal(getters, 0, 'journal binding comparison cannot evaluate getters');
+      const hidden = Object.defineProperty({ ...claim }, 'cookie', { value: 'secret', enumerable: false });
+      assert.throws(() => journal.assertBinding(hidden), /invalid browser claim shape/);
+    } finally { journal.close(); }
+  });
+});
