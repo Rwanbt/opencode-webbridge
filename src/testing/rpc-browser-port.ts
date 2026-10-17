@@ -1,6 +1,6 @@
-import type { BrowserPort, TabClaim, TurnEvent, TurnRequest } from '../core/browser-port.js';
+import { assertOpaqueID, type BrowserPort, type TabClaim, type TurnEvent, type TurnRequest } from '../core/browser-port.js';
 
-export type RelayMethod = 'submit' | 'observe';
+export type RelayMethod = 'submit' | 'observe' | 'cancel';
 export type RelayCaller = (method: RelayMethod, input: { turnID: string; prompt?: string; afterSeq?: number }) => Promise<unknown>;
 
 /**
@@ -47,10 +47,16 @@ export class RpcBrowserFixturePort implements BrowserPort {
     return response.events as readonly TurnEvent[];
   }
 
-  /** Remote cancellation is not yet supported, never falsely acknowledge it. */
-  async cancel(binding: TabClaim): Promise<boolean> {
+  /** Cancellation is certain ONLY when the remote job has not been leased. */
+  async cancel(binding: TabClaim, turnID: string): Promise<boolean> {
     this.owned(binding);
-    return false;
+    assertOpaqueID(turnID, 'turnID');
+    const response = await this.rpc('cancel', { turnID });
+    if (!response || typeof response !== 'object' || !('cancelled' in response) ||
+      typeof response.cancelled !== 'boolean' || Object.keys(response).length !== 1) {
+      throw new Error('malformed RPC cancellation acknowledgement');
+    }
+    return response.cancelled;
   }
 
   /** Releases only local authority. Remote cleanup is separately required. */

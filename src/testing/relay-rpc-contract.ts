@@ -17,6 +17,12 @@ export const BrowserRelayRPC = Rpc.define({
         required: [...Object.keys(identity), 'turnID', 'prompt'], additionalProperties: false },
       output: { type: 'object', properties: { accepted: { type: 'boolean' } }, required: ['accepted'], additionalProperties: false },
     },
+    cancel: {
+      input: { type: 'object', properties: { ...identity, turnID: { type: 'string' } },
+        required: [...Object.keys(identity), 'turnID'], additionalProperties: false },
+      output: { type: 'object', properties: { cancelled: { type: 'boolean' } },
+        required: ['cancelled'], additionalProperties: false },
+    },
     take: {
       input: { type: 'object', properties: identity, required: Object.keys(identity), additionalProperties: false },
       output: { type: 'object', properties: { found: { type: 'boolean' }, turnID: { type: 'string' }, prompt: { type: 'string' } },

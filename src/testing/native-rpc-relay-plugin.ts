@@ -40,6 +40,10 @@ export default Plugin.define({
         await relay.submit(asClaim(input), { turnID: input.turnID!, prompt: input.prompt! });
         return { accepted: true };
       },
+      cancel: async (raw) => {
+        const input = authorized(raw);
+        return { cancelled: await relay.cancel(asClaim(input), input.turnID!) };
+      },
       take: async (raw) => {
         const input = asInput(raw);
         const item = relay.take(input.secret, asClaim(input));
