@@ -4,11 +4,13 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `D80B67786DF01D081732C06EBA31E6D047EC28E70DF50732DE38DDE51DF4D996`.
+Patch SHA-256: `50E989F7CC11BCCD51E6BEE2C75D197B97267DA3E79E14210C13527E9B89E9ED`.
 
 The next stacked Draft adds the **Core-only BrowserLease reference contract** and adversarial tests. Its non-integrated nature and the missing atomic Desktop grant consumption are recorded in [ADR 0003](../ADR/0003-v2-transactional-browser-grant-tcb.md). **No native read/write dispatch uses this new ledger yet**; prior `snapshotOnce` is unchanged.
 
 Independent E2 follow-up: the Core reference ledger now snapshots the entire validated binding **before** asynchronous authorization, refuses mutation during the await, and preserves spent-call tombstones through `revoke()` to prevent replay of the same call in a later epoch. Tickets use a bounded monotonic lifetime. Regression tests exercise forged plugin/session/action mutation, post-revoke replay, and clock rollback; the ledger remains disconnected from Desktop and **does not authorize writes**.
+
+The follow-up read-only host proposal adds a once-only RPC `read.commit` for the built-in `snapshotOnce` path and a matching pre-read Desktop check, with no grant for navigation or other writes. It adds a dedicated negative host/connection test and Desktop typecheck; see [ADR 0004](../ADR/0004-v2-desktop-read-commit.fr.md). The local Chromium mock-chat smoke is a separate real-page E2E, not a full Electron IPC certification.
 
 An additional [one-shot read authority proposal](./one-shot-read-authorization.md) is stacked on #84. It pins a live Core tool turn, trusted plugin generation, workspace, Desktop attachment, tab generation and exact read action. **Only this new snapshotOnce path is one-use; the older read methods are not.** Its limitations and reasons to withhold native writes are recorded separately.
 
