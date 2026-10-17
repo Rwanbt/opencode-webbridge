@@ -3,7 +3,9 @@ import { assertOpaqueID, type TabClaim } from './browser-port.js';
 import type { DurableRelayJournal } from './durable-relay-journal.js';
 
 /** Tool proposals from web output are data, never OpenCode authorizations. */
-export type NativeScope = TabClaim & { readonly agentID: string; readonly worktreeRef: string };
+export type NativeScope = TabClaim & { readonly agentID: string; readonly worktreeRef: string;
+  /** Current turn validated by OpenCode, never taken from browser output. */
+  readonly turnID: string };
 export type ToolProposal = {
   readonly version: 1;
   readonly kind: 'tool_proposal';
@@ -55,7 +57,9 @@ export function parseToolProposal(raw: unknown, scope: NativeScope, tools?: Read
     assertOpaqueID(raw[field] as string, field);
   }
   if (raw.sessionID !== scope.sessionID || raw.agentID !== scope.agentID ||
-    raw.worktreeRef !== scope.worktreeRef) throw new Error('tool proposal binding mismatch');
+    raw.worktreeRef !== scope.worktreeRef || raw.turnID !== scope.turnID) {
+    throw new Error('tool proposal binding mismatch');
+  }
   if (!plain(raw.tool) || !exact(raw.tool, ['name', 'arguments']) ||
     typeof raw.tool.name !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/.test(raw.tool.name)) {
     throw new Error('invalid tool name or fields');

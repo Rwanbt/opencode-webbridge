@@ -4,7 +4,7 @@
 
 ## Frontière de confiance
 
-Un texte généré par un modèle web, une réponse HTML ou une instruction trouvée dans le DOM ne doit **jamais** être interprété comme une commande terminal/Git/sous-agent. Le parseur `parseToolProposal` accepte seulement un objet **structuré** avec les champs exacts : version 1, nature `tool_proposal`, sessionID, agentID, worktreeRef, turnID, operationID et outil (nom + arguments). Il rejette tout texte/Markdown, identifiant étranger, nom non enregistré, charge JSON invalide, prototype dangereux ou demande surdimensionnée.
+Un texte généré par un modèle web, une réponse HTML ou une instruction trouvée dans le DOM ne doit **jamais** être interprété comme une commande terminal/Git/sous-agent. Le parseur `parseToolProposal` accepte seulement un objet **structuré** avec les champs exacts : version 1, nature `tool_proposal`, sessionID, agentID, worktreeRef, turnID, operationID et outil (nom + arguments). Il rejette tout texte/Markdown, identifiant étranger, tour précédent, nom non enregistré, charge JSON invalide, prototype dangereux ou demande surdimensionnée. Le `turnID` actif vient du moteur OpenCode, jamais du résultat web.
 
 La politique et les capacités de chaque outil appartiennent à **OpenCode**, non au navigateur. `NativeToolHandoff` requiert une liste de noms d'outils explicitement enregistrés, le validateur d'arguments de leur schéma natif et deux callbacks provenant d'un **intégrateur de confiance** : autorisation native et exécution native. Aucun outil n'est enregistré ou exposé par le plugin de production actuel. L'autorisation d'une page ou d'un compte web ne devient jamais autorisation d'un outil local.
 
