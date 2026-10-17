@@ -164,8 +164,8 @@ jobs:
         run: node --test dist/test/tool-proposal.test.js dist/test/tool-flow.test.js dist/test/workspace-path.test.js
       - name: G136 prevent concurrent double-effect and uncertain replay (fixture authority only)
         run: node --test dist/test/effect-broker.test.js dist/test/tool-broker.test.js
-      - name: G137 fixture FS/Git authorization and OS refusal, without Windows Chromium
-        run: node --test dist/test/offline-readonly-tool-executor.test.js
+      - name: G137 Windows disabled file read and malformed tool proposals, no OS sandbox claim
+        run: node --test '--test-name-pattern=file.read opens real regular Linux inode|malformed provenance/unknown or mutable actions' dist/test/offline-readonly-tool-executor.test.js
 
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
