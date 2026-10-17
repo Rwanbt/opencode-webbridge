@@ -14,6 +14,7 @@ import { openLocalChatPage } from '../dist/src/testing/local-chat-page.js';
 import { openLocalBrowserCompanion, submitLocalPageTurn } from '../dist/src/testing/local-browser-companion.js';
 import { nativeOpenCodeExecutable } from '../dist/src/testing/native-cli-launcher.js';
 import { trackNativeChild } from '../dist/src/testing/native-child-lifecycle.js';
+import { probeNativeClient, requireEmptyRelayReady, requireNativeClientReady } from '../dist/src/testing/native-client-probe.js';
 
 const useRealPage = process.argv.includes('--real-page');
 const EXPECTED = useRealPage ? 'WEBBRIDGE_LOCAL_PAGE_OK:' : 'WEBBRIDGE_MODEL_RPC_END_TO_END_OK';
@@ -123,6 +124,10 @@ try {
     await delay(200);
   }
   if (!ready) throw new Error('isolated OpenCode server startup failed');
+  // Exercise the *same native CLI --server resolver* with an idempotent GET.
+  // Do not retry `run`: once submitted, a timeout is an uncertain effect.
+  await requireNativeClientReady(() => probeNativeClient(bin, serverURL, temp, env));
+  await requireEmptyRelayReady(() => rpc('take', {}));
   if (useRealPage) {
     localPage = await openLocalChatPage();
     browserCompanion = await openLocalBrowserCompanion();
