@@ -194,6 +194,8 @@ jobs:
         run: node --test dist/test/rate-limiter.test.js
       - name: G143 actual inert root artifact pack integrity (no official app)
         run: npm run smoke:actual-package
+      - name: G150 default-off real root and localhost-only rejected opt-in
+        run: node --test dist/test/g150-root-local-gate.test.js dist/test/distributed-entrypoint-package.test.js
 
   g143-distributed-root-plugin:
     name: G143 actual WebBridge root .tgz and official CLI 2.0.32 disposable install lifecycle

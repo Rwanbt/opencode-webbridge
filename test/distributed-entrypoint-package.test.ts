@@ -18,7 +18,7 @@ test('actual plugin manifest includes only pinned SDK and inert root source', ()
   assert.equal(m.name, 'opencode-webbridge');
   assert.equal(m.main, 'index.mjs');
   assert.equal(m.dependencies['@opencode/plugin'], '2.0.29');
-  assert.deepEqual(m.files, ['index.mjs', 'LICENSE']);
+  assert.deepEqual(m.files, ['index.mjs', 'g97-local.mjs', 'LICENSE']);
   assert.equal(Object.isFrozen(m), true);
 });
 
