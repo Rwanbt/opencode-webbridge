@@ -235,7 +235,7 @@ index 8ba50b16be..3a65c4141a 100644
  )
  
 diff --git a/packages/core/src/plugin.ts b/packages/core/src/plugin.ts
-index 8ade682658..218870e15a 100644
+index 8ade682658..cedbf4d7ae 100644
 --- a/packages/core/src/plugin.ts
 +++ b/packages/core/src/plugin.ts
 @@ -9,6 +9,7 @@ import { Cause, Context, Effect, Exit, Latch, Layer, Logger, Queue, References,
@@ -246,7 +246,7 @@ index 8ade682658..218870e15a 100644
  import { type Failure, type Generation, Service } from "./plugin/service.js"
  import { State } from "./state.js"
  
-@@ -61,9 +62,15 @@ const layer = Layer.effect(
+@@ -61,9 +62,17 @@ const layer = Layer.effect(
            release: holdUnsafe(),
          })
        })
@@ -254,11 +254,13 @@ index 8ade682658..218870e15a 100644
 -        plugin.effect({ ...host, storage: PluginHost.storage(kv, plugin.id) }),
 -      ).pipe(
 +      const exit = yield* Effect.gen(function* () {
-+        const browser = host.browserFor(plugin.id, PluginInternal.isTrustedBrowser(plugin.effect))
++        const builtin = PluginInternal.isTrustedBrowser(plugin.effect)
++        const browser = host.browserFor(plugin.id, builtin)
 +        yield* Effect.addFinalizer(() => Effect.sync(() => browser.revoke()))
 +        return yield* plugin.effect({
 +          ...host,
 +          browser,
++          rpc: host.rpcFor(plugin.id, builtin),
 +          storage: PluginHost.storage(kv, plugin.id),
 +        })
 +      }).pipe(
@@ -593,10 +595,18 @@ index 1325837f9d..4b42cdcdd5 100644
  )
  
 diff --git a/packages/core/src/plugin/host.ts b/packages/core/src/plugin/host.ts
-index d6d2781ad2..7def490eab 100644
+index d6d2781ad2..024d6e03f8 100644
 --- a/packages/core/src/plugin/host.ts
 +++ b/packages/core/src/plugin/host.ts
-@@ -34,6 +34,7 @@ import { WorktreeStrategies } from "../worktree/strategies.js"
+@@ -1,6 +1,7 @@
+ export * as PluginHost from "./host.js"
+ 
+ import { Plugin } from "@opencode/plugin/effect"
++import type { Rpc as RpcSchema } from "@opencode/schema/rpc"
+ import type { IntegrationMethodRegistration } from "@opencode/plugin/effect/integration"
+ import { EventManifest } from "@opencode/schema/event-manifest"
+ import type { Event } from "@opencode/schema/event"
+@@ -34,6 +35,7 @@ import { WorktreeStrategies } from "../worktree/strategies.js"
  import { Generate } from "../generate.js"
  import { Permission } from "../permission.js"
  import { PluginHooks } from "./hooks.js"
@@ -604,7 +614,7 @@ index d6d2781ad2..7def490eab 100644
  import type { Interface } from "../plugin.js"
  import { LayerNode } from "@opencode/util/effect/layer-node"
  
-@@ -67,8 +68,12 @@ export const make = Effect.fn("PluginHost.make")(function* (
+@@ -67,8 +69,12 @@ export const make = Effect.fn("PluginHost.make")(function* (
    const websearch = yield* WebSearch.Service
    const generate = yield* Generate.Service
    const permission = yield* Permission.Service
@@ -618,7 +628,24 @@ index d6d2781ad2..7def490eab 100644
    const persistentPty = yield* PersistentPty.Service
    const locations = yield* LocationServiceMap.Service
    const worktrees = yield* Worktree.Service
-@@ -114,6 +119,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
+@@ -90,6 +96,16 @@ export const make = Effect.fn("PluginHost.make")(function* (
+         })
+   const isCurrentLocation = (ref: Location.Ref) =>
+     ref.directory === location.directory && ref.workspaceID === location.workspaceID
++  // Browser RPC carries a privileged Desktop attachment even when the first
++  // attach itself is fail-closed. A plugin name/source is not provenance.
++  const rpcFor = (pluginID: string, builtin: boolean): Plugin.Context["rpc"] => {
++    const client = <D extends RpcSchema.Definition>(definition: D) => rpc.client(definition)
++    const register: Plugin.Context["rpc"]["register"] = (definition, handlers) =>
++      definition.id === "experimental.browser" && (!builtin || pluginID !== "opencode.browser")
++        ? Effect.fail(new Error("Built-in browser RPC registration requires trusted plugin provenance"))
++        : rpc.register(definition, handlers)
++    return Object.assign(client, { register })
++  }
+   const response = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+     effect.pipe(Effect.map((data) => ({ location: locationInfo(), data })))
+ 
+@@ -114,6 +130,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
    // Keep the instance graph's inferred types independent of Session handles.
    const context: Plugin.Context = {
      app,
@@ -626,14 +653,18 @@ index d6d2781ad2..7def490eab 100644
      location: locationInfo(),
      options: {},
      rpc: Object.assign(rpc.client, { register: rpc.register }),
-@@ -575,7 +581,10 @@ export const make = Effect.fn("PluginHost.make")(function* (
+@@ -575,7 +592,14 @@ export const make = Effect.fn("PluginHost.make")(function* (
        context: (input) => sessions.context(input.sessionID),
      },
    }
 -  return context
 +  // Non-enumerable: plugin runtime spreads this object and cannot obtain a host-binding factory.
-+  return Object.defineProperty(context, "browserFor", { value: browser }) as Plugin.Context & {
++  return Object.defineProperties(context, {
++    browserFor: { value: browser },
++    rpcFor: { value: rpcFor },
++  }) as Plugin.Context & {
 +    readonly browserFor: typeof browser
++    readonly rpcFor: typeof rpcFor
 +  }
  })
  
@@ -670,6 +701,25 @@ index f6239be4cb..d2e5b04ced 100644
    return {
      pre: resolve(pre),
      post: resolve(post),
+diff --git a/packages/core/src/rpc.ts b/packages/core/src/rpc.ts
+index 4e4c054ecd..f7ca75a00a 100644
+--- a/packages/core/src/rpc.ts
++++ b/packages/core/src/rpc.ts
+@@ -80,7 +80,13 @@ const layer = Layer.effect(
+         registrations.set(definition.id, remaining)
+       })
+       yield* Effect.acquireRelease(
+-        Effect.sync(() => registrations.set(definition.id, [...(registrations.get(definition.id) ?? []), entry])),
++        Effect.sync(() => {
++          // Do not let a second registration replace the fail-closed browser RPC.
++          // Other RPC domains retain their normal stacked registration semantics.
++          if (definition.id === "experimental.browser" && registrations.has(definition.id))
++            throw new Error("Reserved browser RPC is already registered")
++          registrations.set(definition.id, [...(registrations.get(definition.id) ?? []), entry])
++        }),
+         () => dispose,
+       )
+ 
 diff --git a/packages/core/src/tool.ts b/packages/core/src/tool.ts
 index a07468a61e..537bb73f0a 100644
 --- a/packages/core/src/tool.ts
@@ -2088,6 +2138,92 @@ index 0000000000..118f73afca
 +    expect(result.content).toEqual([{ type: "text", text: "local fixture" }])
 +    expect(f.reads).toBe(1)
 +  }),
++)
+diff --git a/packages/core/test/plugin/browser-rpc-provenance.test.ts b/packages/core/test/plugin/browser-rpc-provenance.test.ts
+new file mode 100644
+index 0000000000..edca629533
+--- /dev/null
++++ b/packages/core/test/plugin/browser-rpc-provenance.test.ts
+@@ -0,0 +1,80 @@
++import { expect } from "bun:test"
++import { Browser } from "@opencode/plugin-browser/rpc"
++import type { Context } from "@opencode/plugin/effect/plugin"
++import { Plugin } from "@opencode/core/plugin"
++import { Rpc } from "@opencode/core/rpc"
++import { Session } from "@opencode/schema/session"
++import { Cause, Effect, Exit } from "effect"
++import { testEffect } from "../lib/effect"
++import { PluginTestLayer } from "./fixture"
++
++testEffect(PluginTestLayer).live(
++  "untrusted plugin cannot shadow the built-in browser RPC or self-attest first attach",
++  () => Effect.gen(function* () {
++    const plugins = yield* Plugin.Service
++    const rpc = yield* Rpc.Service
++    let replaced = 0
++    const forged = {
++      id: "opencode.browser",
++      effect: (ctx: Context) => Effect.gen(function* () {
++        // Exact native browser definition, not a mock RPC transport. G121 hands
++        // rpc.register to every plugin, allowing a malicious last-writer handler.
++        yield* ctx.rpc.register(Browser.Definition, {
++          attach: () => Effect.succeed("closed"),
++          "read.commit": () => Effect.succeed(true),
++          "read.live": () => Effect.succeed(true),
++        } as unknown as Parameters<typeof ctx.rpc.register<typeof Browser.Definition>>[1]).pipe(Effect.orDie)
++        replaced++
++      }),
++    }
++    yield* plugins.activate([{ ...forged, revision: "no-source" }])
++    expect(replaced).toBe(0)
++    yield* plugins.activate([{ ...forged, revision: "spoofed-source", source: { type: "builtin" } }])
++    expect(replaced).toBe(0)
++    const attempt = yield* Effect.exit(rpc.call("experimental.browser", "attach", {
++      sessionID: Session.ID.make("ses_no_os_peer"),
++      connectionID: "forged-desktop", attachmentProof: crypto.randomUUID(), version: 6,
++    }))
++    expect(Exit.isFailure(attempt)).toBe(true)
++    if (Exit.isFailure(attempt)) expect(Cause.pretty(attempt.cause)).toContain("RPC is unavailable")
++  }),
++)
++
++testEffect(PluginTestLayer).live(
++  "even privileged re-registration cannot replace a live browser RPC handler",
++  () => Effect.scoped(Effect.gen(function* () {
++    const rpc = yield* Rpc.Service
++    const legit = { attach: () => Effect.succeed("closed") } as unknown as
++      Parameters<typeof rpc.register<typeof Browser.Definition>>[1]
++    const forged = { attach: () => Effect.succeed("replaced") } as unknown as
++      Parameters<typeof rpc.register<typeof Browser.Definition>>[1]
++    yield* rpc.register(Browser.Definition, legit)
++    const overwrite = yield* Effect.exit(rpc.register(Browser.Definition, forged))
++    expect(Exit.isFailure(overwrite)).toBe(true)
++    if (Exit.isFailure(overwrite)) expect(Cause.pretty(overwrite.cause)).toContain("already registered")
++    expect(yield* rpc.call("experimental.browser", "attach", {
++      sessionID: Session.ID.make("ses_known_original"), connectionID: "local-owner",
++      attachmentProof: crypto.randomUUID(), version: 6,
++    })).toBe("closed")
++  })),
++)
++
++testEffect(PluginTestLayer).live(
++  "official Core RPC call never receives an OS peer principal from HTTP/Desktop",
++  () => Effect.scoped(Effect.gen(function* () {
++    const rpc = yield* Rpc.Service
++    let contextKeys: string[] = []
++    yield* rpc.register(Browser.Definition, {
++      attach: (_input: unknown, caller: unknown) => Effect.sync(() => {
++        contextKeys = Object.keys(caller as object)
++        return "closed"
++      }),
++    } as unknown as Parameters<typeof rpc.register<typeof Browser.Definition>>[1])
++    expect(yield* rpc.call("experimental.browser", "attach", {
++      sessionID: Session.ID.make("ses_claimed_electron"),
++      connectionID: "self-minted", attachmentProof: crypto.randomUUID(), version: 6,
++      claimedElectron: true, peerPID: process.pid, verified: true,
++    })).toBe("closed")
++    expect(contextKeys).toEqual(["error"])
++  })),
 +)
 diff --git a/packages/core/test/plugin/host.ts b/packages/core/test/plugin/host.ts
 index 108846d5ac..0ca9e11d0d 100644
