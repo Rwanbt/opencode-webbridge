@@ -175,6 +175,51 @@ test('failed claim cleanup stays quarantined and never allows a second attach', 
   assert.equal(allocations, 1);
 });
 
+test('browser detachment in progress prevents fresh submits and reads while host release ACK awaits', async () => {
+  let releaseEntered!: () => void;
+  let finishRelease!: () => void;
+  const entered = new Promise<void>((resolve) => { releaseEntered = resolve; });
+  const pending = new Promise<void>((resolve) => { finishRelease = resolve; });
+  let sends = 0;
+  let reads = 0;
+  const gate = new BrowserHostCapability({ assert: async () => {} });
+  const unregister = gate.register({ binding, consented: async () => true, port: {
+    claim: async () => {},
+    submit: async () => { sends++; },
+    events: async () => { reads++; return [{ seq: 1, kind: 'text' as const,
+      turnID: 'late_read', value: 'SECRET_AFTER_RELEASE' }]; },
+    cancel: async () => false,
+    release: async () => { releaseEntered(); await pending; },
+  } });
+  await gate.claim(binding);
+  const detaching = gate.release(binding);
+  await entered;
+  try {
+    await assert.rejects(gate.submit(binding, { turnID: 'late_submit', prompt: 'never send' }), /unavailable|releasing/);
+    await assert.rejects(gate.events(binding, 'late_read', 0), /unavailable|releasing/);
+    await assert.rejects(gate.release(binding), /unavailable|releasing/);
+    assert.throws(unregister, /release browser binding/);
+    assert.equal(sends, 0);
+    assert.equal(reads, 0);
+  } finally { finishRelease(); await detaching; }
+  unregister();
+});
+
+test('failed host release is quarantined even when driver ACK is uncertain', async () => {
+  let releases = 0;
+  const gate = new BrowserHostCapability({ assert: async () => {} });
+  const unregister = gate.register({ binding, consented: async () => true, port: {
+    claim: async () => {}, submit: async () => {}, events: async () => [], cancel: async () => false,
+    release: async () => { releases++; throw new Error('driver disconnected during release'); },
+  } });
+  await gate.claim(binding);
+  await assert.rejects(gate.release(binding), /uncertain|operator recovery/);
+  await assert.rejects(gate.submit(binding, { turnID: 'leaked', prompt: 'no' }), /unavailable/);
+  await assert.rejects(gate.claim(binding), /pending or active/);
+  assert.throws(unregister, /release browser binding/);
+  assert.equal(releases, 1);
+});
+
 test('revoked consent during pending read never releases late private browser events', async () => {
   let entered!: () => void;
   let release!: (events: { seq: number; kind: 'text'; turnID: string; value: string }[]) => void;

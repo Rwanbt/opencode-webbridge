@@ -18,6 +18,7 @@ export class BrowserHostCapability implements BrowserPort {
   private host?: BrowserHostRegistration;
   private pending = false;
   private active = false;
+  private releasing = false;
   private quarantined = false;
   // Local tombstone: a dispatched turn is never automatically sent twice,
   // including when its acknowledgement becomes uncertain. Not durable.
@@ -33,7 +34,7 @@ export class BrowserHostCapability implements BrowserPort {
     const entry = Object.freeze({ ...host, binding: Object.freeze({ ...host.binding }) });
     this.host = entry;
     return () => {
-      if (this.pending || this.active || this.quarantined) throw new Error('release browser binding before unregister');
+      if (this.pending || this.active || this.releasing || this.quarantined) throw new Error('release browser binding before unregister');
       if (this.host !== entry) throw new Error('browser host changed');
       this.host = undefined;
     };
@@ -41,7 +42,7 @@ export class BrowserHostCapability implements BrowserPort {
 
   private owned(binding: TabClaim, active: boolean): BrowserHostRegistration {
     const host = this.host;
-    if (!host || this.quarantined || (active && !this.active) || Object.keys(host.binding).some((key) =>
+    if (!host || this.releasing || this.quarantined || (active && !this.active) || Object.keys(host.binding).some((key) =>
       host.binding[key as keyof TabClaim] !== binding[key as keyof TabClaim])) {
       throw new Error('browser host unavailable or owner mismatch');
     }
@@ -60,7 +61,7 @@ export class BrowserHostCapability implements BrowserPort {
   }
 
   async claim(binding: TabClaim): Promise<void> {
-    if (this.pending || this.active || this.quarantined) throw new Error('browser host claim already pending or active');
+    if (this.pending || this.active || this.releasing || this.quarantined) throw new Error('browser host claim already pending or active');
     const host = this.owned(binding, false);
     this.pending = true;
     try {
@@ -175,7 +176,20 @@ export class BrowserHostCapability implements BrowserPort {
   }
 
   async release(binding: TabClaim): Promise<void> {
-    await this.owned(binding, true).port.release(binding);
-    this.active = false;
+    const host = this.owned(binding, true);
+    // Revocation of access must happen before awaiting an uncertain driver ACK.
+    // No new submit, read, cancel or second release may race host detachment.
+    this.releasing = true;
+    try {
+      await host.port.release(binding);
+      this.active = false;
+    } catch {
+      // A failed/timeout ACK cannot certify whether the browser is detached.
+      // Retain the owner and quarantine it rather than permitting a fresh bind.
+      this.quarantined = true;
+      throw new Error('browser host release outcome uncertain: operator recovery required');
+    } finally {
+      this.releasing = false;
+    }
   }
 }
