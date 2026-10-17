@@ -22,6 +22,45 @@ test('RPC relay waits for a once-only companion response', async () => {
   await relay.release(binding);
 });
 
+test('offline RPC relays bounded progressive chunks with stable cursors and one terminal event', async () => {
+  const relay = new RpcRelayPort(secret);
+  await relay.claim(binding);
+  const completion = exchangeBrowserTurn(relay, binding, { turnID: 'progressive-1', prompt: 'hello' }, 6);
+  await Promise.resolve();
+  assert.deepEqual(relay.take(secret, binding), { turnID: 'progressive-1', prompt: 'hello' });
+  relay.progress(secret, binding, 'progressive-1', 1, 'hello ');
+  assert.deepEqual(await relay.events(binding, 'progressive-1', 0), [
+    { seq: 1, kind: 'text', turnID: 'progressive-1', value: 'hello ' },
+  ]);
+  assert.deepEqual(await relay.events(binding, 'progressive-1', 1), []);
+  assert.throws(() => relay.progress(secret, binding, 'progressive-1', 1, 'duplicate'), /sequence mismatch/);
+  assert.throws(() => relay.progress(secret, binding, 'progressive-1', 3, 'skip'), /sequence mismatch/);
+  relay.progress(secret, binding, 'progressive-1', 2, 'world');
+  assert.throws(() => relay.complete(secret, binding, 'progressive-1', 'rewrite'), /rewrote/);
+  await assert.rejects(relay.submit(binding, { turnID: 'progressive-2', prompt: 'race' }), /already busy/);
+  relay.complete(secret, binding, 'progressive-1', 'hello world!');
+  assert.equal(await completion, 'hello world!');
+  assert.deepEqual(await relay.events(binding, 'progressive-1', 2), [
+    { seq: 3, kind: 'text', turnID: 'progressive-1', value: '!' },
+    { seq: 4, kind: 'finished', turnID: 'progressive-1' },
+  ]);
+  assert.throws(() => relay.progress(secret, binding, 'progressive-1', 5, 'late'), /not pending/);
+  await relay.release(binding);
+});
+
+test('progress with forged ownership or invalid sizes never mutates a leased turn', async () => {
+  const relay = new RpcRelayPort(secret);
+  await relay.claim(binding);
+  await relay.submit(binding, { turnID: 'p2', prompt: 'hello' });
+  relay.take(secret, binding);
+  assert.throws(() => relay.progress(secret, { ...binding, accountRef: 'other' }, 'p2', 1, 'stolen'), /binding mismatch/);
+  assert.throws(() => relay.progress(randomBytes(32).toString('hex'), binding, 'p2', 1, 'stolen'), /unauthorized/);
+  for (const value of ['', 'X'.repeat(4097)]) assert.throws(() => relay.progress(secret, binding, 'p2', 1, value), /out of bounds/);
+  assert.deepEqual(await relay.events(binding, 'p2', 0), []);
+  relay.complete(secret, binding, 'p2', 'complete');
+  await relay.release(binding);
+});
+
 test('RPC relay forbids spoofing, stolen tokens, ambiguous replay and invalid output', async () => {
   const relay = new RpcRelayPort(secret);
   await relay.claim(binding);

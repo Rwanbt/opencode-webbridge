@@ -27,6 +27,23 @@ export const BrowserRelayRPC = Rpc.define({
         required: [...Object.keys(identity), 'turnID', 'response'], additionalProperties: false },
       output: { type: 'object', properties: { accepted: { type: 'boolean' } }, required: ['accepted'], additionalProperties: false },
     },
+    progress: {
+      input: { type: 'object', properties: { ...identity, turnID: { type: 'string' },
+        seq: { type: 'integer', minimum: 1, maximum: 64 }, value: { type: 'string', minLength: 1, maxLength: 4096 } },
+        required: [...Object.keys(identity), 'turnID', 'seq', 'value'], additionalProperties: false },
+      output: { type: 'object', properties: { accepted: { type: 'boolean' } }, required: ['accepted'], additionalProperties: false },
+    },
+    poll: {
+      input: { type: 'object', properties: { ...identity, turnID: { type: 'string' },
+        afterSeq: { type: 'integer', minimum: 0, maximum: 64 } },
+        required: [...Object.keys(identity), 'turnID', 'afterSeq'], additionalProperties: false },
+      output: { type: 'object', properties: { events: { type: 'array', maxItems: 64,
+        items: { type: 'object', properties: { seq: { type: 'integer' },
+          kind: { type: 'string', enum: ['text', 'finished', 'cancelled'] },
+          turnID: { type: 'string' }, value: { type: 'string' } },
+          required: ['seq', 'kind', 'turnID'], additionalProperties: false } } },
+        required: ['events'], additionalProperties: false },
+    },
     result: {
       input: { type: 'object', properties: { ...identity, turnID: { type: 'string' } },
         required: [...Object.keys(identity), 'turnID'], additionalProperties: false },

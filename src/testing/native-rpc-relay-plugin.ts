@@ -6,7 +6,8 @@ import { BrowserRelayRPC } from './relay-rpc-contract.js';
 
 type Input = { readonly secret: string; readonly sessionID: string; readonly tabID: string;
   readonly providerID: string; readonly accountRef: string; readonly turnID?: string;
-  readonly prompt?: string; readonly response?: string };
+  readonly prompt?: string; readonly response?: string; readonly seq?: number;
+  readonly afterSeq?: number; readonly value?: string };
 
 const asInput = (raw: unknown): Input => raw as Input;
 const asClaim = (input: Input): TabClaim => ({ sessionID: input.sessionID, tabID: input.tabID,
@@ -27,7 +28,7 @@ export default Plugin.define({
     const relay = new RpcRelayPort(secret, journal);
     await relay.claim(binding);
 
-    // All four methods are test-only. Each checks the entire binding and secret.
+    // Fixture methods remain token- and exact-binding-gated, never page actions.
     const authorized = (raw: unknown) => {
       const input = asInput(raw);
       relay.check(input.secret, asClaim(input));
@@ -50,11 +51,21 @@ export default Plugin.define({
         relay.complete(input.secret, asClaim(input), input.turnID!, input.response!);
         return { accepted: true };
       },
+      progress: async (raw) => {
+        const input = authorized(raw);
+        relay.progress(input.secret, asClaim(input), input.turnID!, input.seq!, input.value!);
+        return { accepted: true };
+      },
+      poll: async (raw) => {
+        const input = authorized(raw);
+        return { events: [...await relay.events(asClaim(input), input.turnID!, input.afterSeq!)] };
+      },
       result: async (raw) => {
         const input = authorized(raw);
         const events = await relay.events(asClaim(input), input.turnID!, 0);
-        const text = events.find((event) => event.kind === 'text');
-        return text?.kind === 'text' ? { finished: true, response: text.value } : { finished: false };
+        return events.at(-1)?.kind === 'finished'
+          ? { finished: true, response: events.filter((e) => e.kind === 'text').map((e) => e.value).join('') }
+          : { finished: false };
       },
     }); } catch (error) { journal.close(); throw error; }
     return async () => { await registration.dispose(); await relay.release(binding); journal.close(); };

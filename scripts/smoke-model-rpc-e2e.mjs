@@ -163,6 +163,13 @@ try {
       if (useRealPage && !answer.includes('WEBBRIDGE_G4_QUESTION')) {
         throw new Error('browser page did not echo the submitted prompt');
       }
+      // Deterministic progressive companion: no resend and no guessed terminal.
+      // A real commercial site is never opened; only local fake pages are used.
+      const midpoint = Math.floor(answer.length / 2);
+      const first = await rpc('progress', { turnID: next.turnID, seq: 1, value: answer.slice(0, midpoint) });
+      if (first.accepted !== true) throw new Error('progress chunk rejected');
+      const second = await rpc('progress', { turnID: next.turnID, seq: 2, value: answer.slice(midpoint) });
+      if (second.accepted !== true) throw new Error('second progress chunk rejected');
       const done = await rpc('complete', { turnID: next.turnID, response: answer });
       if (done.accepted !== true) throw new Error('companion completion rejected');
     }

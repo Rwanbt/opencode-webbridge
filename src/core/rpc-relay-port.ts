@@ -3,7 +3,8 @@ import { WEB_PROVIDER_CATALOG } from '../catalog.js';
 import { assertOpaqueID, type BrowserPort, type TabClaim, type TurnEvent, type TurnRequest } from './browser-port.js';
 import type { DurableRelayJournal } from './durable-relay-journal.js';
 
-type Job = { readonly turnID: string; readonly prompt: string; claimed: boolean; events: TurnEvent[] };
+type Job = { readonly turnID: string; readonly prompt: string; claimed: boolean; done: boolean;
+  text: string; events: TurnEvent[] };
 
 /**
  * A bounded, testable relay for a FUTURE user-approved desktop companion.
@@ -49,10 +50,11 @@ export class RpcRelayPort implements BrowserPort {
     assertOpaqueID(request.turnID, 'turnID');
     if (!request.prompt || request.prompt.length > 16_000) throw new Error('relay prompt out of bounds');
     if (this.jobs.has(request.turnID)) throw new Error('relay turn already submitted');
-    if ([...this.jobs.values()].some((job) => !job.events.length)) throw new Error('relay already busy');
+    if ([...this.jobs.values()].some((job) => !job.done)) throw new Error('relay already busy');
     if (this.jobs.size >= 16) throw new Error('relay journal full: restart/reconcile required');
     this.journal?.prepare(request.turnID);
-    this.jobs.set(request.turnID, { turnID: request.turnID, prompt: request.prompt, claimed: false, events: [] });
+    this.jobs.set(request.turnID, { turnID: request.turnID, prompt: request.prompt,
+      claimed: false, done: false, text: '', events: [] });
     this.notify();
   }
 
@@ -60,7 +62,7 @@ export class RpcRelayPort implements BrowserPort {
   take(secret: string, binding: TabClaim): { turnID: string; prompt: string } | null {
     this.check(secret, binding);
     for (const job of this.jobs.values()) {
-      if (job.claimed || job.events.length) continue;
+      if (job.claimed || job.done) continue;
       this.journal?.leased(job.turnID);
       job.claimed = true;
       return { turnID: job.turnID, prompt: job.prompt };
@@ -68,19 +70,37 @@ export class RpcRelayPort implements BrowserPort {
     return null;
   }
 
+  /** Bounded, sequenced progress from a leased offline companion. Never retries a lost ACK. */
+  progress(secret: string, binding: TabClaim, turnID: string, seq: number, value: string): void {
+    this.check(secret, binding);
+    assertOpaqueID(turnID, 'turnID');
+    const job = this.jobs.get(turnID);
+    if (!job || !job.claimed || job.done) throw new Error('relay turn not pending');
+    if (!Number.isSafeInteger(seq) || seq !== job.events.length + 1) throw new Error('relay progress sequence mismatch');
+    if (typeof value !== 'string' || value.length === 0 || value.length > 4096 ||
+      job.text.length + value.length > 16_000 || job.events.length >= 62) {
+      throw new Error('relay progress out of bounds');
+    }
+    job.text += value;
+    job.events.push({ seq, kind: 'text', turnID, value });
+    this.notify();
+  }
+
   complete(secret: string, binding: TabClaim, turnID: string, response: string): void {
     this.check(secret, binding);
     assertOpaqueID(turnID, 'turnID');
     const job = this.jobs.get(turnID);
-    if (!job || !job.claimed || job.events.length) throw new Error('relay turn not pending');
+    if (!job || !job.claimed || job.done) throw new Error('relay turn not pending');
     if (typeof response !== 'string' || !response || response.length > 16_000) {
       throw new Error('relay reply out of bounds');
     }
+    if (!response.startsWith(job.text)) throw new Error('relay final response rewrote streamed text');
+    const suffix = response.slice(job.text.length);
+    if (job.events.length + (suffix ? 2 : 1) > 64) throw new Error('relay event limit');
     this.journal?.settled(turnID);
-    job.events.push(
-      { seq: 1, kind: 'text', turnID, value: response },
-      { seq: 2, kind: 'finished', turnID },
-    );
+    if (suffix) job.events.push({ seq: job.events.length + 1, kind: 'text', turnID, value: suffix });
+    job.events.push({ seq: job.events.length + 1, kind: 'finished', turnID });
+    job.done = true;
     this.notify();
   }
 
@@ -99,9 +119,10 @@ export class RpcRelayPort implements BrowserPort {
     this.owned(binding);
     assertOpaqueID(turnID, 'turnID');
     const job = this.jobs.get(turnID);
-    if (!job || job.events.length || job.claimed) return false;
+    if (!job || job.done || job.claimed) return false;
     this.journal?.cancelled(turnID);
     job.events.push({ seq: 1, kind: 'cancelled', turnID });
+    job.done = true;
     this.notify();
     return true;
   }
