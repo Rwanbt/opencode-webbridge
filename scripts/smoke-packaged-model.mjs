@@ -25,15 +25,16 @@ function runCLI(executable, args, env, cwd) {
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: process.platform === 'win32' && /\.cmd$/i.test(executable) });
     let stdout = '';
+    let stderr = '';
     let overflow = false;
     child.stdout.on('data', (data) => {
       stdout += data.toString('utf8');
       if (stdout.length > 120_000) { overflow = true; child.kill(); }
     });
-    child.stderr.on('data', () => {});
+    child.stderr.on('data', (data) => { stderr = (stderr + data.toString('utf8')).slice(-1000); });
     const timer = setTimeout(() => child.kill(), 50_000);
     child.once('error', (error) => { clearTimeout(timer); reject(error); });
-    child.once('close', (code) => { clearTimeout(timer); resolveRun({ code, stdout, overflow }); });
+    child.once('close', (code) => { clearTimeout(timer); resolveRun({ code, stdout, stderr, overflow }); });
   });
 }
 
@@ -53,24 +54,32 @@ export const modelBridge = {
     let rpcConnection;
     let requests = 0;
     let expected = '';
+    let rpcCalls = 0;
+    let authorizedResult;
     const fake = await openFixtureServer({
       token: modelToken,
       respond: async (messages) => {
-        if (!JSON.stringify(messages).includes(prompt) || !rpcConnection || requests++ !== 0) {
-          throw new Error('invalid or duplicated fake model request');
+        if (!JSON.stringify(messages).includes(prompt) || !rpcConnection || ++requests > 12) {
+          throw new Error('invalid or unbounded fake model request');
         }
-        const nonce = 'g88_nonce_' + version.replaceAll('.', '_') + '_' + randomBytes(4).toString('hex');
-        const reply = await fetch(rpcConnection.url + '/api/rpc/webbridge-g81-package/challenge', {
-          method: 'POST', headers: rpcConnection.headers,
-          body: JSON.stringify({ input: {
-            secret: rpcConnection.secret, scope: 'g81-local-profile', nonce,
-          } }), signal: AbortSignal.timeout(4000),
-        });
-        if (!reply.ok) throw new Error('installed native RPC refused model fixture request');
-        const result = await reply.json();
-        const digest = createHmac('sha256', rpcConnection.secret).update(nonce).digest('hex');
-        if (result?.output?.receipt !== digest) throw new Error('native RPC HMAC mismatch');
-        expected = receiptText(rpcConnection.secret, nonce);
+        // OpenCode may make more than one completion request in a native turn.
+        // Cache only the FIRST authenticated receipt; never replay the native RPC.
+        authorizedResult ??= (async () => {
+          const nonce = 'g88_nonce_' + version.replaceAll('.', '_') + '_' + randomBytes(4).toString('hex');
+          rpcCalls++;
+          const reply = await fetch(rpcConnection.url + '/api/rpc/webbridge-g81-package/challenge', {
+            method: 'POST', headers: rpcConnection.headers,
+            body: JSON.stringify({ input: {
+              secret: rpcConnection.secret, scope: 'g81-local-profile', nonce,
+            } }), signal: AbortSignal.timeout(4000),
+          });
+          if (!reply.ok) throw new Error('installed native RPC refused model fixture request');
+          const result = await reply.json();
+          const digest = createHmac('sha256', rpcConnection.secret).update(nonce).digest('hex');
+          if (result?.output?.receipt !== digest) throw new Error('native RPC HMAC mismatch');
+          return receiptText(rpcConnection.secret, nonce);
+        })();
+        expected = await authorizedResult;
         const mid = Math.floor(expected.length / 2);
         return (async function* () {
           yield expected.slice(0, mid);
@@ -88,11 +97,14 @@ export const modelBridge = {
         rpcConnection = { url, headers, secret };
         const run = await runCLI(executable, ['run', '--server', url, '--model',
           'webbridge-fixture/webbridge-native-fixture', '--format', 'json', prompt], env, temp);
-        if (run.code !== 0 || run.overflow || requests !== 1 || fake.requests() !== 1 ||
+        if (run.code !== 0 || run.overflow || rpcCalls !== 1 || requests < 1 || requests > 12 ||
+          fake.requests() < 1 || fake.requests() > 12 ||
           fake.streamFrames() < 2 || !expected || !run.stdout.includes(expected)) {
           throw new Error('CLI model-to-packaged-RPC proof failed: exit=' + run.code +
-            ', requests=' + requests + ', HTTP=' + fake.requests() + ', SSE=' +
-            fake.streamFrames() + ', output=' + run.stdout.includes(expected));
+            ', requests=' + requests + ', RPC=' + rpcCalls + ', HTTP=' + fake.requests() + ', SSE=' +
+            fake.streamFrames() + ', output=' + run.stdout.includes(expected) +
+            ', resultTail=' + run.stdout.slice(-300).replaceAll(secret, '[REDACTED]') +
+            ', stderrTail=' + run.stderr.slice(-300).replaceAll(secret, '[REDACTED]'));
         }
         return { nativeModel: true, packagedRpcUsed: true, fixtureHTTP: fake.requests(),
           sseFrames: fake.streamFrames(), selectedModel: 'webbridge-fixture/webbridge-native-fixture' };
