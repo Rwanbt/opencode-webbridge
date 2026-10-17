@@ -100,12 +100,16 @@ test('untrusted descriptor and linked workspace witness cannot create operation'
     assert.equal(reads, 0);
     // Link a directory in the model-owned scope: never follow it.
     const linked = join(root, 'linked');
+    let linkedCreated = false;
     try {
       symlinkSync(root, linked, process.platform === 'win32' ? 'junction' : 'dir');
-      assert.throws(() => DurableOperationFence.initialize(linked, witness, id, key),
-        /linked|independent|directory/);
+      linkedCreated = true;
     } catch (error) {
       if (process.platform !== 'win32') throw error;
-      // Restricted Windows user accounts may not permit symbolic links/junctions.
+      // Restricted Windows accounts may not permit junction creation at all.
     }
+    if (linkedCreated) assert.throws(
+      () => DurableOperationFence.initialize(linked, witness, id, key),
+      /linked|independent|directory/,
+    );
   }));
