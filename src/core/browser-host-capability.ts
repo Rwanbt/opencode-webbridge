@@ -65,7 +65,20 @@ export class BrowserHostCapability implements BrowserPort {
     this.pending = true;
     try {
       await this.authorize(host);
-      await host.port.claim(binding);
+      try {
+        await host.port.claim(binding);
+      } catch {
+        // A rejected/timeout claim may already have acquired the tab on the
+        // host. It is unsafe to infer no effect from the missing ACK.
+        this.quarantined = true;
+        try {
+          await host.port.release(binding);
+          this.quarantined = false;
+        } catch {
+          throw new Error('browser host claim cleanup uncertain: operator recovery required');
+        }
+        throw new Error('browser host claim outcome uncertain: reconcile before retry');
+      }
       // The driver can acquire ownership while permission/consent changes.
       // Release the now-unauthorized binding instead of exposing a live host.
       try {

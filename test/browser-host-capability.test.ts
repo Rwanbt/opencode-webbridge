@@ -143,6 +143,38 @@ test('revocation during awaited host claim cannot leave a live unauthorized brow
   unregister();
 });
 
+test('driver claim that acquires then throws cannot leave behind an unowned active tab', async () => {
+  const real = new FakeBrowserPort();
+  let releases = 0;
+  const gate = new BrowserHostCapability({ assert: async () => {} });
+  const unregister = gate.register({ binding, consented: async () => true, port: {
+    claim: async (id) => { await real.claim(id); throw new Error('ACK lost after acquisition'); },
+    submit: (id, request) => real.submit(id, request),
+    events: (id, turnID, cursor) => real.events(id, turnID, cursor),
+    cancel: (id, turnID) => real.cancel(id, turnID),
+    release: async (id) => { releases++; await real.release(id); },
+  } });
+  await assert.rejects(gate.claim(binding), /uncertain|ACK lost/);
+  assert.equal(releases, 1);
+  await assert.rejects(real.submit(binding, { turnID: 'leaked', prompt: 'forbidden' }), /not owned/);
+  unregister();
+});
+
+test('failed claim cleanup stays quarantined and never allows a second attach', async () => {
+  let allocations = 0;
+  const gate = new BrowserHostCapability({ assert: async () => {} });
+  const unregister = gate.register({ binding, consented: async () => true, port: {
+    claim: async () => { allocations++; throw new Error('claim may have acquired before error'); },
+    submit: async () => { throw new Error('must never send'); },
+    events: async () => [], cancel: async () => false,
+    release: async () => { throw new Error('cannot verify ownership cleanup'); },
+  } });
+  await assert.rejects(gate.claim(binding), /cleanup uncertain|operator recovery/);
+  await assert.rejects(gate.claim(binding), /pending or active/);
+  assert.throws(unregister, /release browser binding/);
+  assert.equal(allocations, 1);
+});
+
 test('revoked consent during pending read never releases late private browser events', async () => {
   let entered!: () => void;
   let release!: (events: { seq: number; kind: 'text'; turnID: string; value: string }[]) => void;
