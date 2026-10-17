@@ -58,3 +58,44 @@ test('text-only input preflight rejects hidden media, extra keys and accessors B
   }
   assert.equal(sends, 0, 'no invalid multimodal payload may reach the browser');
 });
+
+test('browser exchange captures immutable owner and turn before asynchronous transport', async () => {
+  const mutableClaim = { ...claim };
+  const mutableTurn = { ...turn };
+  let reads = 0;
+  const port = {
+    submit: async (owner: TabClaim, request: TurnRequest) => {
+      assert.notStrictEqual(owner, mutableClaim, 'transport cannot hold the caller-owned mutable authority');
+      assert.notStrictEqual(request, mutableTurn, 'transport cannot hold the caller-owned mutable turn');
+      assert.equal(Object.isFrozen(owner), true);
+      assert.equal(Object.isFrozen(request), true);
+      mutableClaim.sessionID = 'victim-session';
+      mutableClaim.tabID = 'victim-tab';
+      mutableTurn.turnID = 'victim-turn';
+    },
+    events: async (owner: TabClaim, turnID: string) => {
+      reads++;
+      assert.deepEqual(owner, claim, 'reads must retain original session and tab');
+      assert.equal(turnID, turn.turnID, 'reads must retain original turn');
+      return [{ seq: 1, kind: 'text', turnID, value: 'safe' },
+        { seq: 2, kind: 'finished', turnID }];
+    },
+  } as unknown as BrowserPort;
+  assert.equal(await exchangeBrowserTurn(port, mutableClaim, mutableTurn), 'safe');
+  assert.equal(reads, 1);
+});
+
+test('browser exchange refuses untrusted claim getters and unexpected fields before submit', async () => {
+  let sends = 0;
+  const port = { submit: async () => { sends++; }, events: async () => [] } as unknown as BrowserPort;
+  const getter = Object.defineProperty({ ...claim }, 'tabID', {
+    enumerable: true, get() { throw new Error('secret credential getter evaluated'); },
+  });
+  const extra = Object.defineProperty({ ...claim }, 'hiddenAuthority', {
+    enumerable: false, value: 'different-account',
+  });
+  for (const invalid of [getter, extra, { ...claim, providerID: 'unregistered' }]) {
+    await assert.rejects(exchangeBrowserTurn(port, invalid as TabClaim, turn), /claim|binding|provider/i);
+  }
+  assert.equal(sends, 0);
+});
