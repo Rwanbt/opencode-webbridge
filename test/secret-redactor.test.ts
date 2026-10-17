@@ -35,6 +35,16 @@ test('containsSecret detects', () => {
   assert.equal(containsSecret('hello world'), false);
 });
 
+test('containsSecret is stateless: a prior match can never blind the next check', () => {
+  const bearer = 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456';
+  assert.equal(containsSecret(bearer), true);
+  assert.equal(containsSecret(bearer), true); // second identical check must not miss
+  assert.equal(containsSecret(bearer), true); // and stays reliable under repetition
+  const cookie = 'Cookie: session=secretvalue123';
+  assert.equal(containsSecret(cookie), true);
+  assert.equal(containsSecret(cookie), true);
+});
+
 test('non-string safe', () => {
   assert.deepEqual(redactSecrets('' as any), { text: '', redactions: 0 } as any);
 });

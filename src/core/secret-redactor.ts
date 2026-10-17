@@ -40,5 +40,14 @@ export function redactSecrets(input: string): RedactResult {
 
 export function containsSecret(input: string): boolean {
   if (typeof input !== 'string') return false;
-  return PATTERNS.some((p) => p.re.test(input));
+  // The patterns are module-level /g regexes, so .test() keeps lastIndex
+  // between calls: a prior match would make the next check start past the
+  // secret and miss it. Reset before AND after so detection can never be
+  // blinded by previous state.
+  return PATTERNS.some((p) => {
+    p.re.lastIndex = 0;
+    const hit = p.re.test(input);
+    p.re.lastIndex = 0;
+    return hit;
+  });
 }
