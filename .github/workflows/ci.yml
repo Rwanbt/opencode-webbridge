@@ -213,6 +213,22 @@ jobs:
       - name: Build and lifecycle-test the ACTUAL inert WebBridge entrypoint, not a synthetic fixture
         run: npm run smoke:actual-package-native
 
+  g152-actual-root-chromium-read-sse:
+    name: G152 real root .tgz selected CLI model DOM RPC read-only tool and durable resumed SSE
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: npx playwright install --with-deps --only-shell chromium
+      - name: Real installed root local-only model, DOM, native RPC, tool, SSE and restart
+        run: npm run smoke:g152-root-vertical
+
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
     runs-on: ubuntu-latest

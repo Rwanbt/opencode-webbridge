@@ -120,6 +120,7 @@ async function nativeProof(temp, env, entry, bin, fixture) {
   const base = 'http://127.0.0.1:' + port;
   const headers = { Authorization: 'Basic ' +
     Buffer.from('opencode:' + password).toString('base64') };
+  let proof;
   try {
     let pluginLoaded = false;
     for (let i = 0; i < 80 && running.exitCode === null; i++) {
@@ -176,13 +177,15 @@ async function nativeProof(temp, env, entry, bin, fixture) {
         throw new Error('G150 actual root RPC response not host-scoped');
       const duplicate = await call('g81-local-profile', fixture.env.WEBBRIDGE_G81_SECRET, nonce);
       if (duplicate.ok) throw new Error('G150 native RPC replay admitted');
+      await fixture.beforeNativeTurn?.({ base, headers, temp });
       const run = await runCLI(bin, ['run', '--server', base, '--model',
         'webbridge-fixture/webbridge-native-fixture', '--format', 'json',
-        'G150_LOCAL_TEST_MODEL_PROMPT'], sandbox, temp, { timeoutMs: 50_000 });
-      if (run.code !== 0 || !run.stdout.includes('G150_ACTUAL_ROOT_LOCAL_OK') ||
+        fixture.prompt ?? 'G150_LOCAL_TEST_MODEL_PROMPT'], sandbox, temp, { timeoutMs: 50_000 });
+      if (run.code !== 0 || !run.stdout.includes(fixture.expected ?? 'G150_ACTUAL_ROOT_LOCAL_OK') ||
           !fixture.requests()) throw new Error('G150 selected actual root fixture model CLI native SSE failed');
+      await fixture.afterNativeTurn?.({ base, headers, temp });
     }
-    return Object.freeze({ officialCLI: true, rootPluginActive: true,
+    proof = Object.freeze({ officialCLI: true, rootPluginActive: true,
       advertisedCommercialProviders: 0, fixtureModelRegistered: Boolean(fixture),
       ...(fixture ? { fixtureNativeRpc: true, fixtureModelSSE: true } : {}) });
   } finally {
@@ -192,9 +195,14 @@ async function nativeProof(temp, env, entry, bin, fixture) {
       new Promise((done) => setTimeout(done, 3000)),
     ]);
   }
+  // A genuine installed CLI server has terminated before the host test
+  // reopens its durable session and encrypted receipts.
+  await fixture?.afterShutdown?.({ executable: bin, env: sandbox, temp,
+    headers, url: base });
+  return proof;
 }
 
-export async function proveActualEntrypoint({ native = false } = {}) {
+export async function proveActualEntrypoint({ native = false, localFactory } = {}) {
   const entry = await readFile(join(root, 'dist/src/index.js'), 'utf8');
   const source = sourceContract(entry);
   const temp = await mkdtemp(join(tmpdir(), 'webbridge-actual-plugin-'));
@@ -232,11 +240,12 @@ export async function proveActualEntrypoint({ native = false } = {}) {
     const { openFixtureServer } = await import(pathToFileURL(
       join(root, 'dist/src/testing/fixture-inference.js')).href);
     const token = randomBytes(32).toString('hex');
+    const custom = localFactory ? await localFactory({ temp }) : null;
     const fake = await openFixtureServer({ token,
-      respond: async () => (async function* () {
+      respond: custom?.respond ?? (async () => (async function* () {
         yield 'G150_ACTUAL_ROOT_';
         yield 'LOCAL_OK';
-      })(),
+      })()),
     });
     let local;
     try {
@@ -246,8 +255,9 @@ export async function proveActualEntrypoint({ native = false } = {}) {
           WEBBRIDGE_G81_SECRET: randomBytes(32).toString('hex'),
           WEBBRIDGE_FIXTURE_TOKEN: token, WEBBRIDGE_FIXTURE_URL: fake.baseURL },
         requests: () => fake.requests(),
+        ...(custom ?? {}),
       });
-    } finally { await fake.close(); }
+    } finally { await fake.close(); await custom?.close?.(); }
     if (!local.fixtureNativeRpc || !local.fixtureModelSSE ||
         !proof.rootPluginActive || proof.fixtureModelRegistered)
       throw new Error('G150 default-on vs opt-in contract violated');
