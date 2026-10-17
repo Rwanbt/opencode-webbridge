@@ -58,3 +58,36 @@ test('clear removes prior connection', () => {
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.reason, 'no-prior-connection');
 });
+
+test('a missing or invalid identity cannot bootstrap a verified reconnection', () => {
+  const v = new ReconnectionVerifier();
+  assert.throws(() => v.record({ ...conn, pluginID: '' }, 100), /invalid/);
+  assert.throws(() => v.record({ ...conn, sessionID: 'bad id' }, 100), /invalid/);
+  assert.throws(() => v.record(conn, -1), /timestamp/);
+  assert.equal(v.hasPrior(), false);
+  v.record(conn, 100);
+  assert.deepEqual(v.verify({ ...conn, pluginGeneration: '' }, 110, 1000),
+    { ok: false, reason: 'invalid-input' });
+});
+
+test('malformed time windows and unexpected extra fields cannot authorize stale connection', () => {
+  const v = new ReconnectionVerifier();
+  v.record(conn, 100);
+  for (const [now, age] of [[-1, 1000], [200, -1], [200, NaN], [NaN, 1000], [200, Infinity]]) {
+    assert.deepEqual(v.verify(conn, now, age), { ok: false, reason: 'invalid-input' });
+  }
+  assert.deepEqual(v.verify({ ...conn, cookie: 'injected' } as never, 120, 1000),
+    { ok: false, reason: 'invalid-input' });
+});
+
+test('record and verify never execute JavaScript getters from untrusted identity objects', () => {
+  const v = new ReconnectionVerifier();
+  let reads = 0;
+  const forged = { ...conn };
+  Object.defineProperty(forged, 'pluginID', { enumerable: true, get() { reads++; return 'p'; } });
+  assert.throws(() => v.record(forged, 100), /plain|data|invalid/);
+  assert.equal(reads, 0);
+  v.record(conn, 100);
+  assert.deepEqual(v.verify(forged, 150, 1000), { ok: false, reason: 'invalid-input' });
+  assert.equal(reads, 0);
+});
