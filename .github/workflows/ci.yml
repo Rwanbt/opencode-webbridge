@@ -156,6 +156,8 @@ jobs:
         run: node --test dist/test/tool-proposal.test.js dist/test/tool-flow.test.js dist/test/workspace-path.test.js
       - name: G136 prevent concurrent double-effect and uncertain replay (fixture authority only)
         run: node --test dist/test/effect-broker.test.js dist/test/tool-broker.test.js
+      - name: G139 reject mutable authority after await and invalid expiry (no effect)
+        run: node --test dist/test/authority-context.test.js dist/test/effect-broker.test.js
 
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch

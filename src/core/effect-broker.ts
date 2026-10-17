@@ -24,7 +24,7 @@
  */
 
 import type { AuthorityContext } from './authority-context.js';
-import { isExpired } from './authority-context.js';
+import { buildAuthorityContext, isExpired, sameAuthority } from './authority-context.js';
 import type { ConsentGate } from './consent-gate.js';
 import type { ToolBroker } from './tool-broker.js';
 
@@ -106,7 +106,14 @@ export async function runAuthorizedEffect<R>(
   if (op.status !== 'consented') return refused(operationID, 'operation-not-consented');
 
   // The reservation's scope and the authenticated authority tuple must agree.
-  const ctx = request.context;
+  const supplied = request.context;
+  const initial = buildAuthorityContext(supplied);
+  if (!initial.ok) return refused(operationID, 'invalid-input');
+  const ctx = initial.context;
+  const unchanged = () => {
+    const current = buildAuthorityContext(supplied);
+    return current.ok && sameAuthority(ctx, current.context);
+  };
   if (op.sessionID !== ctx.sessionID || op.agentID !== ctx.agentID ||
     op.turnID !== ctx.turnID || op.workspaceID !== ctx.workspaceID) {
     return refused(operationID, 'scope-mismatch');
@@ -127,6 +134,7 @@ export async function runAuthorizedEffect<R>(
     return refused(operationID, 'authority-mismatch');
   }
   // Revocation or expiry during the attestation await.
+  if (!unchanged()) return refused(operationID, 'authority-mismatch');
   if (!gate.isGranted()) return refused(operationID, 'consent-absent');
   if (isExpired(ctx, now())) return refused(operationID, 'expired');
   // Synchronous irreversible consume BEFORE the first possible effect, including
@@ -149,7 +157,7 @@ export async function runAuthorizedEffect<R>(
   } catch {
     post = null;
   }
-  if (!post || post.authorityEpoch !== ctx.authorityEpoch ||
+  if (!unchanged() || !post || post.authorityEpoch !== ctx.authorityEpoch ||
       post.policyRevision !== ctx.policyRevision || isExpired(ctx, now())) {
     broker.uncertain(operationID);
     return uncertain(operationID, 'authority-lost-after-execution');
