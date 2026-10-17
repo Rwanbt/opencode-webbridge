@@ -348,14 +348,15 @@ index 0000000000..383f9516ea
 +}
 diff --git a/packages/core/src/plugin/browser.ts b/packages/core/src/plugin/browser.ts
 new file mode 100644
-index 0000000000..ffac36d67b
+index 0000000000..e703690bed
 --- /dev/null
 +++ b/packages/core/src/plugin/browser.ts
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,112 @@
 +export * as PluginBrowser from "./browser.js"
 +
 +import type { BrowserDomain, BrowserDriver } from "@opencode/plugin/effect/browser"
 +import type { Permission } from "../permission.js"
++import type { BrowserLease } from "./browser-lease.js"
 +import type { Session } from "@opencode/schema/session"
 +import type { Location } from "@opencode/schema/location"
 +import { BrowserTurn } from "../tool/browser-turn.js"
@@ -363,7 +364,7 @@ index 0000000000..ffac36d67b
 +
 +/** Location-local broker. The registered driver never leaves the trusted host. */
 +export function make(
-+  permission: Pick<Permission.Interface, "assert">,
++  permission: Pick<Permission.Interface, "assert" | "browserRead">,
 +  scope?: {
 +    readonly location: Location.Ref
 +    readonly session: (id: Session.ID) => Effect.Effect<Location.Ref | undefined, Error>
@@ -372,6 +373,8 @@ index 0000000000..ffac36d67b
 +  let driver: { readonly host: BrowserDriver } | undefined
 +  return (pluginID: string, builtin = false): BrowserDomain & { revoke: () => void } => {
 +    let retired = false
++    // Generated inside trusted Core plugin activation, not accepted from caller arguments.
++    const pluginGeneration = crypto.randomUUID()
 +    const authorize = (sessionID: Parameters<BrowserDomain["tabs"]>[0]["sessionID"], operation: string) =>
 +      Effect.gen(function* () {
 +        yield* permission.assert({ sessionID, action: "browser", resources: ["*"] })
@@ -397,6 +400,9 @@ index 0000000000..ffac36d67b
 +        Effect.gen(function* () {
 +          if (!scope || retired || !BrowserTurn.valid(input.context))
 +            return yield* Effect.fail(new Error("No trusted active tool turn"))
++          // Never fall back to the older four async assert checks: they lack an atomic revision.
++          const authority = permission.browserRead
++          if (!authority) return yield* Effect.fail(new Error("Authoritative Core browser read lease unavailable"))
 +          const owner = driver
 +          if (!owner) return yield* Effect.fail(new Error("Desktop browser not connected"))
 +          if (!owner.host.bindSnapshot) return yield* Effect.fail(new Error("Native transactional binding unavailable"))
@@ -407,22 +413,20 @@ index 0000000000..ffac36d67b
 +            return yield* Effect.fail(new Error("Session is not in this workspace"))
 +          // The official driver pins the live attachment and exact tab generation BEFORE any prompt.
 +          const bound = yield* owner.host.bindSnapshot({ sessionID, tabID: input.tabID })
-+          const operation = [
-+            "snapshot.once",
-+            scope.location.workspaceID ?? "none",
-+            sessionID,
-+            input.context.messageID,
-+            input.context.id,
-+            bound.binding.connectionID,
-+            input.tabID,
-+            bound.binding.tabGeneration,
-+          ].join(":")
-+          // Permission resource is exact to this tool turn, attachment, tab generation and read action.
-+          yield* authorize(sessionID, operation)
++          const binding: BrowserLease.Binding = {
++            pluginID, pluginGeneration, agentID: input.context.agent,
++            sessionID, workspaceID: scope.location.workspaceID ?? "",
++            turnID: input.context.messageID, callID: input.context.id,
++            connectionID: bound.binding.connectionID, tabID: input.tabID,
++            tabGeneration: bound.binding.tabGeneration, action: "snapshot.once",
++          }
++          // Core Permission.Service owns the policy epoch and must authorize the exact binding.
++          const ticket = yield* authority.issue(binding)
 +          if (!sameLocation(yield* scope.session(sessionID)))
 +            return yield* Effect.fail(new Error("Session moved during authorization"))
 +          return yield* Effect.suspend(() => {
-+            if (driver !== owner || retired || !BrowserTurn.consume(input.context))
++            if (driver !== owner || retired || !BrowserTurn.valid(input.context) ||
++                !authority.consume(ticket, binding) || !BrowserTurn.consume(input.context))
 +              return Effect.fail(new Error("Browser grant expired or already consumed"))
 +            return bound.read()
 +          })
@@ -437,16 +441,8 @@ index 0000000000..ffac36d67b
 +            return yield* Effect.fail(new Error("Browser host changed during authorization"))
 +          return yield* owner.host.tabs(input)
 +        }),
-+      snapshot: (input) =>
-+        Effect.gen(function* () {
-+          if (retired) return yield* Effect.fail(new Error("Plugin generation unloaded"))
-+          const owner = driver
-+          if (!owner) return yield* Effect.fail(new Error("Desktop browser not connected"))
-+          yield* authorize(input.sessionID, "snapshot")
-+          if (driver !== owner || retired)
-+            return yield* Effect.fail(new Error("Browser host changed during authorization"))
-+          return yield* owner.host.snapshot(input)
-+        }),
++      // Legacy ctx.browser.snapshot has no trusted tool turn or Core epoch.
++      snapshot: () => Effect.fail(new Error("Legacy plugin snapshot lacks Core authority; use snapshotOnce")),
 +      register: (host) => {
 +        const entry = { host }
 +        return Effect.acquireRelease(
@@ -598,10 +594,10 @@ index a07468a61e..537bb73f0a 100644
          }),
 diff --git a/packages/core/src/tool/browser-turn.ts b/packages/core/src/tool/browser-turn.ts
 new file mode 100644
-index 0000000000..5f9baa6050
+index 0000000000..6a3e974291
 --- /dev/null
 +++ b/packages/core/src/tool/browser-turn.ts
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,57 @@
 +export * as BrowserTurn from "./browser-turn.js"
 +
 +import type { Tool } from "@opencode/schema/tool"
@@ -616,6 +612,7 @@ index 0000000000..5f9baa6050
 +    sessionID: Tool.Context["sessionID"]
 +    messageID: Tool.Context["messageID"]
 +    id: Tool.Context["id"]
++    agent: Tool.Context["agent"]
 +  }
 +>()
 +
@@ -628,6 +625,7 @@ index 0000000000..5f9baa6050
 +        sessionID: context.sessionID,
 +        messageID: context.messageID,
 +        id: context.id,
++        agent: context.agent,
 +      })
 +    }),
 +    () => task,
@@ -653,15 +651,16 @@ index 0000000000..5f9baa6050
 +    !claim.used &&
 +    claim.sessionID === context.sessionID &&
 +    claim.messageID === context.messageID &&
-+    claim.id === context.id
++    claim.id === context.id &&
++    claim.agent === context.agent
 +  )
 +}
 diff --git a/packages/core/test/permission-browser-lease.test.ts b/packages/core/test/permission-browser-lease.test.ts
 new file mode 100644
-index 0000000000..aa3ef778e7
+index 0000000000..eaae68ef06
 --- /dev/null
 +++ b/packages/core/test/permission-browser-lease.test.ts
-@@ -0,0 +1,243 @@
+@@ -0,0 +1,291 @@
 +import { expect } from "bun:test"
 +import { Agent } from "@opencode/core/agent"
 +import { Bus } from "@opencode/core/bus"
@@ -669,11 +668,15 @@ index 0000000000..aa3ef778e7
 +import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 +import { Location } from "@opencode/core/location"
 +import { Permission } from "@opencode/core/permission"
++import { PluginBrowser } from "@opencode/core/plugin/browser"
++import { BrowserTurn } from "@opencode/core/tool/browser-turn"
 +import { PermissionSaved } from "@opencode/core/permission/saved"
 +import { Project } from "@opencode/core/project"
 +import { ProjectTable } from "@opencode/core/project/sql"
 +import { AbsolutePath } from "@opencode/core/schema"
 +import { Session } from "@opencode/core/session"
++import { SessionMessage } from "@opencode/schema/session-message"
++import { Tool } from "@opencode/schema/tool"
 +import { SessionTable } from "@opencode/core/session/sql"
 +import { SessionEvent } from "@opencode/schema/session-event"
 +import { SessionStore } from "@opencode/core/session/store"
@@ -754,6 +757,50 @@ index 0000000000..aa3ef778e7
 +    expect(Exit.isFailure(yield* Effect.exit(permission.browserRead!.issue({ ...binding, action: "click" })))).toBe(
 +      true,
 +    )
++  }),
++)
++
++test.effect("real Core epoch is consumed before the broker may read; revocation before effect refuses", () =>
++  Effect.gen(function* () {
++    yield* setup([
++      { action: "browser", resource: "*", effect: "allow" },
++      { action: "browser_plugin", resource: "*", effect: "allow" },
++    ])
++    const permission = yield* Permission.Service
++    const location = Location.Ref.make({ directory: AbsolutePath.make("/project"),
++      workspaceID: "wrk_scoped" as never })
++    let lookups = 0
++    let reads = 0
++    let revokeBeforeConsume = false
++    const broker = PluginBrowser.make(permission, {
++      location,
++      session: () => Effect.sync(() => {
++        if (++lookups % 2 === 0 && revokeBeforeConsume) permission.browserRead!.revoke()
++        return location
++      }),
++    })
++    const builtin = broker("opencode.browser", true)
++    const caller = broker("fixture.reader")
++    yield* builtin.register({
++      tabs: () => Effect.succeed([]),
++      snapshot: () => Effect.die("legacy snapshot must stay blocked"),
++      bindSnapshot: () => Effect.succeed({
++        binding: { connectionID: "local_fixture", tabGeneration: 1 },
++        read: () => Effect.sync(() => { reads++; return { content: "offline", truncated: false } }),
++      }),
++    })
++    const context = (id: string) => ({
++      sessionID, messageID: SessionMessage.ID.make("msg_authorized"),
++      id: Tool.CallID.make(id), agent: Agent.ID.make("test"), progress: () => Effect.void,
++    })
++    const first = context("call_approved")
++    expect((yield* BrowserTurn.withContext(first, caller.snapshotOnce({ context: first, tabID: "tab_local" }))).content)
++      .toBe("offline")
++    revokeBeforeConsume = true
++    const denied = context("call_revoked")
++    expect(Exit.isFailure(yield* Effect.exit(BrowserTurn.withContext(denied,
++      caller.snapshotOnce({ context: denied, tabID: "tab_local" }))))).toBe(true)
++    expect(reads).toBe(1)
 +  }),
 +)
 +
@@ -907,10 +954,10 @@ index 0000000000..aa3ef778e7
 +)
 diff --git a/packages/core/test/plugin/browser-capability.test.ts b/packages/core/test/plugin/browser-capability.test.ts
 new file mode 100644
-index 0000000000..293ba7aeca
+index 0000000000..0a8bd5467d
 --- /dev/null
 +++ b/packages/core/test/plugin/browser-capability.test.ts
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,196 @@
 +import { expect, test } from "bun:test"
 +import type { Context } from "@opencode/plugin/effect/plugin"
 +import { PluginBrowser } from "@opencode/core/plugin/browser"
@@ -1015,23 +1062,16 @@ index 0000000000..293ba7aeca
 +      Effect.gen(function* () {
 +        yield* granted.firstParty.register(granted.driver)
 +        expect(yield* granted.other.tabs({ sessionID })).toHaveLength(1)
-+        expect(yield* granted.other.snapshot({ sessionID, tabID: "tab_one" })).toEqual({
-+          content: "fixture page",
-+          truncated: false,
-+        })
++        expect(Exit.isFailure(yield* Effect.exit(granted.other.snapshot({ sessionID, tabID: "tab_one" })))).toBe(true)
 +      }),
 +    ),
 +  )
-+  expect(granted.calls).toEqual(["tabs", "snapshot"])
++  expect(granted.calls).toEqual(["tabs"])
 +  expect(granted.actions).toEqual([
 +    "browser:*",
 +    "browser_plugin:demo-plugin:tabs.list",
 +    "browser:*",
 +    "browser_plugin:demo-plugin:tabs.list",
-+    "browser:*",
-+    "browser_plugin:demo-plugin:snapshot",
-+    "browser:*",
-+    "browser_plugin:demo-plugin:snapshot",
 +  ])
 +  expect(Exit.isFailure(await Effect.runPromiseExit(granted.other.tabs({ sessionID })))).toBe(true)
 +})
@@ -1350,12 +1390,13 @@ index 0000000000..6e53adf475
 +})
 diff --git a/packages/core/test/plugin/browser-one-shot.test.ts b/packages/core/test/plugin/browser-one-shot.test.ts
 new file mode 100644
-index 0000000000..b072b711f5
+index 0000000000..6323fc2b9a
 --- /dev/null
 +++ b/packages/core/test/plugin/browser-one-shot.test.ts
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,259 @@
 +import { test, expect } from "bun:test"
 +import { PluginBrowser } from "@opencode/core/plugin/browser"
++import { BrowserLease } from "@opencode/core/plugin/browser-lease"
 +import { Tool as CoreTool } from "@opencode/core/tool"
 +import { Agent } from "@opencode/schema/agent"
 +import { BrowserTurn } from "@opencode/core/tool/browser-turn"
@@ -1380,7 +1421,7 @@ index 0000000000..b072b711f5
 +const directory = AbsolutePath.make("/test-workspace")
 +const location = Location.Ref.make({ directory, workspaceID: Workspace.ID.make("wrk_origin") })
 +
-+function fixture() {
++function fixture(withAuthority = true) {
 +  let reads = 0
 +  let binding = 0
 +  const grants: string[] = []
@@ -1390,6 +1431,12 @@ index 0000000000..b072b711f5
 +        Effect.sync(() => {
 +          grants.push(`${input.action}:${input.resources.join(",")}`)
 +        }),
++      ...(withAuthority ? { browserRead: BrowserLease.make({
++        authorize: (input) => Effect.sync(() => {
++          grants.push(`browserRead:${input.pluginID}:${input.pluginGeneration}:${input.agentID}:${input.action}:${input.sessionID}:${input.turnID}:${input.callID}:${input.connectionID}:${input.tabID}:${input.tabGeneration}`)
++        }),
++        live: () => true,
++      }) } : {}),
 +    },
 +    {
 +      location,
@@ -1462,10 +1509,38 @@ index 0000000000..b072b711f5
 +  expect(
 +    f.grants.some((item) =>
 +      item.includes(
-+        `browser_plugin:test-plugin:snapshot.once:wrk_origin:${sessionID}:${turn.messageID}:${turn.id}:local-driver-1:tab_local:0`,
++        `browserRead:test-plugin:`,
 +      ),
 +    ),
 +  ).toBe(true)
++})
++
++test("legacy plugin snapshot and missing authoritative Core lease are denied before any read", async () => {
++  const f = fixture(false)
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    yield* f.builtin.register(f.driver)
++    // Prior to the fix, the broad `permission.assert` stub allowed the read.
++    expect(Exit.isFailure(yield* Effect.exit(f.caller.snapshot({ sessionID, tabID: "tab_local" })))).toBe(true)
++    yield* BrowserTurn.withContext(turn, Effect.gen(function* () {
++      expect(Exit.isFailure(yield* Effect.exit(f.caller.snapshotOnce({ context: turn, tabID: "tab_local" })))).toBe(true)
++    }))
++  })))
++  expect(f.reads).toBe(0)
++})
++
++test("mutating the trusted tool agent cannot borrow a more privileged Core read principal", async () => {
++  const f = fixture()
++  const altered = { ...turn }
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    yield* f.builtin.register(f.driver)
++    yield* BrowserTurn.withContext(altered, Effect.gen(function* () {
++      altered.agent = "privileged" as never
++      expect(Exit.isFailure(yield* Effect.exit(f.caller.snapshotOnce({
++        context: altered, tabID: "tab_local",
++      })))).toBe(true)
++    }))
++  })))
++  expect(f.reads).toBe(0)
 +})
 +
 +test("cross-workspace fixture session cannot be granted even with a real tool turn", async () => {
@@ -1529,7 +1604,9 @@ index 0000000000..b072b711f5
 +  const resume = Deferred.makeUnsafe<void>()
 +  const f = fixture()
 +  const broker = PluginBrowser.make(
-+    { assert: () => Deferred.succeed(gate, undefined).pipe(Effect.andThen(Deferred.await(resume))) },
++    { assert: () => Effect.void,
++      browserRead: BrowserLease.make({ authorize: () =>
++        Deferred.succeed(gate, undefined).pipe(Effect.andThen(Deferred.await(resume))), live: () => true }) },
 +    { location, session: () => Effect.succeed(location) },
 +  )
 +  const owner = broker("opencode.browser", true)
@@ -1660,7 +1737,7 @@ index 91de480703..7dd3e1e9b9 100644
                      ),
                      Effect.ensuring(Effect.sync(() => entry.requests.delete(message.requestID))),
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
-index 4c6838c70f..fa652d37ce 100644
+index 4c6838c70f..8f14f69791 100644
 --- a/packages/plugin-browser/src/connection.ts
 +++ b/packages/plugin-browser/src/connection.ts
 @@ -12,7 +12,9 @@ type Attachment = {
@@ -1725,12 +1802,16 @@ index 4c6838c70f..fa652d37ce 100644
          inspect: () =>
            request(rpc, browser, action, tab, [], { inspect: true }).pipe(
              Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
-@@ -194,7 +215,27 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -194,7 +215,31 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              ),
            ),
          request: (files: readonly Browser.File[], target?: Browser.Target) =>
 -          request(rpc, browser, action, tab, files, { target }),
 +          Effect.gen(function* () {
++            // Legacy Code Mode snapshots never carry a Core Permission epoch or Desktop commit.
++            // Refuse this read; only snapshotOnce may issue a committed snapshot command.
++            if (action.type === "snapshot")
++              return yield* new Tool.Error({ message: "Legacy browser.snapshot lacks Core read authority; use snapshotOnce." })
 +            if (
 +              !active ||
 +              browsers.get(sessionID) !== browser ||
@@ -1754,7 +1835,7 @@ index 4c6838c70f..fa652d37ce 100644
        }
      }),
    }
-@@ -207,6 +248,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -207,6 +252,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
    tab: Browser.Tab | undefined,
    files: readonly Browser.File[],
    inspection: Pick<Browser.Command, "inspect" | "target">,
@@ -1762,7 +1843,7 @@ index 4c6838c70f..fa652d37ce 100644
  ) {
    const requestID = crypto.randomUUID()
    const pending = yield* Deferred.make<Browser.Result, Tool.Error>()
-@@ -214,9 +256,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -214,9 +260,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
      (action.type === "files.upload" || action.type === "files.drop") && !inspection.inspect
        ? { ...action, paths: files.map((file) => file.name) }
        : action
@@ -1921,10 +2002,10 @@ index 0000000000..cbfd5b5d12
 +})
 diff --git a/packages/plugin-browser/test/read-commit.test.ts b/packages/plugin-browser/test/read-commit.test.ts
 new file mode 100644
-index 0000000000..130647e6b0
+index 0000000000..07dff63c0b
 --- /dev/null
 +++ b/packages/plugin-browser/test/read-commit.test.ts
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,144 @@
 +import { expect, test } from "bun:test"
 +import { Deferred, Effect, Exit, Fiber, Stream } from "effect"
 +import { AbsolutePath } from "@opencode/schema/schema"
@@ -2042,6 +2123,16 @@ index 0000000000..130647e6b0
 +      requestID, ticket: command.readCommit }, caller)).toBe(false)
 +    expect(yield* commands["read.commit"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(true)
 +    yield* Fiber.interrupt(reading)
++  }))
++})
++
++test("legacy browser.snapshot cannot bypass Core-read/host-commit through target.request", async () => {
++  await harness(({ target, next }) => Effect.gen(function* () {
++    // On #118 the old browser tool dispatches this uncommitted RPC immediately.
++    const attempted = yield* target.request([]).pipe(Effect.exit, Effect.forkScoped({ startImmediately: true }))
++    const dispatched = yield* Effect.exit(Deferred.await(next).pipe(Effect.timeout("200 millis")))
++    expect(Exit.isFailure(dispatched)).toBe(true)
++    yield* Fiber.interrupt(attempted)
 +  }))
 +})
 +

@@ -4,11 +4,13 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `92BAE716752A7D48F4DA2D02E6014282C81DE1E2D939E3BFB4432E1AAECBD1BF`.
+Patch SHA-256: `17F31D57AD5E0BC1053BFC70975EAA088C60236EB602ECEA4E3A9D6512700BDE`.
 
 Follow-up to #110: [ADR 0004](../ADR/0004-core-permission-browser-read-epoch.md) adds a real, read-only `Permission.Service.browserRead` authority with policy-version invalidation and RED→GREEN Core integration tests. This ledger is **not invoked by Desktop or existing browser tools**, and cannot grant native writes.
 
 The stacked Desktop [read-only commit follow-up](../ADR/0004-v2-desktop-read-commit.fr.md) combines #114 and #115 into **one replayable upstream patch**: `snapshotOnce` uses a bounded, one-use `BrowserConnection` and Desktop `read.commit` handshake only for snapshots; core permission authority remains a separate reference, **not connected to the host commit**, and no writes are enabled. CI verifies both new test suites, Desktop typecheck and the separate loopback fake-chat Chromium E2E.
+
+Security follow-up [ADR 0005](../ADR/0005-native-read-authority-gate.fr.md) connects the real `Permission.Service.browserRead` lease to the Core `snapshotOnce` broker and rejects old plugin/Code Mode snapshot paths that would bypass the lease or Desktop `read.commit`. Other historical read tools remain outside this scoped guarantee; upstream hook/consent corrections in #120/#123 are integration prerequisites. No native writes are authorized.
 
 The next stacked Draft adds the **Core-only BrowserLease reference contract** and adversarial tests. Its non-integrated nature and the missing atomic Desktop grant consumption are recorded in [ADR 0003](../ADR/0003-v2-transactional-browser-grant-tcb.md). **No native read/write dispatch uses this new ledger yet**; prior `snapshotOnce` is unchanged.
 
