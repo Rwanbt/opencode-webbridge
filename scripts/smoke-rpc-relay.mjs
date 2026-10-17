@@ -27,6 +27,7 @@ async function freePort() {
 const tmp = await mkdtemp(join(tmpdir(), 'webbridge-rpc-fixture-'));
 // Never persist the journal inside the OpenCode workspace watched for reloads.
 const journalDir = await mkdtemp(join(tmpdir(), 'webbridge-rpc-journal-'));
+const witnessDir = await mkdtemp(join(tmpdir(), 'webbridge-rpc-witness-'));
 const secret = randomBytes(32).toString('hex');
 const password = randomBytes(32).toString('hex');
 const binding = { sessionID: 'fixture-session', tabID: 'fixture-tab', providerID: 'qwen', accountRef: 'fixture-account' };
@@ -54,6 +55,7 @@ try {
     OPENCODE_CONFIG_DIR: configDir, OPENCODE_DISABLE_PROJECT_CONFIG: 'true',
     OPENCODE_CONFIG_CONTENT: config, WEBBRIDGE_RELAY_ENABLE: '1', WEBBRIDGE_RELAY_TOKEN: secret,
     WEBBRIDGE_RELAY_JOURNAL_DIR: journalDir,
+    WEBBRIDGE_RELAY_WITNESS_DIR: witnessDir,
     OPENCODE_SERVER_PASSWORD: password,
   });
   const exe = binary();
@@ -106,8 +108,11 @@ try {
     throw new Error('native RPC relay returned incorrect state');
   }
   const persisted = await readFile(join(journalDir, 'journal.json'), 'utf8');
+  const witnessed = await readFile(join(witnessDir, 'witness.json'), 'utf8');
   if (!persisted.includes('"phase":"settled"') || persisted.includes('offline-only fixture prompt') ||
-      persisted.includes('RPC_BROWSER_FIXTURE_OK') || persisted.includes(secret)) {
+      persisted.includes('RPC_BROWSER_FIXTURE_OK') || persisted.includes(secret) ||
+      !JSON.parse(witnessed).journalMac || JSON.parse(witnessed).journalMac !== JSON.parse(persisted).mac ||
+      witnessed.includes(secret) || witnessed.includes('offline-only fixture prompt')) {
     throw new Error('native RPC relay journal absent, leaked data or not settled');
   }
   console.log('G3 native OpenCode RPC relay: PASS (submit -> take once -> complete -> result)');
@@ -124,4 +129,5 @@ try {
   }
   await rm(tmp, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
   await rm(journalDir, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
+  await rm(witnessDir, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
 }
