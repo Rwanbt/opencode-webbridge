@@ -16,6 +16,17 @@ test('readiness requires a positive result and stops retrying afterward', async 
   await assert.rejects(requireNativeClientReady(async () => true, 0), /invalid probe budget/);
 });
 
+test('third read-only client probe may recover a slow Windows handshake without submitting work', async () => {
+  let calls = 0;
+  const cold = async () => ++calls === 3;
+  // Old smoke used the two-probe default: both can time out on a loaded runner.
+  await assert.rejects(requireNativeClientReady(cold), /unavailable after 2/);
+  assert.equal(calls, 2);
+  calls = 0;
+  await requireNativeClientReady(cold, 3);
+  assert.equal(calls, 3, 'only bounded read-only GETs were retried, never a user turn');
+});
+
 test('native CLI probe refuses external addresses and invalid budgets before any spawn', async () => {
   for (const url of ['https://127.0.0.1:4000/', 'http://localhost:4000/',
     'http://example.com:4000/', 'http://127.0.0.1:4000/admin', 'http://127.0.0.1:4000/?x=1']) {

@@ -126,7 +126,10 @@ try {
   if (!ready) throw new Error('isolated OpenCode server startup failed');
   // Exercise the *same native CLI --server resolver* with an idempotent GET.
   // Do not retry `run`: once submitted, a timeout is an uncertain effect.
-  await requireNativeClientReady(() => probeNativeClient(bin, serverURL, temp, env));
+  // The isolated server can answer HTTP while a cold Windows CLI handshake is
+  // still slow under runner load. Only this idempotent GET may retry (max 3).
+  // NEVER retry `run`: an uncertain sent prompt may already have taken effect.
+  await requireNativeClientReady(() => probeNativeClient(bin, serverURL, temp, env), 3);
   await requireEmptyRelayReady(() => rpc('take', {}));
   if (useRealPage) {
     localPage = await openLocalChatPage();
