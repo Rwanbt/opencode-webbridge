@@ -1963,18 +1963,18 @@ index 108846d5ac..0ca9e11d0d 100644
      transform: (callback) =>
        providers.transform((editor) =>
 diff --git a/packages/gui-extensions/src/browser/pane.ts b/packages/gui-extensions/src/browser/pane.ts
-index 91de480703..521354877f 100644
+index 91de480703..d86a7279ae 100644
 --- a/packages/gui-extensions/src/browser/pane.ts
 +++ b/packages/gui-extensions/src/browser/pane.ts
 @@ -13,6 +13,7 @@ import { destinationOrigin, fileURLWithin, refusal } from "./policy"
  import { createRefs } from "./refs"
  import type { PaneEvent } from "./ipc"
  import { createBrowserRestoreStore } from "./restore"
-+import { desktopReadCommitGate } from "./read-commit-gate"
++import { desktopReadCommitGate, startCommittedRead } from "./read-commit-gate"
  
  type Target = { readonly server: string; readonly session: string; readonly restore?: Browser.State }
  
-@@ -238,7 +239,38 @@ export function createBrowserPane(input: {
+@@ -238,18 +239,52 @@ export function createBrowserPane(input: {
                    entry.requests.set(message.requestID, { abort })
                    yield* rpc.command({ ...attachment, requestID: message.requestID }, options).pipe(
                      Effect.flatMap((command) =>
@@ -1988,12 +1988,14 @@ index 91de480703..521354877f 100644
 +                            message: "Browser snapshot requires native read authorization." })
 +                          return
 +                        }
++                        let liveRead: (() => boolean) | undefined
 +                        if (command.readCommit) {
 +                          const live = () =>
 +                            command.action.type === "snapshot" &&
 +                            !abort.signal.aborted && !entry.abort.signal.aborted &&
 +                            entries.get(entry.binding) === entry && !entry.win.isDestroyed() &&
 +                            entry.tabs.get(command.action.tabID)?.generation === command.generation
++                          liveRead = live
 +                          if (!live()) {
 +                            reply(message.requestID, { type: "failure", code: "unavailable",
 +                              message: "Read-only commit refused: attachment or tab changed." })
@@ -2014,7 +2016,12 @@ index 91de480703..521354877f 100644
                          entry.requests.set(
                            message.requestID,
                            "tabID" in command.action ? { abort, tabID: command.action.tabID } : { abort },
-@@ -250,6 +282,7 @@ export function createBrowserPane(input: {
+                         )
+                         reply(
+                           message.requestID,
+-                          await execute(entry, command, abort.signal).then(
++                          await execute(entry, command, abort.signal, liveRead).then(
+                             (result) => ({ type: "success" as const, result }),
                              (cause: unknown) => browserFailure(command.action, cause),
                            ),
                          )
@@ -2022,14 +2029,37 @@ index 91de480703..521354877f 100644
                        }),
                      ),
                      Effect.ensuring(Effect.sync(() => entry.requests.delete(message.requestID))),
+@@ -528,7 +563,8 @@ export function createBrowserPane(input: {
+     return page
+   }
+ 
+-  async function execute(entry: Entry, command: Browser.Command, signal: AbortSignal) {
++  async function execute(entry: Entry, command: Browser.Command, signal: AbortSignal,
++    liveRead?: () => boolean) {
+     const action = command.action
+ 
+     if (signal.aborted)
+@@ -579,6 +615,12 @@ export function createBrowserPane(input: {
+     }
+ 
+     const page = entry.pages.get(action.tabID) ?? create(entry, true, undefined, tab)
++    if (action.type === "snapshot") {
++      if (!liveRead) throw new Error("Browser snapshot has no live native read authority")
++      const result = await startCommittedRead(page.ready, liveRead, () => page.execute(command, signal))
++      publishState(entry)
++      return result
++    }
+     await page.ready
+     const result = await page.execute(command, signal)
+     publishState(entry)
 diff --git a/packages/gui-extensions/src/browser/read-commit-gate.test.ts b/packages/gui-extensions/src/browser/read-commit-gate.test.ts
 new file mode 100644
-index 0000000000..07d138bde3
+index 0000000000..84f6859746
 --- /dev/null
 +++ b/packages/gui-extensions/src/browser/read-commit-gate.test.ts
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,49 @@
 +import { expect, test } from "bun:test"
-+import { desktopReadCommitGate } from "./read-commit-gate"
++import { desktopReadCommitGate, startCommittedRead } from "./read-commit-gate"
 +
 +test("direct IPC snapshot without native host read commit is denied before any effect", () => {
 +  let effects = 0
@@ -2052,12 +2082,37 @@ index 0000000000..07d138bde3
 +  }
 +  expect(desktopReadCommitGate("tabs.list", undefined)).toBe(true)
 +})
++
++test("revoking the Desktop tab while page.ready is pending prevents browser execution", async () => {
++  let release!: () => void
++  const ready = new Promise<void>((resolve) => { release = resolve })
++  let live = true
++  let effects = 0
++  const reading = startCommittedRead(ready, () => live, async () => {
++    effects++
++    return "untrusted page content"
++  })
++  live = false // Cancellation, navigation or tab generation replacement during readiness.
++  release()
++  await expect(reading).rejects.toThrow(/revoked/)
++  expect(effects).toBe(0)
++})
++
++test("a live committed read begins its driver once after readiness", async () => {
++  let effects = 0
++  const result = await startCommittedRead(Promise.resolve(), () => true, async () => {
++    effects++
++    return "offline fixture snapshot"
++  })
++  expect(result).toBe("offline fixture snapshot")
++  expect(effects).toBe(1)
++})
 diff --git a/packages/gui-extensions/src/browser/read-commit-gate.ts b/packages/gui-extensions/src/browser/read-commit-gate.ts
 new file mode 100644
-index 0000000000..96a8254930
+index 0000000000..8c30e0b1d0
 --- /dev/null
 +++ b/packages/gui-extensions/src/browser/read-commit-gate.ts
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,18 @@
 +/**
 + * Browser snapshots disclose page content. Never execute one from an IPC
 + * command unless the command carries a one-use Core/host read-commit ticket.
@@ -2066,6 +2121,15 @@ index 0000000000..96a8254930
 +export function desktopReadCommitGate(actionType: string, ticket: unknown): boolean {
 +  if (actionType === "snapshot") return typeof ticket === "string" && ticket.length > 0
 +  return ticket === undefined
++}
++
++/** The GUI may wait for a tab to load after read.commit. Revalidate *after*
++ * readiness and invoke the browser driver in the same JS turn as this check. */
++export async function startCommittedRead<T>(ready: Promise<unknown>, live: () => boolean,
++  execute: () => Promise<T>): Promise<T> {
++  await ready
++  if (live() !== true) throw new Error("Read-only Desktop attachment revoked before browser effect")
++  return execute()
 +}
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
 index 4c6838c70f..e902c8f6e4 100644
