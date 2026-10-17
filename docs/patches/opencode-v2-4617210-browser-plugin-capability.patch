@@ -3583,7 +3583,7 @@ index 0000000000..76c1a1def1
 +})
 diff --git a/packages/plugin-browser/test/first-attach-authority.test.ts b/packages/plugin-browser/test/first-attach-authority.test.ts
 new file mode 100644
-index 0000000000..4911e12bfb
+index 0000000000..d87088d9e7
 --- /dev/null
 +++ b/packages/plugin-browser/test/first-attach-authority.test.ts
 @@ -0,0 +1,67 @@
@@ -3631,7 +3631,7 @@ index 0000000000..4911e12bfb
 +    }, caller))
 +    expect(Exit.isFailure(tunnel)).toBe(true)
 +    if (Exit.isFailure(tunnel)) expect(Cause.pretty(tunnel.cause)).toContain("Browser attachment is unavailable")
-+  })) as Effect.Effect<void, unknown, never>)
++  })) as unknown as Effect.Effect<void, unknown, never>)
 +})
 +
 +test("Core-supplied trusted transport authority preserves the tabs metadata mirror", async () => {
@@ -3652,7 +3652,7 @@ index 0000000000..4911e12bfb
 +    yield* handlers.state({ ...claim, state: { tabs: [], focusedTabID: null } }, caller)
 +    expect(yield* scope.tabs(sessionID)).toEqual({ tabs: [], focusedTabID: null })
 +    yield* Fiber.interrupt(live)
-+  })) as Effect.Effect<void, unknown, never>)
++  })) as unknown as Effect.Effect<void, unknown, never>)
 +})
 diff --git a/packages/plugin-browser/test/read-commit.test.ts b/packages/plugin-browser/test/read-commit.test.ts
 new file mode 100644
