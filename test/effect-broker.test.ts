@@ -285,3 +285,39 @@ test('ticket expiry during awaited post-effect attestation is terminal uncertain
   if (!result.ok) assert.equal(result.status, 'uncertain');
   assert.equal(broker.get(op.operationID)?.status, 'uncertain');
 });
+
+test('host caller changing session while awaiting pre-attestation cannot retarget an effect', async () => {
+  const { broker, op, gate } = consentedFixture();
+  const mutable = { ...context() };
+  let effects = 0;
+  const result = await runAuthorizedEffect(
+    {
+      broker, gate, now: () => 1500,
+      authority: { attest: async (ctx) => {
+        mutable.sessionID = 'sess-intruder';
+        return { authorityEpoch: ctx.authorityEpoch, policyRevision: ctx.policyRevision };
+      } },
+    },
+    { operationID: op.operationID, context: mutable, execute: async () => { effects++; return 'unsafe'; } },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.status, 'refused');
+  assert.equal(effects, 0);
+  assert.equal(broker.get(op.operationID)?.status, 'consented');
+});
+
+test('host caller changing policy or deadline while effect awaits yields UNCERTAIN not success', async () => {
+  const { broker, op, gate } = consentedFixture();
+  const mutable = { ...context() };
+  const result = await runAuthorizedEffect(
+    { broker, gate, now: () => 1500, authority: allow },
+    { operationID: op.operationID, context: mutable, execute: async () => {
+      mutable.deadline = 20_000;
+      mutable.policyRevision = 'forged-policy';
+      return 'already-ran';
+    } },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.status, 'uncertain');
+  assert.equal(broker.get(op.operationID)?.status, 'uncertain');
+});

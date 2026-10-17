@@ -16,24 +16,34 @@ export async function listSessionIDs(url, headers) {
   return body.data.map((session) => session.id);
 }
 
-export async function durableSession(url, headers, sessionID, { expected, prompt }) {
+export async function durableSession(url, headers, sessionID, { expected, prompt },
+  { maxRetries = 20, intervalMs = 100 } = {}) {
   assert.match(sessionID, /^ses_[a-zA-Z0-9_-]+$/);
   const details = await readAPI(url, headers, '/api/session/' + encodeURIComponent(sessionID));
   assert.equal(details?.data?.id, sessionID);
-  const messages = await readAPI(url, headers,
-    '/api/session/' + encodeURIComponent(sessionID) + '/message?limit=100');
+  const path = '/api/session/' + encodeURIComponent(sessionID) + '/message?limit=100';
+  let messages = await readAPI(url, headers, path);
   assert.ok(Array.isArray(messages?.data), 'official message history missing');
   const text = (message) => (message.content ?? []).filter((part) => part.type === 'text')
     .map((part) => part.text).join('');
   assert.ok(messages.data.some((message) => message.type === 'user' &&
     typeof message.text === 'string' && message.text.includes(prompt)),
     'persisted native user prompt is missing');
-  const assistant = messages.data.filter((message) => message.type === 'assistant');
+  const completed = (list) => list.some((message) => message.type === 'assistant' &&
+    message.finish === 'stop' && text(message).includes(expected));
   if (expected) {
-    assert.ok(assistant.some((message) => message.finish === 'stop' && text(message).includes(expected)),
+    // CLI stdout may close just before its durable session commit. Observe an
+    // ACTUAL finish:stop with exact persisted content, never infer it from SSE.
+    for (let attempt = 0; !completed(messages.data) && attempt < maxRetries; attempt++) {
+      await pause(intervalMs);
+      messages = await readAPI(url, headers, path);
+      assert.ok(Array.isArray(messages?.data), 'official message history missing');
+    }
+    assert.ok(completed(messages.data),
       'finished native assistant text missing from persistent history');
   } else {
-    assert.ok(!assistant.some((message) => message.finish === 'stop' && text(message).includes('WEBBRIDGE_LOCAL_PAGE_OK:')),
+    assert.ok(!messages.data.some((message) => message.type === 'assistant' &&
+      message.finish === 'stop' && text(message).includes('WEBBRIDGE_LOCAL_PAGE_OK:')),
       'uncertain browser turn incorrectly persisted completed assistant result');
   }
   return { sessionID, messages: messages.data.length, assistantComplete: Boolean(expected) };
@@ -50,7 +60,9 @@ export async function verifyAfterRestart({ executable, env, temp, headers, url, 
   try {
     let loaded;
     for (let i = 0; i < 75 && child.exitCode === null; i++) {
-      try { loaded = await durableSession(url, headers, sessionID, { expected, prompt }); break; }
+      // Restart readiness is already independently polled here; avoid nesting
+      // two wait loops or accepting an incomplete assistant history.
+      try { loaded = await durableSession(url, headers, sessionID, { expected, prompt }, { maxRetries: 0 }); break; }
       catch { await pause(200); }
     }
     if (!loaded) throw new Error('G125 restarted native host failed to read persisted session: ' +

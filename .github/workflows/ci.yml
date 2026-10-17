@@ -27,6 +27,8 @@ jobs:
       - name: D01/D02 execute pinned official Desktop 2.0.32 packaged IPC refusal
         run: npm run check:d01d02
       - run: npm test
+      - name: G141 G135 Linux real ephemeral filesystem/Git and G138 hostile serialized JSON ingress
+        run: node --test dist/test/offline-readonly-tool-executor.test.js dist/test/tool-proposal-json-ingress.test.js
       - name: Deterministic offline package, upgrade, rollback and uninstall
         run: npm run preview:package
       - name: Packaged RPC fixture offline upgrade, tamper denial and rollback
@@ -111,6 +113,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: G141 G132 bounded official persisted finish proof, forged and missing receipts
+        run: node --test scripts/test-g125-persisted-session.mjs
       - name: Install exact official CLI 2.0.32, never replace system Desktop
         run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
       - name: Install ephemeral Linux Chromium shell
@@ -129,6 +133,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: G141 exact G131 native patch and bounded G125 persisted completion guard
+        run: node scripts/check-g119-cross-stream.mjs && node --test scripts/test-g125-persisted-session.mjs
       - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
       - name: Install isolated headless Chromium for localhost only
         run: npx playwright install --with-deps --only-shell chromium
@@ -158,6 +164,12 @@ jobs:
         run: node --test dist/test/effect-broker.test.js dist/test/tool-broker.test.js
       - name: G140 durable anti-replay fence restart/rollback/lock (local temp files only)
         run: node --test dist/test/durable-operation-fence.test.js
+      - name: G141 G135 Windows file-read closed + untrusted proposals (no Windows Git sandbox claim)
+        run: node --test '--test-name-pattern=file.read opens real regular Linux inode|malformed provenance/unknown or mutable actions' dist/test/offline-readonly-tool-executor.test.js
+      - name: G141 G138 bounded JSON hostile input and G139 authority snapshots
+        run: node --test dist/test/tool-proposal-json-ingress.test.js dist/test/authority-context.test.js dist/test/effect-broker.test.js
+      - name: G141 G142 nonresettable rate quota leases under clock/adversarial cancellation
+        run: node --test dist/test/rate-limiter.test.js
 
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
@@ -180,13 +192,13 @@ jobs:
       - name: Install upstream dependencies
         run: bun install --frozen-lockfile
         working-directory: ${{ runner.temp }}/opencode-v2
-      - name: G129 native G126 first-attach and RPC registration RED→GREEN plus G106 policy regressions
+      - name: G141 G137 exact G131 document finality + G126 provenance + G106 policy and one-shot native broker
         working-directory: ${{ runner.temp }}/opencode-v2
         run: |
           bun run --cwd packages/plugin typecheck
           bun run --cwd packages/plugin-browser typecheck
           bun run --cwd packages/core typecheck
           bun run --cwd packages/gui-extensions typecheck
-          (cd packages/core && bun test test/permission.test.ts test/permission-browser-lease.test.ts test/plugin/browser-lease.test.ts test/plugin/browser-capability.test.ts test/plugin/browser-rpc-provenance.test.ts)
-          (cd packages/plugin-browser && bun test test/read-commit.test.ts test/first-attach-authority.test.ts test/connection-location.test.ts)
+          (cd packages/core && bun test test/permission.test.ts test/permission-browser-lease.test.ts test/plugin/browser-lease.test.ts test/plugin/browser-one-shot.test.ts test/plugin/browser-capability.test.ts test/plugin/browser-rpc-provenance.test.ts)
+          (cd packages/plugin-browser && bun test test/read-commit.test.ts test/first-attach-authority.test.ts test/connection-location.test.ts test/attach-ownership.test.ts test/tunnel-provenance.test.ts)
           (cd packages/gui-extensions && bun test src/browser/read-commit-gate.test.ts)

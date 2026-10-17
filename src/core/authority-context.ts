@@ -49,53 +49,59 @@ const REQUIRED_FIELDS: (keyof AuthorityContext)[] = [
 ];
 
 export function buildAuthorityContext(input: Partial<AuthorityContext>): AuthorityBuildResult {
+  if (!input || typeof input !== 'object') return { ok: false, reason: 'invalid:shape' };
+  // Host-owned messages must already be parsed into plain data. Accessor or
+  // unexpected fields can otherwise run arbitrary web JS while validating.
+  let data: Record<string, unknown>;
+  try {
+    const proto = Object.getPrototypeOf(input);
+    if (proto !== Object.prototype && proto !== null) return { ok: false, reason: 'invalid:shape' };
+    const keys = Reflect.ownKeys(input);
+    if (keys.some((key) => typeof key !== 'string' || !REQUIRED_FIELDS.includes(key as keyof AuthorityContext)))
+      return { ok: false, reason: 'invalid:shape' };
+    const absent = REQUIRED_FIELDS.find((f) => !keys.includes(f));
+    if (absent) return { ok: false, reason: `missing:${absent}` };
+    if (keys.length !== REQUIRED_FIELDS.length) return { ok: false, reason: 'invalid:shape' };
+    data = Object.create(null) as Record<string, unknown>;
+    for (const f of REQUIRED_FIELDS) {
+      const d = Object.getOwnPropertyDescriptor(input, f);
+      if (!d) return { ok: false, reason: `missing:${f}` };
+      if (!('value' in d)) return { ok: false, reason: `invalid:accessor:${f}` };
+      data[f] = d.value;
+    }
+  } catch {
+    return { ok: false, reason: 'invalid:shape' };
+  }
   for (const f of REQUIRED_FIELDS) {
-    if (input[f] === undefined || input[f] === null) {
+    if (data[f] === undefined || data[f] === null) {
       return { ok: false, reason: `missing:${f}` };
     }
   }
   // All string fields must be opaque (no free-form injection).
   for (const f of REQUIRED_FIELDS) {
     if (f === 'deadline') continue;
-    const v = input[f];
+    const v = data[f];
     if (!isOpaque(v)) return { ok: false, reason: `invalid:${f}` };
   }
-  if (!isDeadline(input.deadline)) return { ok: false, reason: 'invalid:deadline' };
+  if (!isDeadline(data.deadline)) return { ok: false, reason: 'invalid:deadline' };
 
   // Validate IDs via the shared opaque checker where applicable (stricter subset).
   try {
-    assertOpaqueID(input.sessionID as string, 'sessionID');
-    assertOpaqueID(input.turnID as string, 'turnID');
-    assertOpaqueID(input.callID as string, 'callID');
-    assertOpaqueID(input.tabID as string, 'tabID');
+    assertOpaqueID(data.sessionID as string, 'sessionID');
+    assertOpaqueID(data.turnID as string, 'turnID');
+    assertOpaqueID(data.callID as string, 'callID');
+    assertOpaqueID(data.tabID as string, 'tabID');
   } catch (e) {
     return { ok: false, reason: (e as Error).message };
   }
 
-  const context: AuthorityContext = {
-    pluginID: input.pluginID as string,
-    pluginGeneration: input.pluginGeneration as string,
-    agentID: input.agentID as string,
-    sessionID: input.sessionID as string,
-    workspaceID: input.workspaceID as string,
-    worktreeID: input.worktreeID as string,
-    turnID: input.turnID as string,
-    callID: input.callID as string,
-    connectionID: input.connectionID as string,
-    connectionGeneration: input.connectionGeneration as string,
-    tabID: input.tabID as string,
-    tabGeneration: input.tabGeneration as string,
-    action: input.action as string,
-    policyRevision: input.policyRevision as string,
-    authorityEpoch: input.authorityEpoch as string,
-    ticketID: input.ticketID as string,
-    ticketNonce: input.ticketNonce as string,
-    deadline: input.deadline as number,
-  };
+  const context: AuthorityContext = Object.freeze(data) as unknown as AuthorityContext;
   return { ok: true, context };
 }
 
 export function isExpired(ctx: AuthorityContext, now: number): boolean {
+  if (!Number.isSafeInteger(now) || now < 0 ||
+      !Number.isSafeInteger(ctx.deadline) || ctx.deadline <= 0) return true;
   return now >= ctx.deadline;
 }
 
@@ -108,5 +114,5 @@ export function sameAuthority(a: AuthorityContext, b: AuthorityContext): boolean
     a.tabID === b.tabID && a.tabGeneration === b.tabGeneration &&
     a.action === b.action && a.policyRevision === b.policyRevision &&
     a.authorityEpoch === b.authorityEpoch && a.ticketID === b.ticketID &&
-    a.ticketNonce === b.ticketNonce;
+    a.ticketNonce === b.ticketNonce && a.deadline === b.deadline;
 }
