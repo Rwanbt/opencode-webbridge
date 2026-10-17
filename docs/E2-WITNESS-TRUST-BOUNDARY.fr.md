@@ -1,0 +1,9 @@
+# E2 indépendant — frontière physique du témoin (#90, SHA f67a113)
+
+**Contre-exemple RED Windows et Linux** : un chemin de témoin lexicalement extérieur, dont un **parent** est une jonction Windows ou un lien symbolique vers le journal, était accepté. Le témoin se retrouvait physiquement dans le journal, violant la condition de séparation. La vérification `realpathSync` des deux répertoires après création refuse maintenant ce cas. Un témoin réellement frère s'ouvre, se met à jour et se réouvre normalement (GREEN).
+
+**Crash interleaving** : avancer le témoin **avant** le `rename` du journal limite le risque de rejouer l'ancien état signé. Un crash entre les deux écritures laisse un couple incompatible, refusé à la réouverture. L'ordre inverse (journal nouveau, témoin ancien) est également refusé. Cela **n'est pas un commit atomique multi-fichiers** et impose une récupération manuelle ; un `fsync` de répertoire n'est notamment pas garanti sur Windows.
+
+**Limites de confiance non corrigibles par ce contrôle** : `realpathSync` établit une séparation de chemins au moment du contrôle, **pas** une protection de montage/ACL, contre un pivot concurrent de chemins, ou contre un adversaire qui peut écrire dans les deux stockages. La restauration coordonnée de deux anciens fichiers signés peut rester indétectable ; une ancienne copie valide de journal v1 combinée à la suppression de la configuration témoin ne peut pas être distinguée d'un déploiement v1 légitime par un vérificateur qui ne possède pas d'ancre de politique immuable externe. Une politique de stockage protégée/tiers de confiance et une ancre monotone indépendante restent nécessaires pour revendiquer de l'anti-rollback face à un adversaire physique.
+
+Tests locaux uniquement : aucun service web réel, aucun changement de configuration fournisseur, aucun outil de production activé.

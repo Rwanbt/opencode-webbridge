@@ -1,6 +1,6 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync,
-  readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+  readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
 type Evidence = { version: 1; bindingHash: string; revision: number; journalMAC: string };
@@ -28,6 +28,17 @@ export class DurableWitness {
     }
     mkdirSync(witnessDir, { recursive: true, mode: 0o700 });
     if (!lstatSync(witnessDir).isDirectory()) throw new Error('witness directory must be regular');
+    // An apparently external parent can be a symlink/junction back INTO the journal.
+    // Lexical `relative` alone does not define a filesystem trust boundary.
+    const physicalJournal = realpathSync(journalDir);
+    const physicalWitness = realpathSync(witnessDir);
+    const physical = relative(physicalJournal, physicalWitness);
+    const physicalReverse = relative(physicalWitness, physicalJournal);
+    if (!physical || !physicalReverse ||
+      (!physical.startsWith('..') && !isAbsolute(physical)) ||
+      (!physicalReverse.startsWith('..') && !isAbsolute(physicalReverse))) {
+      throw new Error('witness must be in a physically separate non-nested directory');
+    }
     const file = join(witnessDir, `${bindingHash}.json`);
     const witness = new DurableWitness(file, secret, bindingHash);
     if (!existsSync(file)) {
