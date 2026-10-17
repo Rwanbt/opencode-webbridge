@@ -94,3 +94,24 @@ test('host registration cannot change while bound; revocation blocks data, still
   host.unregister();
   await assert.rejects(host.gate.claim(binding), /unavailable/);
 });
+
+test('revocation during permission prompt prevents claim without invoking driver', async () => {
+  let notify!: () => void;
+  let resume!: () => void;
+  const waiting = new Promise<void>((resolve) => { notify = resolve; });
+  const approved = new Promise<void>((resolve) => { resume = resolve; });
+  const permission = { assert: async (input: { action: string }) => {
+    if (input.action === 'webbridge_browser') { notify(); await approved; }
+  } } as unknown as Pick<Plugin.Context['permission'], 'assert'>;
+  const gate = new BrowserHostCapability(permission);
+  const port = new FakeBrowserPort();
+  let consent = true;
+  const unregister = gate.register({ binding, port, consented: async () => consent });
+  const claiming = gate.claim(binding);
+  await waiting;
+  consent = false;
+  resume();
+  await assert.rejects(claiming, /consent absent/);
+  await assert.rejects(port.submit(binding, { turnID: 'turn_one', prompt: 'blocked' }), /not owned/);
+  unregister();
+});

@@ -49,6 +49,8 @@ export class BrowserHostCapability implements BrowserPort {
     await this.permission.assert({ sessionID, action: 'browser', resources: ['*'] });
     await this.permission.assert({ sessionID, action: 'webbridge_browser',
       resources: [`${host.binding.providerID}:${host.binding.tabID}`] });
+    // Approval may have waited for a user; consent can be revoked while it is pending.
+    if (!(await host.consented())) throw new Error('browser host consent absent');
   }
 
   async claim(binding: TabClaim): Promise<void> {
@@ -67,12 +69,14 @@ export class BrowserHostCapability implements BrowserPort {
   async submit(binding: TabClaim, request: TurnRequest): Promise<void> {
     const host = this.owned(binding, true);
     await this.authorize(host);
+    this.owned(binding, true);
     await host.port.submit(binding, request);
   }
 
   async events(binding: TabClaim, turnID: string, afterSeq: number): Promise<readonly TurnEvent[]> {
     const host = this.owned(binding, true);
     await this.authorize(host);
+    this.owned(binding, true);
     return host.port.events(binding, turnID, afterSeq);
   }
 
