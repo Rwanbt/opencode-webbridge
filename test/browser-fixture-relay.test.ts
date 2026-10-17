@@ -43,3 +43,18 @@ test('bridge returns generic 503 on invalid messages and never leaks session dat
     assert.equal(missing.status, 503);
   } finally { await server.close(); }
 });
+
+test('latest user multimodal request cannot fall back to an earlier text message', async () => {
+  let sends = 0;
+  const browser = new FakeBrowserPort((text) => { sends++; return `fixture:${text}`; });
+  await browser.claim(binding);
+  try {
+    const reply = browserFixtureResponder(browser, binding);
+    await assert.rejects(reply([
+      { role: 'user', content: 'outdated plain text' },
+      { role: 'assistant', content: 'prior reply' },
+      { role: 'user', content: [{ type: 'image_url', image_url: { url: 'file:///private' } }] },
+    ]), /unsupported|bounded|text/i);
+    assert.equal(sends, 0);
+  } finally { await browser.release(binding); }
+});

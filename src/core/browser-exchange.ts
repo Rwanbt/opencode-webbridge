@@ -1,4 +1,4 @@
-import type { BrowserPort, TabClaim, TurnRequest } from './browser-port.js';
+import { assertTextOnlyTurn, type BrowserPort, type TabClaim, type TurnRequest } from './browser-port.js';
 
 const MAX_EVENTS = 64;
 const MAX_TEXT = 16_000;
@@ -17,6 +17,8 @@ export async function exchangeBrowserTurn(
     throw new Error('poll limit out of bounds');
   }
 
+  // Reject unsupported media and unknown fields BEFORE any possible external effect.
+  assertTextOnlyTurn(request);
   // An uncertain send must be reconciled; automatic retry can duplicate a turn.
   await port.submit(claim, request);
 

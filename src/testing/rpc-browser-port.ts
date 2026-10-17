@@ -1,4 +1,4 @@
-import { assertOpaqueID, type BrowserPort, type TabClaim, type TurnEvent, type TurnRequest } from '../core/browser-port.js';
+import { assertOpaqueID, assertTextOnlyTurn, type BrowserPort, type TabClaim, type TurnEvent, type TurnRequest } from '../core/browser-port.js';
 
 export type RelayMethod = 'submit' | 'observe' | 'cancel';
 export type RelayCaller = (method: RelayMethod, input: { turnID: string; prompt?: string; afterSeq?: number }) => Promise<unknown>;
@@ -29,6 +29,7 @@ export class RpcBrowserFixturePort implements BrowserPort {
 
   async submit(binding: TabClaim, request: TurnRequest): Promise<void> {
     this.owned(binding);
+    assertTextOnlyTurn(request);
     const response = await this.rpc('submit', { turnID: request.turnID, prompt: request.prompt });
     if (!response || typeof response !== 'object' || !('accepted' in response) || response.accepted !== true) {
       throw new Error('RPC BrowserPort send was not accepted; reconcile before retry');

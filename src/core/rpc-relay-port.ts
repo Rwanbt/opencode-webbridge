@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { WEB_PROVIDER_CATALOG } from '../catalog.js';
-import { assertOpaqueID, type BrowserPort, type TabClaim, type TurnEvent, type TurnRequest } from './browser-port.js';
+import { assertOpaqueID, assertTextOnlyTurn, type BrowserPort, type TabClaim, type TurnEvent, type TurnRequest } from './browser-port.js';
 import type { DurableRelayJournal } from './durable-relay-journal.js';
 
 type Job = { readonly turnID: string; readonly prompt: string; claimed: boolean; events: TurnEvent[] };
@@ -47,8 +47,7 @@ export class RpcRelayPort implements BrowserPort {
 
   async submit(binding: TabClaim, request: TurnRequest): Promise<void> {
     this.owned(binding);
-    assertOpaqueID(request.turnID, 'turnID');
-    if (!request.prompt || request.prompt.length > 16_000) throw new Error('relay prompt out of bounds');
+    assertTextOnlyTurn(request);
     if (this.jobs.has(request.turnID)) throw new Error('relay turn already submitted');
     if ([...this.jobs.values()].some((job) => !terminal(job))) throw new Error('relay already busy');
     if (this.jobs.size >= 16) throw new Error('relay journal full: restart/reconcile required');

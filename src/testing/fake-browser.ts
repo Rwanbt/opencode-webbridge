@@ -1,5 +1,5 @@
 import { WEB_PROVIDER_CATALOG } from '../catalog.js';
-import { assertOpaqueID, type BrowserPort, type TabClaim, type TurnEvent, type TurnRequest } from '../core/browser-port.js';
+import { assertOpaqueID, assertTextOnlyTurn, type BrowserPort, type TabClaim, type TurnEvent, type TurnRequest } from '../core/browser-port.js';
 
 type StoredTurn = { readonly prompt: string; readonly events: readonly TurnEvent[] };
 type StoredTab = { readonly owner: TabClaim; readonly turns: Map<string, StoredTurn> };
@@ -36,10 +36,7 @@ export class FakeBrowserPort implements BrowserPort {
 
   async submit(binding: TabClaim, request: TurnRequest): Promise<void> {
     const tab = this.owned(binding);
-    assertOpaqueID(request.turnID, 'turnID');
-    if (typeof request.prompt !== 'string' || request.prompt.length === 0 || request.prompt.length > MAX_PROMPT) {
-      throw new Error('prompt length out of bounds');
-    }
+    assertTextOnlyTurn(request);
     if (tab.turns.has(request.turnID)) throw new Error('turn already submitted: reconcile before retry');
     const answer = this.fixture(request.prompt);
     if (typeof answer !== 'string' || answer.length > MAX_PROMPT) throw new Error('fixture output out of bounds');
