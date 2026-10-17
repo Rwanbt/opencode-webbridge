@@ -9,11 +9,13 @@ export async function* streamBrowserTurn(
   claim: TabClaim,
   request: TurnRequest,
   maxPolls = 4,
+  signal?: AbortSignal,
 ): AsyncGenerator<string> {
   if (!Number.isSafeInteger(maxPolls) || maxPolls < 1 || maxPolls > 16) {
     throw new Error('poll limit out of bounds');
   }
 
+  if (signal?.aborted) throw new Error('browser turn aborted before submit');
   // An uncertain send must be reconciled; automatic retry can duplicate a turn.
   await port.submit(claim, request);
 
@@ -21,6 +23,7 @@ export async function* streamBrowserTurn(
   let count = 0;
   let output = '';
   for (let poll = 0; poll < maxPolls; poll++) {
+    if (signal?.aborted) throw new Error('browser turn aborted');
     const events = await port.events(claim, request.turnID, seq);
     if (!Array.isArray(events) || events.length > MAX_EVENTS) throw new Error('invalid event batch');
     const fragments: string[] = [];
@@ -49,7 +52,12 @@ export async function* streamBrowserTurn(
       }
     }
     // Validate the entire frame batch before exposing any untrusted partial text.
-    for (const fragment of fragments) yield fragment;
+    // A fragment that arrives after abandonment must never be surfaced.
+    if (signal?.aborted) throw new Error('browser turn aborted: late fragment rejected');
+    for (const fragment of fragments) {
+      if (signal?.aborted) throw new Error('browser turn aborted: late fragment rejected');
+      yield fragment;
+    }
     if (finished) return;
   }
   // No completion: explicit uncertain state. Never report a partial response as final.
