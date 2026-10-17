@@ -28,6 +28,7 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
       let connection;
       let companion;
       let error;
+      let cancelled = false;
       let active = true;
       let accepted = 0;
       let progress = 0;
@@ -64,6 +65,10 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
                 if (chunks.length !== 3 || chunks.join('') !== EXPECTED)
                   throw new Error('G99 browser response incomplete');
                 return;
+              } else if (event.kind === 'cancelled' && scenario === 'tab-change' &&
+                chunks.length === 1) {
+                cancelled = true;
+                return;
               } else throw new Error('G99 unexpected terminal state');
             }
             await delay(40);
@@ -75,6 +80,7 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
           for (let spin = 0; spin < 160; spin++) {
             if (error) throw error;
             while (cursor < chunks.length) yield chunks[cursor++];
+            if (cancelled) throw new Error('G100 cancelled native SSE without DONE');
             if (cursor === 3) {
               await turnStarted;
               if (error) throw error;
