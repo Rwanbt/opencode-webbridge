@@ -38,13 +38,15 @@ async function smokeNative(profile, env, temp, executable, version) {
   const sandbox = { ...env, OPENCODE_CONFIG_DIR: configDir, OPENCODE_CONFIG_CONTENT: config,
     OPENCODE_SERVER_PASSWORD: password, WEBBRIDGE_G81_TEST_ONLY: '1', WEBBRIDGE_G81_SECRET: secret };
   const port = await freePort();
-  const server = spawn(executable, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], {
+  const server = spawn(executable, ['serve', '--print-logs', '--log-level', 'debug',
+    '--hostname', '127.0.0.1', '--port', String(port)], {
     cwd: temp, env: sandbox, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     shell: process.platform === 'win32' && /\.cmd$/i.test(executable),
   });
   let diagnostic = '';
+  let inventorySummary = 'none';
   for (const stream of [server.stdout, server.stderr]) {
-    stream.on('data', (data) => { diagnostic = (diagnostic + data.toString('utf8')).slice(-1000); });
+    stream.on('data', (data) => { diagnostic = (diagnostic + data.toString('utf8')).slice(-5000); });
   }
   const url = `http://127.0.0.1:${port}`;
   const headers = {
@@ -58,6 +60,7 @@ async function smokeNative(profile, env, temp, executable, version) {
         const response = await fetch(`${url}/api/plugin`, { headers, signal: AbortSignal.timeout(600) });
         if (response.ok) {
           const inventory = await response.json();
+          inventorySummary = JSON.stringify(inventory).slice(-1400);
           registered = Array.isArray(inventory) && inventory.some((item) =>
             item?.id === fixture.id && item?.state?.status === 'active');
           if (registered) break;
@@ -65,7 +68,7 @@ async function smokeNative(profile, env, temp, executable, version) {
       } catch { /* bounded native startup */ }
       await pause(200);
     }
-    if (!registered) throw new Error('native G81 installed plugin not active');
+    if (!registered) throw new Error(`native G81 installed plugin not active; inventory=${inventorySummary}`);
     const request = (scope, nonce, capability = secret) =>
       fetch(`${url}/api/rpc/webbridge-g81-package/challenge`, {
         method: 'POST', headers, body: JSON.stringify({ input: { secret: capability, scope, nonce } }),
@@ -95,7 +98,9 @@ async function smokeNative(profile, env, temp, executable, version) {
     return { version, nativeRpc: true, wrongScopeDenied: true, wrongSecretDenied: true, replayDenied: true };
   } catch (error) {
     const clean = (diagnostic + String(error)).replaceAll(password, '[REDACTED]').replaceAll(secret, '[REDACTED]');
-    throw new Error(`native G81 RPC package check failed: ${clean.slice(-1200)}`);
+    const significant = clean.split(/\r?\n/).filter((line) =>
+      /plugin|rpc|error|failed|warn|active|inventory/i.test(line)).slice(-14).join('\n');
+    throw new Error(`native G81 RPC package check failed: ${significant.slice(-2400)}`);
   } finally {
     if (server.exitCode === null) {
       if (process.platform === 'win32' && server.pid) {
