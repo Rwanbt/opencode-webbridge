@@ -15,8 +15,8 @@
     "76": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/76","headSHA":"ec7e9dd6adb161b3fd1828c1e7b563c00cd192f1","review":"draft-not-merged"},
     "77": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/77","headSHA":"212cb761f63e4e4ecd68af379c931a7f013d895a","review":"draft-not-merged"},
     "78": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/78","headSHA":"26136034084c16b634d8a12aaa8bb7b432b6c4a2","review":"draft-not-merged"},
-    "79": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/79","headSHA":"03d557783d20cd828827571722bfd98a4e557358","review":"draft-not-merged"},
-    "80": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/80","headSHA":"d5fb99300bc208294925528f22e5594a295b79c0","review":"draft-not-merged"}
+    "79": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/79","headSHA":"77942d4b108830caa8e791d237aa8947654fede1","review":"draft-not-merged"},
+    "80": {"url":"https://github.com/Rwanbt/opencode-webbridge/pull/80","headSHA":"3bf8cf59943c96343e2457868c5a778107c3f32a","review":"draft-not-merged"}
   },
   "stories": [
     {"id":"US-E0-01","issue":13,"state":"partial","criteria":["documentation-evidenced","unverified"],"prs":[67,78]},
