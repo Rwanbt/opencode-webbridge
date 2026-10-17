@@ -1,0 +1,23 @@
+# G8 — Conditions des fournisseurs et contrat d'adaptateur
+
+**Revue : 17 octobre 2026. Portée : interfaces web grand public, utilisateur EEE ; pas les API ni les produits commerciaux.** Avis d'ingénierie prudent, pas un avis juridique ni une autorisation des fournisseurs. Les CGU peuvent changer. Une authentification réussie et le consentement local d'un utilisateur ne remplacent jamais l'autorisation contractuelle du service.
+
+| Fournisseur | Conditions officielles et date | Accès web automatisé (lecture/réponse) | Envoi web automatisé | Outils et streaming via WebBridge |
+| --- | --- | --- | --- | --- |
+| ChatGPT | [OpenAI EEE](https://openai.com/fr-FR/policies/eu-terms-of-use/), mise à jour 16/01/2026 | **Bloqué** : extraction automatique ou programmatique des données / sorties interdite, rubrique « Ce que vous ne pouvez pas faire » | Non établi ; bloqué | Bloqués / non vérifiés |
+| DeepSeek | [DeepSeek Terms](https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html), 27/03/2026 | **Bloqué** : §3.5(3), capture/copie du contenu y compris via robots et programmes automatiques | Non établi ; bloqué | Bloqués / non vérifiés |
+| Gemini | [Google Terms](https://policies.google.com/terms?hl=en-GB), en vigueur 30/07/2026 ; [services spécifiques](https://policies.google.com/terms/service-specific?hl=en) | **Conditionnel, non vérifié** : interdiction des accès automatiques contraires aux instructions lisibles par machine ; pas d'autorisation identifiée pour ce bridge | Non établi ; bloqué | Bloqués / non vérifiés |
+| Qwen | [Qwen Terms](https://qwen.ai/termsservice), 19/05/2026 ; [usage policy](https://chat.qwen.ai/legal-agreement/usage-policy), 09/04/2026 | **Inconnu** : comptes personnels, règles anti-abus ; aucune permission explicite pour ce transport identifiée | Non établi ; bloqué | Bloqués / non vérifiés |
+| Mistral **Vibe** (ancien « Le Chat ») | [Conditions EEE](https://legal.mistral.ai/terms/eu-consumers-terms-of-service/), en vigueur 08/10/2026 | **Bloqué** : §3(f), extraction uniquement via les fonctionnalités permises du produit | Non établi ; bloqué ; §3(g) soumet l'intégration avec produit tiers à une autorisation écrite préalable dans les cas visés | Bloqués / non vérifiés |
+
+[Mistral confirme le changement de nom « Le Chat » → « Vibe » au 12/08/2026](https://help.mistral.ai/fr/articles/682992-le-chat-devient-vibe). Le catalogue conserve l'identifiant de compatibilité `mistral` ; les revues futures doivent porter sur **Vibe** et sa surface réellement intégrable.
+
+## Garde commune
+
+`PROVIDER_POLICY_PROFILES` bloque en permanence toute automatisation tant qu'une nouvelle revue de code sourcée n'a pas explicitement inscrit **chaque direction** (« input » et « output ») comme approuvée. `assessAdapter` exige ensuite la concordance stricte `providerID`, `sessionID`, `accountRef`, `turnID` et un consentement affirmatif limité à **un tour texte**, en plus des preuves `ProviderGate` existantes (politique, transport, navigateur, authentification, consentement, capacités). `authorizedAdapterEvents` constitue l'enveloppe d'exécution avec blocage avant l'appel au fournisseur et validation de la progression.
+
+Le contrat `ProviderAdapter` expose `inspect`, `execute` (progression structurée) et `abort`. Les états distinguent authentification perdue, challenge humain, limite de débit, mise en page non reconnue, déconnexion, incertitude. Le code de cet incrément ne pilote aucun site. Les sorties partielles restent des *prévisualisations* ; une demande d'annulation produit `abort-pending`, sans promettre l'absence d'effet. Après incertitude, réconciliation humaine/état journal requis avant toute répétition ; aucun nouvel envoi automatique. Les navigateurs conservent les identifiants de connexion, le bridge ne reçoit que des références opaques de compte / onglet / session.
+
+## Validation manquante avant activation
+
+Pour tout fournisseur : preuve d'une voie d'intégration autorisée pour son produit grand public et son territoire, nature des droits applicables, consentement documenté, transport navigateur officiellement pris en charge, sécurité des identifiants, tests de bout en bout sur fixtures, suivi des changements de CGU. Pour Gemini, vérifier les instructions du service cible et toute règle spécifique pertinente ; pour Qwen, obtenir une clarification sur l'accès programmatique. Pour ChatGPT/DeepSeek/Mistral, résoudre expressément les restrictions recensées avec les fournisseurs avant de revoir le statut.

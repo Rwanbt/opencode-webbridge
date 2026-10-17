@@ -2,7 +2,7 @@
 
 **Web accounts. Native agents. One bridge.**
 
-OpenCode WebBridge is an experimental, open-source project to connect **OpenCode 2** to user-authenticated web chat interfaces without requiring inference API keys. The five planned adapters are **ChatGPT, DeepSeek, Gemini, Qwen and Mistral Le Chat**.
+OpenCode WebBridge is an experimental, open-source project to connect **OpenCode 2** to user-authenticated web chat interfaces without requiring inference API keys. The five planned adapters are **ChatGPT, DeepSeek, Gemini, Qwen and Mistral Vibe (formerly Le Chat)**.
 
 > **Status: architecture and plugin scaffold only.** No provider transport or website automation is implemented, no account connection is performed, and no web-chat model is available through OpenCode yet. Do not install this expecting functional model inference.
 
@@ -22,13 +22,13 @@ OpenCode WebBridge is an experimental, open-source project to connect **OpenCode
 | `deepseek` | https://chat.deepseek.com | Planned; not connected |
 | `gemini` | https://gemini.google.com | Planned; not connected |
 | `qwen` | https://chat.qwen.ai | Planned; not connected |
-| `mistral` | https://chat.mistral.ai | Planned; not connected |
+| `mistral` | https://chat.mistral.ai | Planned; not connected (Vibe, formerly Le Chat) |
 
 Websites and availability can change. A displayed website is **not** evidence that automated use is permitted. Provider functionality must remain disabled until verified.
 
 ## Architecture
 
-See [Global production plan (FR)](docs/PLAN-GLOBAL.fr.md), [Architecture and milestones](docs/ARCHITECTURE.md), [Security policy](SECURITY.md), [French roadmap](docs/ROADMAP.fr.md), and [Backlog (9 epics / 54 user stories)](planning/backlog.json). The backlog is validated in CI and synchronized to GitHub issues via `npm run issues:sync` by authorized maintainers.
+See [Global production plan (FR)](docs/PLAN-GLOBAL.fr.md), [Architecture and milestones](docs/ARCHITECTURE.md), [provider terms and adapter contract](docs/G8-PROVIDER-POLICIES.fr.md), [Security policy](SECURITY.md), [French roadmap](docs/ROADMAP.fr.md), and [Backlog (9 epics / 54 user stories)](planning/backlog.json). The backlog is validated in CI and synchronized to GitHub issues via `npm run issues:sync` by authorized maintainers.
 
 The intended design is:
 
