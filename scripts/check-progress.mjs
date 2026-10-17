@@ -34,7 +34,7 @@ for (const entry of progress.stories) {
   }
 }
 for (const [number, proof] of Object.entries(progress.proofPRs)) {
-  assert(Number(number) >= 67 && Number(number) <= 93, `unknown PR ${number}`);
+  assert(Number(number) >= 67 && Number(number) <= 107, `unknown PR ${number}`);
   assert(proof.url === `https://github.com/Rwanbt/opencode-webbridge/pull/${number}`, `wrong PR URL ${number}`);
   assert(/^[0-9a-f]{40}$/.test(proof.headSHA), `invalid SHA ${number}`);
   assert(proof.review === 'draft-not-merged', `unsupported merge/readiness assertion ${number}`);
