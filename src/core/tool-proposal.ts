@@ -7,6 +7,7 @@
  */
 
 import { assertOpaqueID } from './browser-port.js';
+import { normalizeWorkspacePath } from './workspace-path.js';
 
 export type ToolScope = {
   readonly sessionID: string;
@@ -50,11 +51,10 @@ function isOpaque(v: unknown): v is string {
 }
 
 function safePath(p: unknown): p is string {
-  if (typeof p !== 'string' || p.length === 0 || p.length > 4096) return false;
-  // Reject traversal, absolute escapes, and null bytes.
-  if (p.includes('\u0000') || p.includes('..')) return false;
-  if (p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p)) return false;
-  return true;
+  // Strict workspace-relative contract: UNC/absolute/drive forms, traversal,
+  // ADS colons, trailing dot/space aliasing, device names and control
+  // characters are all rejected; benign separator forms are canonicalized.
+  return normalizeWorkspacePath(p) !== null;
 }
 
 function validateArgs(action: ReadOnlyAction, args: unknown): args is Readonly<Record<string, unknown>> {
@@ -116,10 +116,15 @@ export function validateToolProposal(raw: unknown, scope: ToolScope): ValidateRe
     return { ok: false, reason: 'scope-mismatch' };
   }
 
-  // Path traversal check (defence in depth, already in validateArgs).
-  if (action === 'file.read') {
-    const path = (r.args as Record<string, unknown>).path;
-    if (!safePath(path)) return { ok: false, reason: 'path-traversal' };
+  // Path traversal check (defence in depth, already in validateArgs) and
+  // canonicalization: the validated proposal only ever carries the strict
+  // posix relative form, never a raw caller-supplied string.
+  const rawArgs = r.args as Record<string, unknown>;
+  const args: Record<string, unknown> = { ...rawArgs };
+  if (action === 'file.read' || (action === 'git.diff' && rawArgs.path !== undefined)) {
+    const normalized = normalizeWorkspacePath(rawArgs.path);
+    if (normalized === null) return { ok: false, reason: 'path-traversal' };
+    args.path = normalized;
   }
 
   return {
@@ -127,7 +132,7 @@ export function validateToolProposal(raw: unknown, scope: ToolScope): ValidateRe
     proposal: {
       version: 1,
       action,
-      args: Object.freeze({ ...(r.args as Record<string, unknown>) }),
+      args: Object.freeze(args),
       provenance: {
         sessionID: p.sessionID as string,
         agentID: p.agentID as string,
