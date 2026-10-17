@@ -71,6 +71,7 @@ let browserCompanion;
 let serverError = '';
 let active = true;
 let companionJobs = 0;
+let browserProgressChunks = 0;
 let sawPrompt = false;
 let rpcCalls = 0;
 let companionFailure;
@@ -157,15 +158,19 @@ try {
       companionJobs++;
       if (typeof next.prompt !== 'string') throw new Error('companion got invalid prompt');
       if (next.prompt.includes('WEBBRIDGE_G4_QUESTION')) sawPrompt = true;
+      const emitProgress = async (chunk) => {
+        const partial = await rpc('progress', { turnID: next.turnID, chunk });
+        if (partial.accepted !== true) throw new Error('companion progress rejected');
+        if (useRealPage) browserProgressChunks++;
+      };
       const answer = useRealPage
-        ? await submitLocalPageTurn(browserCompanion.page, localPage.url, next.prompt)
+        ? await submitLocalPageTurn(browserCompanion.page, localPage.url, next.prompt, emitProgress)
         : EXPECTED;
       if (useRealPage && !answer.includes('WEBBRIDGE_G4_QUESTION')) {
         throw new Error('browser page did not echo the submitted prompt');
       }
       // Prove an ordered progress event over the actual OpenCode native RPC.
-      const progressive = await rpc('progress', { turnID: next.turnID, chunk: answer });
-      if (progressive.accepted !== true) throw new Error('companion progress rejected');
+      if (!useRealPage) await emitProgress(answer);
       const done = await rpc('complete', { turnID: next.turnID, response: answer });
       if (done.accepted !== true) throw new Error('companion completion rejected');
     }
@@ -189,10 +194,11 @@ try {
   await companion;
   await portAdapter.release(binding);
   if (companionFailure) throw companionFailure;
-  if (result !== 0 || !output.includes(EXPECTED) || companionJobs < 1 || !sawPrompt || fake.requests() < 1) {
+  if (result !== 0 || !output.includes(EXPECTED) || companionJobs < 1 || !sawPrompt || fake.requests() < 1 ||
+      (useRealPage && browserProgressChunks < companionJobs * 2)) {
     throw new Error(`native session or relay incomplete: exit=${result}; jobs=${companionJobs}; receivedPrompt=${sawPrompt}; HTTP=${fake.requests()}`);
   }
-  console.log(`G4 native model-to-RPC-to-${useRealPage ? 'real-local-browser' : 'fake-companion'} E2E PASS: HTTP=${fake.requests()}, companionJobs=${companionJobs}, RPC=${rpcCalls}, response=true`);
+  console.log(`G4 native model-to-RPC-to-${useRealPage ? 'real-local-browser' : 'fake-companion'} E2E PASS: HTTP=${fake.requests()}, companionJobs=${companionJobs}, DOM-progress=${browserProgressChunks}, RPC=${rpcCalls}, response=true`);
 } catch (error) {
   process.exitCode = 1;
   const safe = String(error).replaceAll(secret, '[REDACTED]').replaceAll(password, '[REDACTED]').replaceAll(modelToken, '[REDACTED]');

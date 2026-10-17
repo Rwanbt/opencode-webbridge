@@ -17,8 +17,12 @@ document.getElementById('chat').addEventListener('submit', (event) => {
   response.dataset.state = 'pending';
   response.textContent = '';
   setTimeout(() => {
-    response.textContent = 'WEBBRIDGE_LOCAL_PAGE_OK:' + prompt;
-    response.dataset.state = 'finished';
+    response.textContent = 'WEBBRIDGE_LOCAL_PAGE_OK:' + prompt.slice(0, Math.max(1, Math.floor(prompt.length / 2)));
+    response.dataset.state = 'streaming';
+    setTimeout(() => {
+      response.textContent = 'WEBBRIDGE_LOCAL_PAGE_OK:' + prompt;
+      response.dataset.state = 'finished';
+    }, 250);
   }, 15);
 });
 </script>

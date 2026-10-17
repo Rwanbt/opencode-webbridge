@@ -15,8 +15,18 @@ export async function openLocalBrowserCompanion(): Promise<{
   } catch (error) { await browser.close(); throw error; }
 }
 
-/** Browser-side fixture driver: refuses all URLs except one explicit loopback page. */
-export async function submitLocalPageTurn(page: Page, pageURL: string, prompt: string): Promise<string> {
+/** A redrawn/rewritten output is not a continuation: never append guessed data. */
+export function monotonicDelta(previous: string, current: string): string {
+  if (typeof previous !== 'string' || typeof current !== 'string' ||
+      !current.startsWith(previous) || current.length <= previous.length || current.length > 16_100) {
+    throw new Error('non-monotonic browser DOM output: reconcile before retry');
+  }
+  return current.slice(previous.length);
+}
+
+/** Browser-side fixture driver: only one exact localhost page and two observable DOM phases. */
+export async function submitLocalPageTurn(page: Page, pageURL: string, prompt: string,
+  onProgress?: (chunk: string) => Promise<void>): Promise<string> {
   const url = new URL(pageURL);
   if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port ||
       url.pathname !== '/' || url.search || url.hash || url.username || url.password) {
@@ -30,10 +40,17 @@ export async function submitLocalPageTurn(page: Page, pageURL: string, prompt: s
   if (page.url() !== pageURL) throw new Error('unexpected browser navigation');
   await page.getByRole('textbox', { name: 'Prompt' }).fill(prompt);
   await page.getByRole('button', { name: 'Send' }).click();
+  await page.locator('[role="status"][data-state="streaming"]').waitFor({ timeout: 6_000 });
+  const partial = await page.locator('[role="status"]').textContent();
+  if (!partial || !partial.startsWith('WEBBRIDGE_LOCAL_PAGE_OK:')) {
+    throw new Error('invalid local page progress');
+  }
+  if (onProgress) await onProgress(monotonicDelta('', partial));
   await page.locator('[role="status"][data-state="finished"]').waitFor({ timeout: 6_000 });
   const output = await page.locator('[role="status"]').textContent();
   if (!output || !output.startsWith('WEBBRIDGE_LOCAL_PAGE_OK:') || output.length > 16_100) {
     throw new Error('invalid local page response');
   }
+  if (onProgress) await onProgress(monotonicDelta(partial, output));
   return output;
 }
