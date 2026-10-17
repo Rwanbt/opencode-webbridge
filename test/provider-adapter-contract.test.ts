@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { WEB_PROVIDER_CATALOG } from '../src/catalog.js';
 import {
   PROVIDER_POLICY_PROFILES, assessAdapter, advanceAdapterTurn, authorizedAdapterEvents, startAdapterTurn,
+  validatedAdapterProgress,
   type AdapterContext, type AdapterProgress,
 } from '../src/core/provider-adapter-contract.js';
 import type { ProviderGate } from '../src/core/provider-gate.js';
@@ -132,4 +133,29 @@ test('rejects reordered, foreign and oversized events and fraudulent healthy err
   assert.throws(() => advanceAdapterTurn(state, event('complete', 1, 'x'.repeat(16_001))), /invalid completion/);
   assert.throws(() => advanceAdapterTurn(state, { kind: 'error', turnID: 'turn1', seq: 1, health: 'ready' }), /healthy/);
   assert.equal(advanceAdapterTurn(state, event('error', 1)).phase, 'failed');
+});
+
+test('terminal completion is never exposed before stream closure validates trailing output', async () => {
+  async function* invalid(): AsyncIterable<AdapterProgress> {
+    yield event('partial', 1, 'hello');
+    yield event('complete', 2, 'hello');
+    yield event('partial', 3, 'injected trailing text');
+  }
+  const observed: AdapterProgress[] = [];
+  await assert.rejects(async () => {
+    for await (const item of validatedAdapterProgress(invalid(), 'turn1')) observed.push(item);
+  }, /invalid adapter transition|after terminal/);
+  assert.deepEqual(observed.map((item) => item.kind), ['partial']);
+});
+
+test('terminal producer throw cannot yield a false successful reply', async () => {
+  async function* broken(): AsyncIterable<AdapterProgress> {
+    yield event('complete', 1, 'looks complete');
+    throw new Error('browser transport lost after completion marker');
+  }
+  const observed: AdapterProgress[] = [];
+  await assert.rejects(async () => {
+    for await (const item of validatedAdapterProgress(broken(), 'turn1')) observed.push(item);
+  }, /browser transport lost/);
+  assert.equal(observed.length, 0);
 });

@@ -108,14 +108,25 @@ export async function* authorizedAdapterEvents(
   if (adapter.id !== context.binding.providerID || health !== 'ready') {
     throw new Error(`adapter blocked: ${adapter.id !== context.binding.providerID ? 'account-mismatch' : health}`);
   }
-  let state = startAdapterTurn(request.turnID);
-  for await (const event of adapter.execute(context, request)) {
+  yield* validatedAdapterProgress(adapter.execute(context, request), request.turnID);
+}
+
+/** A terminal result must not be exposed before the producer closes cleanly. */
+export async function* validatedAdapterProgress(
+  events: AsyncIterable<AdapterProgress>, turnID: string,
+): AsyncIterable<AdapterProgress> {
+  let state = startAdapterTurn(turnID);
+  let terminal: AdapterProgress | undefined;
+  for await (const event of events) {
     state = advanceAdapterTurn(state, event);
-    yield event;
+    if (terminal) throw new Error('events after terminal state');
+    if (['completed', 'aborted', 'failed', 'uncertain'].includes(state.phase)) terminal = event;
+    else yield event;
   }
-  if (!['completed', 'aborted', 'failed'].includes(state.phase)) {
+  if (!['completed', 'aborted', 'failed'].includes(state.phase) || !terminal) {
     throw new Error('adapter turn uncertain: reconcile before retry');
   }
+  yield terminal;
 }
 
 /** Partial text is a preview, never a completed model reply. */
