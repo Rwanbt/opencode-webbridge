@@ -2804,10 +2804,10 @@ index 0000000000..e2165a97be
 +  }))
 +})
 diff --git a/packages/plugin-browser/test/rpc.test.ts b/packages/plugin-browser/test/rpc.test.ts
-index af1d5b53f0..df0b60e6e0 100644
+index af1d5b53f0..ac1fb0d27a 100644
 --- a/packages/plugin-browser/test/rpc.test.ts
 +++ b/packages/plugin-browser/test/rpc.test.ts
-@@ -53,6 +53,12 @@ test("network lifecycle and RPC version are explicit", () => {
+@@ -53,6 +53,14 @@ test("network lifecycle and RPC version are explicit", () => {
    expect(() =>
      Schema.decodeUnknownSync(Browser.Control)({ type: "attached", connectionID: "old-client", version: 3 }),
    ).toThrow()
@@ -2816,7 +2816,9 @@ index af1d5b53f0..df0b60e6e0 100644
 +  expect(() => Schema.decodeUnknownSync(Browser.Definition.methods.attach.input)({
 +    sessionID: "ses_test", connectionID: "old-client", version: 4,
 +  })).toThrow()
-+  expect(Schema.decodeUnknownSync(Browser.Control)({ type: "attached", connectionID: "v5", version: 5 }).version).toBe(5)
++  expect(Schema.decodeUnknownSync(Browser.Control)({ type: "attached", connectionID: "v5", version: 5 })).toEqual({
++    type: "attached", connectionID: "v5", version: 5,
++  })
    expect(() =>
      Schema.decodeUnknownSync(Browser.Control)({ type: "attached", connectionID: "old-client", version: 2 }),
    ).toThrow()
