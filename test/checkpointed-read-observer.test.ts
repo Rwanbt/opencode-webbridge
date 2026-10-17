@@ -121,3 +121,61 @@ test('revocation during sink ACK tombstones uncertain read instead of yielding o
     assert.equal(store.plan(identity, 1200, 60_000).action, 'terminal');
   } finally { store.close(); }
 }));
+
+test('validated events cannot be mutated across the awaited authority recheck before downstream ACK', async () => sandbox(async (dir, witness) => {
+  const store = DurableReadCheckpoint.initialize(dir, witness, identity, 'turn1', secret, 1000);
+  const raw = { seq: 1, kind: 'text' as const, turnID: 'turn1', value: 'approved' };
+  const delivered: TurnEvent[] = [];
+  let checks = 0;
+  try {
+    const observed: TurnEvent[] = [];
+    for await (const item of observeCheckpointedRead({
+      browser: port(async () => [raw, { seq: 2, kind: 'finished', turnID: 'turn1' }]),
+      claim, identity, checkpoint: store, now: 1100, maxAgeMs: 6000,
+      authorizeRead: async () => { if (++checks === 3) raw.value = 'forged-after-validation'; },
+      acknowledge: async (event) => { delivered.push(event); },
+    })) observed.push(item);
+    assert.equal(raw.value, 'forged-after-validation');
+    assert.equal((delivered[0] as { value: string }).value, 'approved');
+    assert.equal((observed[0] as { value: string }).value, 'approved');
+    assert.notEqual(delivered[0], raw);
+    assert.ok(Object.isFrozen(delivered[0]));
+  } finally { store.close(); }
+}));
+
+test('mutable caller tab claim cannot retarget awaited BrowserPort.events', async () => sandbox(async (dir, witness) => {
+  const store = DurableReadCheckpoint.initialize(dir, witness, identity, 'turn1', secret, 1000);
+  const mutable = { ...claim };
+  const tabs: string[] = [];
+  let checks = 0;
+  try {
+    for await (const _item of observeCheckpointedRead({
+      browser: { events: async (scope) => {
+        tabs.push(scope.tabID);
+        return [{ seq: 1, kind: 'finished', turnID: 'turn1' }];
+      } },
+      claim: mutable, identity, checkpoint: store, now: 1100, maxAgeMs: 6000,
+      authorizeRead: async () => { if (++checks === 1) mutable.tabID = 'attackerTab'; },
+      acknowledge: async () => {},
+    })) { /* consume */ }
+    assert.deepEqual(tabs, ['tab1']);
+  } finally { store.close(); }
+}));
+
+test('browser events with getters are rejected without invoking page-authored getter', async () => sandbox(async (dir, witness) => {
+  const store = DurableReadCheckpoint.initialize(dir, witness, identity, 'turn1', secret, 1000);
+  let getterCalls = 0, ackCalls = 0;
+  try {
+    const hostile = { seq: 1, kind: 'text' as const, turnID: 'turn1',
+      get value() { getterCalls++; return 'leaked'; } };
+    await assert.rejects(async () => {
+      for await (const _ of observeCheckpointedRead({
+        browser: port(async () => [hostile]), claim, identity, checkpoint: store,
+        now: 1100, maxAgeMs: 6000, authorizeRead: async () => {},
+        acknowledge: async () => { ackCalls++; },
+      })) { /* none */ }
+    }, /accessor|getter|frame/);
+    assert.equal(getterCalls, 0);
+    assert.equal(ackCalls, 0);
+  } finally { store.close(); }
+}));
