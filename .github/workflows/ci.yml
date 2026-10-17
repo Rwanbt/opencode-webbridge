@@ -57,7 +57,7 @@ jobs:
         shell: pwsh
         run: |
           $actual = (& .\node_modules\.bin\opencode.cmd --version).Trim()
-          if ($actual -ne '2.0.29') { throw "Unexpected OpenCode version: $actual" }
+          if ($actual -notmatch '^(?:opencode v)?2\.0\.29$') { throw "Unexpected OpenCode version: $actual" }
       - run: npm run smoke:native
       - run: npm run smoke:browser
       - run: npm run smoke:rpc
