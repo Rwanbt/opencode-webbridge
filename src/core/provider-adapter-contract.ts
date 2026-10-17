@@ -112,13 +112,49 @@ export async function* authorizedAdapterEvents(
 }
 
 /** A terminal result must not be exposed before the producer closes cleanly. */
+function captureAdapterProgress(event: unknown): AdapterProgress {
+  if (!event || typeof event !== 'object' || Object.getPrototypeOf(event) !== Object.prototype) {
+    throw new Error('invalid adapter event');
+  }
+  const kindField = Object.getOwnPropertyDescriptor(event, 'kind');
+  if (!kindField?.enumerable || !Object.hasOwn(kindField, 'value')) throw new Error('invalid adapter event kind');
+  const kind = kindField.value as unknown;
+  const kinds = ['partial', 'complete', 'abort-requested', 'abort-confirmed', 'uncertain', 'error'];
+  if (typeof kind !== 'string' || !kinds.includes(kind)) throw new Error('invalid adapter event kind');
+  const fields = ['kind', 'turnID', 'seq', ...(kind === 'partial' || kind === 'complete' ? ['text'] :
+    kind === 'error' ? ['health'] : [])];
+  if (Reflect.ownKeys(event).length !== fields.length) throw new Error('invalid adapter event fields');
+  const snapshot: Record<string, unknown> = {};
+  for (const field of fields) {
+    const descriptor = Object.getOwnPropertyDescriptor(event, field);
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) {
+      throw new Error('adapter event needs plain fields');
+    }
+    snapshot[field] = descriptor.value;
+  }
+  if (typeof snapshot.turnID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(snapshot.turnID) ||
+    !Number.isSafeInteger(snapshot.seq) || (snapshot.seq as number) < 1) throw new Error('invalid event identity');
+  if ((kind === 'partial' || kind === 'complete') &&
+    (typeof snapshot.text !== 'string' || snapshot.text.length < 1 || snapshot.text.length > 16_000)) {
+    throw new Error('invalid event text');
+  }
+  if (kind === 'error' && ![
+    'policy-blocked', 'review-required', 'transport-unavailable', 'browser-unavailable',
+    'authentication-required', 'consent-required', 'account-mismatch', 'capability-unavailable',
+    'challenge-human-required', 'rate-limited', 'layout-unknown', 'session-expired',
+    'disconnected', 'turn-uncertain',
+  ].includes(snapshot.health as string)) throw new Error('invalid adapter health');
+  return Object.freeze(snapshot) as unknown as AdapterProgress;
+}
+
 export async function* validatedAdapterProgress(
   events: AsyncIterable<AdapterProgress>, turnID: string,
 ): AsyncIterable<AdapterProgress> {
   let state = startAdapterTurn(turnID);
   let terminal: AdapterProgress | undefined;
   try {
-    for await (const event of events) {
+    for await (const untrusted of events) {
+      const event = captureAdapterProgress(untrusted);
       state = advanceAdapterTurn(state, event);
       if (terminal) throw new Error('events after terminal state');
       if (['completed', 'aborted', 'failed', 'uncertain'].includes(state.phase)) terminal = event;

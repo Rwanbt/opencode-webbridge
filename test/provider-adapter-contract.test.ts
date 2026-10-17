@@ -177,3 +177,32 @@ test('provider exception containing secrets never escapes the common progress bo
   });
   assert.deepEqual(seen.map((value) => value.kind), ['partial']);
 });
+
+test('browser adapter events cannot execute getters or smuggle hidden fields into previews or completion', async () => {
+  let getters = 0;
+  const malicious = Object.defineProperty({ kind: 'partial', turnID: 'turn1', seq: 1 }, 'text', {
+    enumerable: true, get() { getters++; return 'secret data from getter'; },
+  });
+  const hidden = Object.defineProperty(event('complete', 2, 'finished'), 'cookie', {
+    enumerable: false, value: 'SECRET-COOKIE',
+  });
+  async function* source(): AsyncIterable<AdapterProgress> {
+    yield malicious as AdapterProgress;
+    yield hidden;
+  }
+  const output: AdapterProgress[] = [];
+  await assert.rejects(async () => {
+    for await (const item of validatedAdapterProgress(source(), 'turn1')) output.push(item);
+  }, /uncertain|reconcile/);
+  assert.equal(getters, 0);
+  assert.equal(output.length, 0);
+  async function* second(): AsyncIterable<AdapterProgress> {
+    yield event('partial', 1, 'safe');
+    yield hidden;
+  }
+  const previews: AdapterProgress[] = [];
+  await assert.rejects(async () => {
+    for await (const item of validatedAdapterProgress(second(), 'turn1')) previews.push(item);
+  }, /uncertain/);
+  assert.deepEqual(previews.map((item) => item.kind), ['partial']);
+});
