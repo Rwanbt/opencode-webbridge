@@ -1,4 +1,4 @@
-# ADR 0020 — G72 : propositions d’outils, contrôle natif hors ligne, NO-GO
+# ADR 0023 — G72 : propositions d’outils, contrôle natif hors ligne, NO-GO
 
 **Décision : expérimentation désactivée, aucun outil exécutable, aucun fournisseur autorisé.**
 
