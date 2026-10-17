@@ -16,7 +16,8 @@ export interface FixtureServer {
 
 export interface FixtureServerOptions {
   /** Offline-only responder, used to prove native model ↔ BrowserPort handoff. */
-  readonly respond?: (messages: readonly unknown[]) => Promise<string | AsyncIterable<string>> | AsyncIterable<string>;
+  readonly respond?: (messages: readonly unknown[], signal: AbortSignal) =>
+    Promise<string | AsyncIterable<string>> | AsyncIterable<string>;
   /** Optional secret for local integration testing. Never transmit it to a website. */
   readonly token?: string;
 }
@@ -56,6 +57,10 @@ export async function openFixtureServer(options: FixtureServerOptions = {}): Pro
       chunks.push(chunk);
     });
     req.on('end', async () => {
+      const controller = new AbortController();
+      // The request body may be fully read while the SSE response is still
+      // active; only response-close indicates the client stopped consuming.
+      res.once('close', () => { if (!res.writableEnded) controller.abort(); });
       let body: { model?: unknown; messages?: unknown; stream?: unknown };
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as typeof body; }
       catch { res.writeHead(400); res.end(); return; }
@@ -68,7 +73,7 @@ export async function openFixtureServer(options: FixtureServerOptions = {}): Pro
       const id = 'chatcmpl-webbridge-local-fixture';
       let reply: string | AsyncIterable<string> = FIXTURE_REPLY;
       try {
-        if (options.respond) reply = await options.respond(body.messages);
+        if (options.respond) reply = await options.respond(body.messages, controller.signal);
       } catch {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { message: 'fixture response unavailable' } }));
@@ -104,6 +109,7 @@ export async function openFixtureServer(options: FixtureServerOptions = {}): Pro
       let length = 0;
       try {
         for await (const fragment of frames) {
+          if (controller.signal.aborted) throw new Error('fixture consumer disconnected');
           if (typeof fragment !== 'string' || !fragment || length + fragment.length > 16_000 || sent >= 64)
             throw new Error('fixture stream invalid');
           length += fragment.length;
@@ -112,6 +118,7 @@ export async function openFixtureServer(options: FixtureServerOptions = {}): Pro
           send({ id, object: 'chat.completion.chunk', created: 0, model: FIXTURE_MODEL,
             choices: [{ index: 0, delta: { role: 'assistant', content: fragment }, finish_reason: null }] });
         }
+        if (controller.signal.aborted) throw new Error('fixture consumer disconnected');
         if (!sent) throw new Error('fixture stream empty');
         send({ id, object: 'chat.completion.chunk', created: 0, model: FIXTURE_MODEL,
           choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });

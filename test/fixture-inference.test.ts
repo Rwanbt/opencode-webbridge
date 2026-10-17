@@ -99,3 +99,33 @@ test('failed browser stream never issues a false SSE [DONE] after partial output
     assert.equal(server.streamFrames(), 1);
   } finally { await server.close(); }
 });
+
+test('client abort after first SSE delta notifies fixture and never emits another fragment', async () => {
+  let resume!: () => void;
+  let signal!: AbortSignal;
+  const pending = new Promise<void>((resolve) => { resume = resolve; });
+  const server = await openFixtureServer({ respond: async function* (_messages, abort) {
+    signal = abort;
+    yield 'first';
+    await pending;
+    yield 'would-be-second';
+  } });
+  try {
+    const controller = new AbortController();
+    const response = await fetch(`${server.baseURL}/chat/completions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
+      body: JSON.stringify({ model: FIXTURE_MODEL, messages: [{ role: 'user', content: 'abort' }], stream: true }),
+    });
+    assert.equal(response.status, 200);
+    const reader = response.body?.getReader();
+    assert.ok(reader);
+    assert.match(new TextDecoder().decode((await reader.read()).value), /first/);
+    controller.abort();
+    await assert.rejects(reader.read());
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    assert.equal(signal.aborted, true);
+    resume();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    assert.equal(server.streamFrames(), 1);
+  } finally { resume(); await server.close(); }
+});
