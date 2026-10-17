@@ -2054,10 +2054,10 @@ index 91de480703..d86a7279ae 100644
      publishState(entry)
 diff --git a/packages/gui-extensions/src/browser/read-commit-gate.test.ts b/packages/gui-extensions/src/browser/read-commit-gate.test.ts
 new file mode 100644
-index 0000000000..84f6859746
+index 0000000000..dd03be9b5c
 --- /dev/null
 +++ b/packages/gui-extensions/src/browser/read-commit-gate.test.ts
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,65 @@
 +import { expect, test } from "bun:test"
 +import { desktopReadCommitGate, startCommittedRead } from "./read-commit-gate"
 +
@@ -2107,12 +2107,28 @@ index 0000000000..84f6859746
 +  expect(result).toBe("offline fixture snapshot")
 +  expect(effects).toBe(1)
 +})
++
++test("revocation during the pending Chromium read cannot expose returned page content", async () => {
++  let finish!: (value: string) => void
++  const pending = new Promise<string>((resolve) => { finish = resolve })
++  let live = true
++  let started = 0
++  const read = startCommittedRead(Promise.resolve(), () => live, () => {
++    started++
++    return pending
++  })
++  await Promise.resolve()
++  expect(started).toBe(1)
++  live = false // Tab replaced/disconnected AFTER driver invocation, BEFORE result.
++  finish("private page content must never be delivered")
++  await expect(read).rejects.toThrow(/revoked/)
++})
 diff --git a/packages/gui-extensions/src/browser/read-commit-gate.ts b/packages/gui-extensions/src/browser/read-commit-gate.ts
 new file mode 100644
-index 0000000000..8c30e0b1d0
+index 0000000000..060d499e06
 --- /dev/null
 +++ b/packages/gui-extensions/src/browser/read-commit-gate.ts
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,20 @@
 +/**
 + * Browser snapshots disclose page content. Never execute one from an IPC
 + * command unless the command carries a one-use Core/host read-commit ticket.
@@ -2129,7 +2145,9 @@ index 0000000000..8c30e0b1d0
 +  execute: () => Promise<T>): Promise<T> {
 +  await ready
 +  if (live() !== true) throw new Error("Read-only Desktop attachment revoked before browser effect")
-+  return execute()
++  const result = await execute()
++  if (live() !== true) throw new Error("Read-only Desktop attachment revoked before snapshot result")
++  return result
 +}
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
 index 4c6838c70f..e902c8f6e4 100644
