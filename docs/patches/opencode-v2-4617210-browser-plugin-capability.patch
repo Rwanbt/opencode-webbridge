@@ -2739,6 +2739,80 @@ index 7afb621efa..78921c82f4 100644
      const output = yield* Effect.fromResult(decodeResult(operation, response))
      return yield* exportResult(output, response.files)
    })
+diff --git a/packages/plugin-browser/src/tunnel.ts b/packages/plugin-browser/src/tunnel.ts
+index 377e413a71..fe8d77f7c8 100644
+--- a/packages/plugin-browser/src/tunnel.ts
++++ b/packages/plugin-browser/src/tunnel.ts
+@@ -1,11 +1,34 @@
+ export * as BrowserTunnel from "./tunnel.js"
+ 
+-import type { Socket } from "node:net"
++import { BlockList, createConnection, type Socket } from "node:net"
++import { lookup } from "node:dns/promises"
+ import { Effect } from "effect"
+ import { Browser } from "./rpc.js"
+ 
+ export type Tunnels = ReturnType<typeof make>
+ 
++// V6 proves only possession of an attach-supplied string, not Desktop provenance.
++// Never turn that string into a general-purpose connection to the server's LAN.
++const blocked4 = new BlockList()
++for (const [base, prefix] of [
++  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
++  ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24],
++  ["192.0.2.0", 24], ["192.88.99.0", 24], ["192.168.0.0", 16],
++  ["198.18.0.0", 15], ["198.51.100.0", 24], ["203.0.113.0", 24],
++  ["224.0.0.0", 4], ["240.0.0.0", 4],
++] as const) blocked4.addSubnet(base, prefix, "ipv4")
++const global6 = new BlockList()
++global6.addSubnet("2000::", 3, "ipv6")
++const blocked6 = new BlockList()
++for (const [base, prefix] of [
++  ["2001::", 32], ["2001:db8::", 32], ["2002::", 16],
++] as const) blocked6.addSubnet(base, prefix, "ipv6")
++
++export function publicAddress(address: string, family: 4 | 6) {
++  if (family === 4) return !blocked4.check(address, "ipv4")
++  return global6.check(address, "ipv6") && !blocked6.check(address, "ipv6")
++}
++
+ // One instance belongs to one desktop attachment. Socket buffers provide
+ // backpressure; reads never collect an unbounded stream in application memory.
+ export function make() {
+@@ -19,12 +42,31 @@ export function make() {
+ 
+   return {
+     open: Effect.fn("BrowserTunnel.open")(function* (target: Browser.TunnelTarget) {
+-      const { createConnection } = yield* Effect.promise(() => import("node:net"))
+       if (disposed) return yield* Effect.fail(new Error("Browser attachment is closed."))
+       if (sockets.size >= 64)
+         return yield* Effect.fail(new Error("Browser attachment has reached its 64-connection limit."))
++      // Resolve before dialing and pin the socket to the checked IP. Reject
++      // mixed public/private DNS replies; never let net.createConnection resolve again.
++      const denied = () => new Error("Browser tunnel destination is private or untrusted.")
++      const addresses = yield* Effect.tryPromise({
++        try: () => lookup(target.host, { all: true }),
++        catch: denied,
++      })
++      if (!addresses.length || addresses.length > 16 ||
++        addresses.some(({ address, family }) => (family !== 4 && family !== 6) ||
++          !publicAddress(address, family)))
++        return yield* Effect.fail(denied())
++      if (target.port !== 80 && target.port !== 443)
++        return yield* Effect.fail(new Error("Browser tunnel only supports public HTTP(S) ports."))
++      // An attachment can be closed while DNS is pending.
++      if (disposed) return yield* Effect.fail(new Error("Browser attachment is closed."))
++      if (sockets.size >= 64)
++        return yield* Effect.fail(new Error("Browser attachment has reached its 64-connection limit."))
++      const pinned = addresses[0]!
+       const socket = yield* Effect.try({
+-        try: () => createConnection({ ...target, allowHalfOpen: true }),
++        try: () => createConnection({
++          host: pinned.address, port: target.port, family: pinned.family, allowHalfOpen: true,
++        }),
+         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+       })
+       const id = crypto.randomUUID()
 diff --git a/packages/plugin-browser/test/attach-ownership.test.ts b/packages/plugin-browser/test/attach-ownership.test.ts
 new file mode 100644
 index 0000000000..f3cef6d477
@@ -3331,6 +3405,112 @@ index af1d5b53f0..d127f3d81a 100644
    expect(() =>
      Schema.decodeUnknownSync(Browser.Control)({ type: "attached", connectionID: "old-client", version: 2 }),
    ).toThrow()
+diff --git a/packages/plugin-browser/test/tunnel-provenance.test.ts b/packages/plugin-browser/test/tunnel-provenance.test.ts
+new file mode 100644
+index 0000000000..a76a4368e4
+--- /dev/null
++++ b/packages/plugin-browser/test/tunnel-provenance.test.ts
+@@ -0,0 +1,100 @@
++import { expect, test } from "bun:test"
++import { createServer } from "node:net"
++import { once } from "node:events"
++import { AbsolutePath } from "@opencode/schema/schema"
++import { Location } from "@opencode/schema/location"
++import { Project } from "@opencode/schema/project"
++import { Session } from "@opencode/schema/session"
++import { Workspace } from "@opencode/schema/workspace"
++import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect"
++import { BrowserConnection } from "../src/connection"
++import { BrowserTunnel } from "../src/tunnel"
++import { publicAddress } from "../src/tunnel"
++
++test("even the first V6 self-attacher cannot tunnel to a server-side loopback TCP service", async () => {
++  const sockets = new Set<import("node:net").Socket>()
++  const server = createServer((socket) => {
++    sockets.add(socket)
++    socket.once("close", () => sockets.delete(socket))
++  })
++  await once(server.listen(0, "127.0.0.1"), "listening")
++  const address = server.address()
++  if (!address || typeof address === "string") throw new Error("Missing listener")
++  const location = new Location.Info({ directory: AbsolutePath.make("/fixture"),
++    workspaceID: Workspace.ID.make("wrk_fixture"),
++    project: { id: Project.ID.global, directory: AbsolutePath.make("/fixture"),
++      canonical: AbsolutePath.make("/fixture") } })
++  const sessionID = Session.ID.make("ses_first_claim")
++  const base = { sessionID, connectionID: "self-minted", attachmentProof: crypto.randomUUID() }
++  const announced = Deferred.makeUnsafe<void>()
++  let handlers: Record<string, (input: any, call: any) => any> = {}
++  let session = { location, permissions: [] as { action: string; resource: string; effect: "allow" | "deny" | "ask" }[] }
++  const ctx = {
++    location,
++    agent: { transform: () => Effect.void },
++    event: { subscribe: () => Stream.empty },
++    session: { get: () => Effect.succeed(session),
++      update: (input: { permissions: typeof session.permissions }) => Effect.sync(() => {
++        session = { ...session, permissions: input.permissions }
++      }) },
++    rpc: { register: (_definition: unknown, calls: typeof handlers) => {
++      handlers = calls
++      return Effect.succeed({ events: { emit: () => Deferred.succeed(announced, undefined) } })
++    } },
++  } as unknown as Parameters<typeof BrowserConnection.make>[0]
++  try {
++    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++      yield* BrowserConnection.make(ctx)
++      const call = { error: (_kind: string, message: string) => new Error(message) }
++      const attached = yield* handlers.attach({ ...base, version: 6 }, call)
++        .pipe(Effect.forkScoped({ startImmediately: true }))
++      yield* Deferred.await(announced)
++      // This caller invented its proof; BrowserConnection cannot certify Electron.
++      expect(session.permissions.some((x) => x.action === "browser" && x.effect === "allow")).toBe(true)
++      const denied = yield* Effect.exit(handlers["tunnel.open"]({
++        ...base, target: { host: "127.0.0.1", port: address.port },
++      }, call))
++      expect(Exit.isFailure(denied)).toBe(true)
++      if (Exit.isFailure(denied)) expect(Cause.pretty(denied.cause)).toContain("private or untrusted")
++      expect(sockets.size).toBe(0)
++      yield* Fiber.interrupt(attached)
++    })) as Effect.Effect<void, unknown, never>)
++  } finally {
++    sockets.forEach((socket) => socket.destroy())
++    await new Promise<void>((resolve) => server.close(() => resolve()))
++  }
++})
++
++test("all private, mapped, local and non-public target classes fail before TCP connection", async () => {
++  const tunnel = BrowserTunnel.make()
++  try {
++    for (const host of ["127.0.0.1", "::1", "::ffff:127.0.0.1", "10.20.30.40",
++      "169.254.169.254", "192.168.1.1", "localhost", "2001:db8::1"]) {
++      const denied = await Effect.runPromiseExit(tunnel.open({ host, port: 443 }))
++      expect(Exit.isFailure(denied)).toBe(true)
++      if (Exit.isFailure(denied)) expect(Cause.pretty(denied.cause)).toContain("private or untrusted")
++    }
++  } finally {
++    tunnel.dispose()
++  }
++})
++
++test("only public routable address classes and web ports may be tunnel destinations", async () => {
++  expect(publicAddress("1.1.1.1", 4)).toBe(true)
++  expect(publicAddress("8.8.8.8", 4)).toBe(true)
++  expect(publicAddress("2606:4700:4700::1111", 6)).toBe(true)
++  for (const address of ["0.0.0.1", "100.64.0.1", "172.31.0.1", "198.19.0.1",
++    "192.0.2.1", "203.0.113.1", "224.0.0.1", "255.255.255.255"]) {
++    expect(publicAddress(address, 4)).toBe(false)
++  }
++  for (const address of ["::1", "::ffff:127.0.0.1", "fc00::1", "fe80::1", "2001:db8::1", "2002::1"])
++    expect(publicAddress(address, 6)).toBe(false)
++  const tunnel = BrowserTunnel.make()
++  try {
++    const blocked = await Effect.runPromiseExit(tunnel.open({ host: "1.1.1.1", port: 22 }))
++    expect(Exit.isFailure(blocked)).toBe(true)
++    if (Exit.isFailure(blocked)) expect(Cause.pretty(blocked.cause)).toContain("public HTTP(S) ports")
++  } finally {
++    tunnel.dispose()
++  }
++})
 diff --git a/packages/plugin/src/effect/browser.ts b/packages/plugin/src/effect/browser.ts
 new file mode 100644
 index 0000000000..d2f214974f
