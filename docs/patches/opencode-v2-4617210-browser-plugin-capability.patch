@@ -53,7 +53,7 @@ index 14732fdd75..a8230b27ae 100644
      })
    }),
 diff --git a/packages/core/src/permission.ts b/packages/core/src/permission.ts
-index 2aecebb0ce..8372ce01e6 100644
+index 2aecebb0ce..758726c33c 100644
 --- a/packages/core/src/permission.ts
 +++ b/packages/core/src/permission.ts
 @@ -12,6 +12,8 @@ import { SessionStore } from "./session/store.js"
@@ -89,7 +89,27 @@ index 2aecebb0ce..8372ce01e6 100644
        yield* Effect.forEach(Array.from(pending.values()), (item) =>
          bus
            .publish(Permission.Event.Replied, {
-@@ -262,6 +271,58 @@ const layer = Layer.effect(
+@@ -228,7 +237,7 @@ const layer = Layer.effect(
+       return { id: value.id, effect: result.effect }
+     })
+ 
+-    const assert = Effect.fn("Permission.assert")((input: AssertInput) =>
++    const assert = Effect.fn("Permission.assert")((input: AssertInput, options?: { readonly forceInteractive?: boolean }) =>
+       Effect.gen(function* () {
+         if (closed) return yield* Effect.die(new DeclinedError())
+         const result = yield* evaluateInput(input)
+@@ -242,7 +251,9 @@ const layer = Layer.effect(
+                 reason: result.message,
+               })
+             }
+-            if (result.effect === "allow") return
++            // Native Core browser-read reference needs a fresh decision for each exact call.
++            // Existing configured/Saved allow remains valid for every other permission path.
++            if (result.effect === "allow" && !options?.forceInteractive) return
+             const item = yield* create(request(input, result.message), input.agent)
+             return yield* restore(Deferred.await(item.deferred)).pipe(
+               // Deliberate defect tunnel: leaves wrap execution in blanket `mapError`, which
+@@ -262,6 +273,58 @@ const layer = Layer.effect(
        }),
      )
  
@@ -132,7 +152,7 @@ index 2aecebb0ce..8372ce01e6 100644
 +            binding.tabGeneration,
 +          ].join(":")
 +          yield* assert({ sessionID, agent, action: "browser", resources: ["*"], save: [] })
-+          yield* assert({ sessionID, agent, action: "browser_plugin", resources: [resource], save: [] })
++          yield* assert({ sessionID, agent, action: "browser_plugin", resources: [resource], save: [] }, { forceInteractive: true })
 +        }).pipe(Effect.mapError((error) => new Error(error.message))),
 +    })
 +    // Durable session mutations revoke before their publication transaction returns.
@@ -148,7 +168,7 @@ index 2aecebb0ce..8372ce01e6 100644
      const reply = Effect.fn("Permission.reply")((input: ReplyInput) =>
        Effect.uninterruptible(
          Effect.gen(function* () {
-@@ -274,6 +335,7 @@ const layer = Layer.effect(
+@@ -274,6 +337,7 @@ const layer = Layer.effect(
            })
  
            if (input.reply === "reject") {
@@ -156,7 +176,7 @@ index 2aecebb0ce..8372ce01e6 100644
              yield* Deferred.fail(
                existing.deferred,
                input.message ? new CorrectedError({ feedback: input.message }) : new DeclinedError(),
-@@ -336,7 +398,7 @@ const layer = Layer.effect(
+@@ -336,7 +400,7 @@ const layer = Layer.effect(
        return Array.from(pending.values(), (item) => item.request).filter((request) => request.sessionID === sessionID)
      })
  
@@ -739,10 +759,10 @@ index 0000000000..5f9baa6050
 +}
 diff --git a/packages/core/test/permission-browser-lease.test.ts b/packages/core/test/permission-browser-lease.test.ts
 new file mode 100644
-index 0000000000..d77a9abd37
+index 0000000000..a81c365440
 --- /dev/null
 +++ b/packages/core/test/permission-browser-lease.test.ts
-@@ -0,0 +1,296 @@
+@@ -0,0 +1,389 @@
 +import { expect } from "bun:test"
 +import { Agent } from "@opencode/core/agent"
 +import { Bus } from "@opencode/core/bus"
@@ -760,7 +780,7 @@ index 0000000000..d77a9abd37
 +import { SessionEvent } from "@opencode/schema/session-event"
 +import { SessionStore } from "@opencode/core/session/store"
 +import { LayerNode } from "@opencode/util/effect/layer-node"
-+import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
++import { Deferred, Effect, Exit, Fiber, Layer, Scope } from "effect"
 +import { location } from "./fixture/location"
 +import { testEffect } from "./lib/effect"
 +
@@ -819,6 +839,23 @@ index 0000000000..d77a9abd37
 +        value.permissions = [...rules]
 +      }),
 +    )
++    // Approved-only fixture: the new Core path always requests exact, non-saved consent.
++    if (rules.some((rule) => rule.action === "browser_plugin" && rule.effect === "allow")) {
++      const bus = yield* Bus.Service
++      const permission = yield* Permission.Service
++      const scope = yield* Scope.Scope
++      const unsubscribe = yield* bus.listen((event) => {
++        const request = event.type === Permission.Event.Asked.type ? (event.data as Permission.Request) : undefined
++        return request?.action === "browser_plugin"
++          ? permission.reply({ requestID: request.id, reply: "once" }).pipe(
++              Effect.forkScoped,
++              Effect.provideService(Scope.Scope, scope),
++              Effect.asVoid,
++            )
++          : Effect.void
++      })
++      yield* Effect.addFinalizer(() => unsubscribe)
++    }
 +  })
 +
 +test.effect("Permission.Service owns and gates snapshot-only lease with the real rules", () =>
@@ -1039,6 +1076,82 @@ index 0000000000..d77a9abd37
 +  }),
 +)
 +
++test.effect("browserRead asks exact consent despite a previously saved wildcard allow", () =>
++  Effect.gen(function* () {
++    yield* setup([{ action: "browser", resource: "*", effect: "allow" }])
++    const saved = yield* PermissionSaved.Service
++    yield* saved.add({ projectID: Project.ID.global, action: "browser_plugin", resources: ["*"] })
++    const permission = yield* Permission.Service
++    const bus = yield* Bus.Service
++    const asked = yield* Deferred.make<Permission.Request>()
++    const unsubscribe = yield* bus.listen((event) =>
++      event.type === Permission.Event.Asked.type
++        ? Deferred.succeed(asked, event.data as Permission.Request).pipe(Effect.asVoid)
++        : Effect.void,
++    )
++    yield* Effect.addFinalizer(() => unsubscribe)
++    const attempt = yield* permission.browserRead!.issue(binding).pipe(Effect.exit, Effect.forkScoped)
++    const outcome = yield* Effect.race(
++      Deferred.await(asked).pipe(Effect.map((request) => ({ kind: "asked" as const, request }))),
++      Fiber.await(attempt).pipe(Effect.map(() => ({ kind: "completed" as const }))),
++    )
++    expect(outcome.kind).toBe("asked")
++    if (outcome.kind !== "asked") return
++    const request = outcome.request
++    expect(request.action).toBe("browser_plugin")
++    expect(request.resources).toEqual([
++      [binding.pluginID, binding.pluginGeneration, binding.action, binding.workspaceID, binding.sessionID,
++        binding.turnID, binding.callID, binding.connectionID, binding.tabID, binding.tabGeneration].join(":"),
++    ])
++    expect(request.save).toEqual([])
++    yield* permission.reply({ requestID: request.id, reply: "always" })
++    const result = yield* Fiber.join(attempt)
++    expect(Exit.isSuccess(result)).toBe(true)
++    if (Exit.isSuccess(result)) expect(permission.browserRead!.consume(result.value, binding)).toBe(true)
++  }),
++)
++
++test.effect("configured wildcard allow also emits a precise one-use browser prompt", () =>
++  Effect.gen(function* () {
++    yield* setup([
++      { action: "browser", resource: "*", effect: "allow" },
++      { action: "browser_plugin", resource: "*", effect: "allow" },
++    ])
++    const permission = yield* Permission.Service
++    const bus = yield* Bus.Service
++    const asked = yield* Deferred.make<Permission.Request>()
++    const unsubscribe = yield* bus.listen((event) =>
++      event.type === Permission.Event.Asked.type
++        ? Deferred.succeed(asked, event.data as Permission.Request).pipe(Effect.asVoid)
++        : Effect.void,
++    )
++    yield* Effect.addFinalizer(() => unsubscribe)
++    const ticket = yield* permission.browserRead!.issue(binding)
++    const request = yield* Deferred.await(asked)
++    expect(request.action).toBe("browser_plugin")
++    expect(request.resources).toEqual([
++      [binding.pluginID, binding.pluginGeneration, binding.action, binding.workspaceID, binding.sessionID,
++        binding.turnID, binding.callID, binding.connectionID, binding.tabID, binding.tabGeneration].join(":"),
++    ])
++    expect(request.save).toEqual([])
++    expect(permission.browserRead!.consume(ticket, binding)).toBe(true)
++  }),
++)
++
++test.effect("saved wildcard cannot override a configured browser_plugin deny", () =>
++  Effect.gen(function* () {
++    yield* setup([
++      { action: "browser", resource: "*", effect: "allow" },
++      { action: "browser_plugin", resource: "*", effect: "deny" },
++    ])
++    const saved = yield* PermissionSaved.Service
++    yield* saved.add({ projectID: Project.ID.global, action: "browser_plugin", resources: ["*"] })
++    const permission = yield* Permission.Service
++    expect(Exit.isFailure(yield* Effect.exit(permission.browserRead!.issue(binding)))).toBe(true)
++    expect(permission.browserRead!.outstanding).toBe(0)
++    expect(yield* permission.list()).toEqual([])
++  }),
++)
 diff --git a/packages/core/test/plugin/browser-capability.test.ts b/packages/core/test/plugin/browser-capability.test.ts
 new file mode 100644
 index 0000000000..293ba7aeca
