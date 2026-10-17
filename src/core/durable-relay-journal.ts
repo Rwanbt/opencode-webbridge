@@ -1,5 +1,5 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync,
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync,
   renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { assertOpaqueID, type TabClaim } from './browser-port.js';
@@ -26,6 +26,7 @@ export class DurableRelayJournal {
   private constructor(
     private readonly dir: string,
     private readonly lockFD: number,
+    private readonly lockTag: string,
     private readonly secret: string,
     private state: State,
   ) {}
@@ -42,7 +43,10 @@ export class DurableRelayJournal {
     let lockFD: number;
     try { lockFD = openSync(join(dir, '.lock'), 'wx', 0o600); }
     catch { throw new Error('relay journal locked: require explicit operator recovery'); }
+    const lockTag = randomBytes(16).toString('hex');
     try {
+      writeFileSync(lockFD, lockTag, 'utf8');
+      fsyncSync(lockFD);
       const path = join(dir, 'journal.json');
       const bindingHash = identity(binding);
       let state: State = { version: 1, bindingHash, entries: [],
@@ -60,13 +64,14 @@ export class DurableRelayJournal {
           throw new Error('journal integrity mismatch');
         }
       }
-      const journal = new DurableRelayJournal(dir, lockFD, secret, state);
+      const journal = new DurableRelayJournal(dir, lockFD, lockTag, secret, state);
       // Persist ownership even when there are zero turns; never silently rebind.
       if (!existsSync(path)) journal.commit([]);
       return journal;
     } catch (error) {
+      const owned = DurableRelayJournal.matchesLock(dir, lockFD, lockTag);
       closeSync(lockFD);
-      unlinkSync(join(dir, '.lock'));
+      if (owned) unlinkSync(join(dir, '.lock'));
       if (error instanceof SyntaxError) throw new Error('invalid journal');
       throw error;
     }
@@ -97,6 +102,24 @@ export class DurableRelayJournal {
 
   private ensure(): void { if (this.closed) throw new Error('journal closed'); }
 
+  /** Detect lost or modified ownership, rather than removing another process's lock. */
+  private static matchesLock(dir: string, fd: number, tag: string): boolean {
+    try {
+      const held = fstatSync(fd);
+      const path = lstatSync(join(dir, '.lock'));
+      // Windows can report dev=0 for a path while fstat(fd).dev is the volume ID.
+      return path.isFile() && (process.platform === 'win32' || path.dev === held.dev) &&
+        path.ino === held.ino &&
+        path.size === tag.length && readFileSync(join(dir, '.lock'), 'utf8') === tag;
+    } catch { return false; }
+  }
+
+  private assertLock(): void {
+    if (!DurableRelayJournal.matchesLock(this.dir, this.lockFD, this.lockTag)) {
+      throw new Error('journal lock ownership lost: operator recovery required');
+    }
+  }
+
   status(): readonly { readonly turnID: string; readonly phase: Phase }[] {
     this.ensure();
     return this.state.entries.map(({ turnID, phase }) => ({ turnID, phase }));
@@ -109,6 +132,7 @@ export class DurableRelayJournal {
 
   private commit(entries: Entry[]): void {
     this.ensure();
+    this.assertLock();
     const payload: Payload = { version: 1, bindingHash: this.state.bindingHash, entries };
     const next: State = { ...payload, mac: DurableRelayJournal.signature(this.secret, payload) };
     const tmp = join(this.dir, `.journal-${randomUUID()}.tmp`);
@@ -117,7 +141,7 @@ export class DurableRelayJournal {
       writeFileSync(fd, JSON.stringify(next), { encoding: 'utf8' });
       fsyncSync(fd);
     } finally { closeSync(fd); }
-    try { renameSync(tmp, join(this.dir, 'journal.json')); }
+    try { this.assertLock(); renameSync(tmp, join(this.dir, 'journal.json')); }
     catch (error) { try { unlinkSync(tmp); } catch { /* cleanup best-effort */ } throw error; }
     // Linux: flush the renamed directory entry too. Windows does not support dir fsync.
     if (process.platform !== 'win32') {
@@ -175,7 +199,8 @@ export class DurableRelayJournal {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    const owned = DurableRelayJournal.matchesLock(this.dir, this.lockFD, this.lockTag);
     closeSync(this.lockFD);
-    unlinkSync(join(this.dir, '.lock'));
+    if (owned) unlinkSync(join(this.dir, '.lock'));
   }
 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -100,5 +100,19 @@ test('wrong signing key and leftover crash lock never trigger automatic recovery
       assert.deepEqual(reopened.status(), [{ turnID: 'uncertain-1', phase: 'prepared' }]);
       assert.throws(() => reopened.prepare('fresh-2'), /unresolved/);
     } finally { reopened.close(); }
+  });
+});
+
+test('modified ownership lock fails closed and cannot be deleted by former owner', async () => {
+  await isolated((dir) => {
+    const journal = DurableRelayJournal.open(dir, claim, secret);
+    const lock = join(dir, '.lock');
+    const original = readFileSync(join(dir, 'journal.json'), 'utf8');
+    // Simulate a different local process clobbering the active ownership marker.
+    writeFileSync(lock, 'replaced-by-second-owner', 'utf8');
+    assert.throws(() => journal.prepare('must-not-run'), /lock ownership lost/);
+    assert.equal(readFileSync(join(dir, 'journal.json'), 'utf8'), original);
+    journal.close();
+    assert.equal(existsSync(lock), true, 'former owner must not delete an alien lock');
   });
 });
