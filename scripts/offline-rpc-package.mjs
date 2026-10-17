@@ -43,10 +43,17 @@ async function smokeNative(profile, env, temp, executable, version) {
     cwd: temp, env: sandbox, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     shell: process.platform === 'win32' && /\.cmd$/i.test(executable),
   });
-  let diagnostic = '';
   let inventorySummary = 'none';
+  const pluginDiagnostics = [];
   for (const stream of [server.stdout, server.stderr]) {
-    stream.on('data', (data) => { diagnostic = (diagnostic + data.toString('utf8')).slice(-5000); });
+    stream.on('data', (data) => {
+      for (const line of data.toString('utf8').split(/\r?\n/)) {
+        if (/plugin|rpc|fail|error|warn/i.test(line)) {
+          pluginDiagnostics.push(line.slice(0, 450));
+          if (pluginDiagnostics.length > 80) pluginDiagnostics.shift();
+        }
+      }
+    });
   }
   const url = `http://127.0.0.1:${port}`;
   const headers = {
@@ -60,7 +67,10 @@ async function smokeNative(profile, env, temp, executable, version) {
         const response = await fetch(`${url}/api/plugin`, { headers, signal: AbortSignal.timeout(600) });
         if (response.ok) {
           const inventory = await response.json();
-          inventorySummary = JSON.stringify(inventory).slice(-1400);
+          inventorySummary = JSON.stringify(Array.isArray(inventory)
+            ? inventory.filter((item) => /webbridge|failed/i.test(item?.id ?? '')).map((item) =>
+              ({ id: item.id, state: item.state }))
+            : inventory).slice(-700);
           registered = Array.isArray(inventory) && inventory.some((item) =>
             item?.id === fixture.id && item?.state?.status === 'active');
           if (registered) break;
@@ -97,10 +107,9 @@ async function smokeNative(profile, env, temp, executable, version) {
     }
     return { version, nativeRpc: true, wrongScopeDenied: true, wrongSecretDenied: true, replayDenied: true };
   } catch (error) {
-    const clean = (diagnostic + String(error)).replaceAll(password, '[REDACTED]').replaceAll(secret, '[REDACTED]');
-    const significant = clean.split(/\r?\n/).filter((line) =>
-      /plugin|rpc|error|failed|warn|active|inventory/i.test(line)).slice(-14).join('\n');
-    throw new Error(`native G81 RPC package check failed: ${significant.slice(-2400)}`);
+    const clean = (pluginDiagnostics.slice(0, 16).join('\n') + '\n' + String(error))
+      .replaceAll(password, '[REDACTED]').replaceAll(secret, '[REDACTED]');
+    throw new Error(`native G81 RPC package check failed: ${clean.slice(-2500)}`);
   } finally {
     if (server.exitCode === null) {
       if (process.platform === 'win32' && server.pid) {
