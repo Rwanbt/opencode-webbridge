@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-10-17",
+  "decision": "NO-GO-PRODUCTION",
+  "allowedClaims": {
+    "scope": "CLI experimental (linux fixture smoke, installed OpenCode CLI 2.0.29)",
+    "desktop": false,
+    "commercialProviders": 0,
+    "browserWrites": false,
+    "productionAccepted": false
+  },
+  "blockers": [
+    {
+      "id": "desktop-electron-e2e",
+      "status": "NOT-PROVEN",
+      "evidence": "G111 preflight NO-GO (PR #188): no official Electron browser API in 2.0.29; Desktop E2E never inferred from lower levels"
+    },
+    {
+      "id": "atomic-core-chromium-revocation",
+      "status": "NOT-PROVEN",
+      "evidence": "race window during Chromium execution documented; pre-effect revalidation alone cannot eliminate it"
+    },
+    {
+      "id": "native-effect-wiring",
+      "status": "BLOCKED-UPSTREAM",
+      "evidence": "NativeEffectAuthority interface absent from official OpenCode 2.0.29; the plugin refuses every execution (no-native-authority)"
+    },
+    {
+      "id": "commercial-live-automation",
+      "status": "BLOCKED-CONTRACT",
+      "evidence": "no authorized automation path for the five commercial providers; offline benches only, 0/5 operational"
+    },
+    {
+      "id": "production-acceptance",
+      "status": "NOT-PROVEN",
+      "evidence": "0/54 stories production-accepted; L3 requires a real authorized external interaction proven at the exact level"
+    }
+  ]
+}
