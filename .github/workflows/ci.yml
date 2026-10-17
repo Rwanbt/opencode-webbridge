@@ -33,3 +33,4 @@ jobs:
       - run: npm run smoke:native
       - run: npm run smoke:browser
       - run: npm run smoke:rpc
+      - run: npm run smoke:e2e
