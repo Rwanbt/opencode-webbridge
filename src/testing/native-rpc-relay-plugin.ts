@@ -23,7 +23,9 @@ export default Plugin.define({
       providerID: 'qwen' as const, accountRef: 'fixture-account' };
     const journalPath = process.env.WEBBRIDGE_RELAY_JOURNAL_DIR;
     if (!journalPath) throw new Error('test relay requires an isolated journal directory');
-    const journal = DurableRelayJournal.open(journalPath, binding, secret);
+    const witnessDir = process.env.WEBBRIDGE_RELAY_WITNESS_DIR;
+    const journal = DurableRelayJournal.open(journalPath, binding, secret,
+      witnessDir === undefined ? undefined : { witnessDir });
     const relay = new RpcRelayPort(secret, journal);
     await relay.claim(binding);
 

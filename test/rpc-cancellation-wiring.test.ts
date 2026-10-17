@@ -8,12 +8,14 @@ import fixture from '../src/testing/native-rpc-relay-plugin.js';
 
 test('native plugin RPC cancel preserves the pre-lease versus uncertain-lease boundary', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'webbridge-rpc-cancel-'));
-  const before = ['WEBBRIDGE_RELAY_ENABLE', 'WEBBRIDGE_RELAY_TOKEN', 'WEBBRIDGE_RELAY_JOURNAL_DIR']
+  const before = ['WEBBRIDGE_RELAY_ENABLE', 'WEBBRIDGE_RELAY_TOKEN', 'WEBBRIDGE_RELAY_JOURNAL_DIR',
+    'WEBBRIDGE_RELAY_WITNESS_DIR']
     .map((name) => [name, process.env[name]] as const);
   const token = randomBytes(32).toString('hex');
   process.env.WEBBRIDGE_RELAY_ENABLE = '1';
   process.env.WEBBRIDGE_RELAY_TOKEN = token;
   process.env.WEBBRIDGE_RELAY_JOURNAL_DIR = dir;
+  delete process.env.WEBBRIDGE_RELAY_WITNESS_DIR;
   let handlers: Record<string, (request: unknown) => Promise<unknown>> = {};
   let disposed = false;
   try {

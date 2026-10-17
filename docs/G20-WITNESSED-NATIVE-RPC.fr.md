@@ -1,0 +1,9 @@
+# G20 — Témoin durable dans la chaîne OpenCode RPC de test
+
+Le plugin natif `opencode.webbridge.rpc-fixture` accepte désormais une configuration explicite `WEBBRIDGE_RELAY_WITNESS_DIR`, qui active le journal protégé G19 sans ajouter de données personnelles. Le script E2E `smoke-model-rpc-e2e.mjs` crée deux répertoires temporaires distincts pour le journal et son témoin, puis vérifie la chaîne OpenCode 2.0.29 → modèle fictif → RPC → compagnon local → sortie du modèle.
+
+Le test `native-rpc-witnessed-restart` exerce directement le gestionnaire RPC de test, confirme la version 2 protégée, la non-persistance du prompt, le refus de rejouer un `turnID` après redémarrage et le blocage si la variable de témoin est retirée au redémarrage. La configuration sans variable demeure autorisée seulement pour les anciens fixtures v1 non protégés.
+
+**Important :** un répertoire temporaire frère du journal ne constitue pas à lui seul un stockage physiquement indépendant ou administrativement protégé. Les smokes vérifient la fonctionnalité, pas la résistance à un attaquant ayant accès à tous les répertoires. Le témoin doit être provisionné hors de cette frontière avant une utilisation sensible, et les cinq comptes web commerciaux restent désactivés. La réconciliation d'une panne entre deux écritures reste manuelle et fail-closed.
+
+**Dépendance CI/Windows :** la branche de base #89 n'inclut pas les correctifs de cycle de vie `opencode serve` et de préflight déterministe présents séparément dans la PR Draft #85. Un essai local du smoke natif G20 a reproduit le timeout historique `native run timed out` sous Windows après 45 secondes. Il ne prouve ni l'échec du témoin ni sa validité sur la CLI. Intégrer #85 dans une branche de convergence, puis vérifier un E2E authentique OpenCode 2.0.29 avec témoin, avant de qualifier la partie native ; ne pas ajouter de retry d'action pour masquer l'intermittence.
