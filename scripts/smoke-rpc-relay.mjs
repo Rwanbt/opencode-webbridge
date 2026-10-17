@@ -1,6 +1,6 @@
 /** Smoke the actual OpenCode v2 plugin RPC endpoint with synthetic data only. */
 import { randomBytes } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
