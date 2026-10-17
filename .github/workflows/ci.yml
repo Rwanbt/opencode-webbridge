@@ -37,3 +37,31 @@ jobs:
       - name: Install isolated headless Chromium
         run: npx playwright install --with-deps --only-shell chromium
       - run: npm run smoke:page
+
+  windows-native-smoke:
+    name: Windows native fixtures (OpenCode 2.0.29)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Install exact OpenCode CLI
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.29
+      - name: Verify pinned OpenCode CLI version
+        shell: pwsh
+        run: |
+          $actual = (& .\node_modules\.bin\opencode.cmd --version).Trim()
+          if ($actual -ne '2.0.29') { throw "Unexpected OpenCode version: $actual" }
+      - run: npm run smoke:native
+      - run: npm run smoke:browser
+      - run: npm run smoke:rpc
+      - run: npm run smoke:e2e
+      - name: Install isolated headless Chromium
+        run: npx playwright install --only-shell chromium
+      - run: npm run smoke:page
