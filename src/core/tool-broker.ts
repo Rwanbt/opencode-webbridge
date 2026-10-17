@@ -21,7 +21,7 @@ export interface Operation {
 
 export type ReserveResult =
   | { readonly ok: true; readonly operation: Operation; readonly reused: boolean }
-  | { readonly ok: false; readonly reason: 'invalid-input' | 'capacity' };
+  | { readonly ok: false; readonly reason: 'invalid-input' | 'capacity' | 'scope-conflict' };
 
 export class ToolBroker {
   private readonly ops = new Map<string, Operation>(); // operationID -> op
@@ -47,7 +47,17 @@ export class ToolBroker {
     const existingID = this.byHash.get(proposalHash);
     if (existingID) {
       const existing = this.ops.get(existingID);
-      if (existing) return { ok: true, operation: existing, reused: true };
+      if (existing) {
+        // A reservation is bound to its exact scope. The same proposal hash
+        // presented by a different session/agent/turn/workspace is a
+        // cross-scope confusion attempt and must fail closed, never silently
+        // hand another session's reservation to this caller.
+        if (existing.sessionID !== sessionID || existing.agentID !== agentID ||
+          existing.turnID !== turnID || existing.workspaceID !== workspaceID) {
+          return { ok: false, reason: 'scope-conflict' };
+        }
+        return { ok: true, operation: existing, reused: true };
+      }
     }
     if (this.ops.size >= this.capacity) return { ok: false, reason: 'capacity' };
 

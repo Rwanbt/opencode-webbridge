@@ -68,3 +68,30 @@ test('capacity enforced', () => {
   assert.equal(r2.ok, false);
   if (!r2.ok) assert.equal(r2.reason, 'capacity');
 });
+
+test('same proposal hash under a different scope is rejected, never silently reused', () => {
+  const b = new ToolBroker();
+  assert.equal(b.reserve(base).ok, true);
+  for (const changed of [
+    { sessionID: 'other-session' }, { agentID: 'other-agent' },
+    { turnID: 'other-turn' }, { workspaceID: 'other-workspace' },
+  ]) {
+    const r = b.reserve({ ...base, ...changed });
+    assert.equal(r.ok, false, JSON.stringify(changed));
+    if (!r.ok) assert.equal(r.reason, 'scope-conflict');
+  }
+});
+
+test('a cross-session caller can never obtain another session receipt', () => {
+  const b = new ToolBroker();
+  const r1 = b.reserve(base); // session 's'
+  assert.equal(r1.ok, true);
+  if (!r1.ok) return;
+  const blocked = b.reserve({ ...base, sessionID: 'intruder' });
+  assert.equal(blocked.ok, false);
+  // The original reservation still executes only under its own scope.
+  const c = b.consent(r1.operation.operationID, 2);
+  assert.ok(c && c.status === 'consented' && c.sessionID === 's');
+  const e = b.executed(r1.operation.operationID);
+  assert.ok(e && e.status === 'executed');
+});
