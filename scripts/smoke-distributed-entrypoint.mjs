@@ -138,16 +138,25 @@ async function nativeProof(temp, env, entry, bin, fixture) {
     }
     if (!pluginLoaded) throw new Error('actual installed plugin not active in official CLI: ' +
       stderr.replaceAll(password, '[REDACTED]').slice(-900));
-    const provider = await fetch(base + '/api/provider', {
-      headers, signal: AbortSignal.timeout(3000),
-    });
-    if (!provider.ok) throw new Error('official provider inventory inaccessible');
-    const models = JSON.stringify(await provider.json());
+    const inventory = async () => {
+      const provider = await fetch(base + '/api/provider', {
+        headers, signal: AbortSignal.timeout(3000),
+      });
+      if (!provider.ok) throw new Error('official provider inventory inaccessible');
+      return JSON.stringify(await provider.json());
+    };
+    let models = await inventory();
     if (!fixture && /webbridge-fixture|webbridge-native-fixture|webbridge-g99-page/i.test(models))
       throw new Error('inert distributed entrypoint unexpectedly advertised fixture model');
     if (fixture) {
+      for (let i = 0; i < 20 && !models.includes('webbridge-native-fixture'); i++) {
+        await new Promise((done) => setTimeout(done, 150));
+        models = await inventory();
+      }
       if (!models.includes('webbridge-native-fixture'))
-        throw new Error('G150 opt-in failed to register model in actual root');
+        throw new Error('G150 opt-in failed to register model in actual root: ' +
+          'providerInventory=' + models.slice(-650) +
+          ' cliDiagnostic=' + stderr.slice(-700).replaceAll(password, '[REDACTED]'));
       const headersJSON = { ...headers, 'Content-Type': 'application/json' };
       const call = (scope, secret, nonce) => fetch(
         base + '/api/rpc/webbridge-g81-package/challenge', {
