@@ -85,7 +85,8 @@ test('host registration cannot change while bound; revocation blocks data, still
     { seq: 1, kind: 'text', turnID: 'turn_one', value: 'fixture:hello' },
     { seq: 2, kind: 'finished', turnID: 'turn_one' },
   ]);
-  assert.equal(host.calls.length, 6);
+  // Submit and result each recheck both native permission actions after await.
+  assert.equal(host.calls.length, 10);
   host.revoke();
   await assert.rejects(host.gate.events(binding, 'turn_one', 0), /consent absent/);
   await assert.rejects(host.gate.submit(binding, { turnID: 'turn_two', prompt: 'no' }), /consent absent/);
@@ -114,4 +115,108 @@ test('revocation during permission prompt prevents claim without invoking driver
   await assert.rejects(claiming, /consent absent/);
   await assert.rejects(port.submit(binding, { turnID: 'turn_one', prompt: 'blocked' }), /not owned/);
   unregister();
+});
+
+test('revoked consent during pending read never releases late private browser events', async () => {
+  let entered!: () => void;
+  let release!: (events: { seq: number; kind: 'text'; turnID: string; value: string }[]) => void;
+  const running = new Promise<void>((resolve) => { entered = resolve; });
+  const pending = new Promise<{ seq: number; kind: 'text'; turnID: string; value: string }[]>((resolve) => { release = resolve; });
+  const fixturePort = new FakeBrowserPort();
+  let consent = true;
+  const gate = new BrowserHostCapability({ assert: async () => {} });
+  const registration = gate.register({ binding, consented: async () => consent, port: {
+    claim: (id) => fixturePort.claim(id),
+    submit: (id, input) => fixturePort.submit(id, input),
+    events: async () => { entered(); return pending; },
+    cancel: (id, turnID) => fixturePort.cancel(id, turnID),
+    release: (id) => fixturePort.release(id),
+  } });
+  await gate.claim(binding);
+  const reading = gate.events(binding, 'turn_one', 0);
+  await running;
+  consent = false;
+  release([{ seq: 1, kind: 'text', turnID: 'turn_one', value: 'PRIVATE_PAGE_CONTENT' }]);
+  await assert.rejects(reading, /consent absent|revoked/);
+  await gate.release(binding);
+  registration();
+});
+
+test('permission changed by policy/hook during awaited browser read refuses returned page data', async () => {
+  let entered!: () => void;
+  let release!: () => void;
+  const waiting = new Promise<void>((resolve) => { entered = resolve; });
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  let revoked = false;
+  const gate = new BrowserHostCapability({ assert: async () => {
+    if (revoked) throw new Error('revoked browser policy');
+  } });
+  const registration = gate.register({ binding, consented: async () => true, port: {
+    claim: async () => {}, submit: async () => {},
+    events: async () => { entered(); await pending; return [
+      { seq: 1, kind: 'text' as const, turnID: 't1', value: 'PROTECTED_CONTENT' },
+    ]; },
+    cancel: async () => false, release: async () => {},
+  } });
+  await gate.claim(binding);
+  const reading = gate.events(binding, 't1', 0);
+  await waiting;
+  revoked = true;
+  release();
+  await assert.rejects(reading, /revoked browser policy/);
+  await gate.release(binding);
+  registration();
+});
+
+test('revocation after a dispatched submit cannot falsely acknowledge success or permit blind replay', async () => {
+  let sent!: () => void;
+  let ack!: () => void;
+  const invoked = new Promise<void>((resolve) => { sent = resolve; });
+  const pending = new Promise<void>((resolve) => { ack = resolve; });
+  let consent = true;
+  let calls = 0;
+  const gate = new BrowserHostCapability({ assert: async () => {} });
+  const registration = gate.register({ binding, consented: async () => consent, port: {
+    claim: async () => {},
+    submit: async () => { calls++; sent(); await pending; },
+    events: async () => [],
+    cancel: async () => false,
+    release: async () => {},
+  } });
+  await gate.claim(binding);
+  const request = { turnID: 'turn_dispatched', prompt: 'untrusted page input' };
+  const submitting = gate.submit(binding, request);
+  await invoked;
+  consent = false;
+  ack();
+  await assert.rejects(submitting, /uncertain|revoked/);
+  consent = true;
+  await assert.rejects(gate.submit(binding, request), /reconcile before retry|already/);
+  assert.equal(calls, 1);
+  await gate.release(binding);
+  registration();
+});
+
+test('two concurrent submissions with one turn identity can dispatch only one effect', async () => {
+  let entered!: () => void;
+  let ack!: () => void;
+  const sent = new Promise<void>((resolve) => { entered = resolve; });
+  const pending = new Promise<void>((resolve) => { ack = resolve; });
+  let submitted = 0;
+  const gate = new BrowserHostCapability({ assert: async () => {} });
+  const registration = gate.register({ binding, consented: async () => true, port: {
+    claim: async () => {},
+    submit: async () => { submitted++; entered(); await pending; },
+    events: async () => [], cancel: async () => false, release: async () => {},
+  } });
+  await gate.claim(binding);
+  const input = { turnID: 'same_turn', prompt: 'hello' };
+  const first = gate.submit(binding, input);
+  await sent;
+  await assert.rejects(gate.submit(binding, input), /already dispatched/);
+  ack();
+  await first;
+  assert.equal(submitted, 1);
+  await gate.release(binding);
+  registration();
 });

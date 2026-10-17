@@ -17,6 +17,9 @@ export class BrowserHostCapability implements BrowserPort {
   private host?: BrowserHostRegistration;
   private pending = false;
   private active = false;
+  // Local tombstone: a dispatched turn is never automatically sent twice,
+  // including when its acknowledgement becomes uncertain. Not durable.
+  private readonly dispatched = new Set<string>();
 
   constructor(private readonly permission: Permission) {}
 
@@ -70,14 +73,30 @@ export class BrowserHostCapability implements BrowserPort {
     const host = this.owned(binding, true);
     await this.authorize(host);
     this.owned(binding, true);
-    await host.port.submit(binding, request);
+    assertOpaqueID(request.turnID, 'turnID');
+    if (this.dispatched.has(request.turnID)) throw new Error('browser turn already dispatched: reconcile before retry');
+    if (this.dispatched.size >= 1024) throw new Error('browser dispatched-turn ledger full: reconcile before retry');
+    this.dispatched.add(request.turnID); // Burn before the first asynchronous effect.
+    try {
+      await host.port.submit(binding, request);
+      // Consent, permission or the active host can change while send is pending.
+      await this.authorize(host);
+      this.owned(binding, true);
+    } catch {
+      throw new Error('browser submit outcome uncertain: reconcile before retry');
+    }
   }
 
   async events(binding: TabClaim, turnID: string, afterSeq: number): Promise<readonly TurnEvent[]> {
     const host = this.owned(binding, true);
     await this.authorize(host);
     this.owned(binding, true);
-    return host.port.events(binding, turnID, afterSeq);
+    const events = await host.port.events(binding, turnID, afterSeq);
+    // A browser read may have finished after approval was revoked. Never
+    // release its private result on the strength of the earlier check alone.
+    await this.authorize(host);
+    this.owned(binding, true);
+    return events;
   }
 
   async cancel(binding: TabClaim, turnID: string): Promise<boolean> {
