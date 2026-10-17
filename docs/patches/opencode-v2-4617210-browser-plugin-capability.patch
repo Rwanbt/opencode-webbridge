@@ -2624,10 +2624,10 @@ index aaba261a16..35218e4e72 100644
      "tunnel.read": { input: Schema.Struct(tunnel), output: TunnelRead, errors },
 diff --git a/packages/plugin-browser/test/connection-location.test.ts b/packages/plugin-browser/test/connection-location.test.ts
 new file mode 100644
-index 0000000000..5b9c379e69
+index 0000000000..23935de9c0
 --- /dev/null
 +++ b/packages/plugin-browser/test/connection-location.test.ts
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,108 @@
 +import { expect, test } from "bun:test"
 +import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect"
 +import { AbsolutePath } from "@opencode/schema/schema"
@@ -2723,8 +2723,12 @@ index 0000000000..5b9c379e69
 +    yield* Deferred.await(updateStarted)
 +    expect(Exit.isFailure(yield* Effect.exit(commands.state({ ...base,
 +      state: { tabs: [], focusedTabID: null } }, caller)))).toBe(true)
-+    expect(Exit.isFailure(yield* Effect.exit(commands["tunnel.open"]({ ...base,
-+      target: { host: "127.0.0.1", port: 1 } }, caller)))).toBe(true)
++    const deniedTunnel = yield* Effect.exit(commands["tunnel.open"]({ ...base,
++      target: { host: "127.0.0.1", port: 1 } }, caller))
++    expect(Exit.isFailure(deniedTunnel)).toBe(true)
++    // ECONNREFUSED after a real TCP attempt is NOT a security-gate success.
++    if (Exit.isFailure(deniedTunnel))
++      expect(Cause.pretty(deniedTunnel.cause)).toContain("Browser attachment is unavailable")
 +    yield* Deferred.succeed(resumeGrant, undefined)
 +    yield* Deferred.await(announced)
 +    expect(Exit.isSuccess(yield* Effect.exit(commands.state({ ...base,
