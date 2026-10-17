@@ -2100,10 +2100,10 @@ index 91de480703..c8d73dc902 100644
      publishState(entry)
 diff --git a/packages/gui-extensions/src/browser/read-commit-gate.test.ts b/packages/gui-extensions/src/browser/read-commit-gate.test.ts
 new file mode 100644
-index 0000000000..ea6d8bcbe0
+index 0000000000..76d1123368
 --- /dev/null
 +++ b/packages/gui-extensions/src/browser/read-commit-gate.test.ts
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,123 @@
 +import { expect, test } from "bun:test"
 +import { desktopReadCommitGate, startCommittedRead } from "./read-commit-gate"
 +import { Browser } from "@opencode/plugin-browser/rpc"
@@ -2174,11 +2174,14 @@ index 0000000000..ea6d8bcbe0
 +  const pending = new Promise<string>((resolve) => { finish = resolve })
 +  let live = true
 +  let started = 0
++  let signalStart!: () => void
++  const dispatched = new Promise<void>((resolve) => { signalStart = resolve })
 +  const read = startCommittedRead(Promise.resolve(), () => live, () => {
 +    started++
++    signalStart()
 +    return pending
 +  }, async () => true)
-+  await Promise.resolve()
++  await dispatched // No assumptions about Core RPC microtask scheduling.
 +  expect(started).toBe(1)
 +  live = false // Tab replaced/disconnected AFTER driver invocation, BEFORE result.
 +  finish("private page content must never be delivered")
