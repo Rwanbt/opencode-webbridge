@@ -1,5 +1,5 @@
 import { WEB_PROVIDER_CATALOG, type WebProviderID } from '../catalog.js';
-import { assertOpaqueID, type TabClaim, type TurnRequest } from './browser-port.js';
+import { assertOpaqueID, assertTextOnlyTurn, type TabClaim, type TurnRequest } from './browser-port.js';
 import { evaluateGate, type ProviderGate } from './provider-gate.js';
 
 /** Evidence of browser automation permission is different from user consent. */
@@ -101,7 +101,9 @@ export function assessAdapter(context: AdapterContext, turnID: string): AdapterH
 export async function* authorizedAdapterEvents(
   adapter: ProviderAdapter, context: AdapterContext, request: TurnRequest,
 ): AsyncIterable<AdapterProgress> {
-  assertOpaqueID(request.turnID, 'turnID');
+  // Reject unsupported inputs before interpreting user-supplied fields or ever
+  // reaching an adapter. A future policy approval must not bypass this gate.
+  assertTextOnlyTurn(request);
   const health = assessAdapter(context, request.turnID);
   if (adapter.id !== context.binding.providerID || health !== 'ready') {
     throw new Error(`adapter blocked: ${adapter.id !== context.binding.providerID ? 'account-mismatch' : health}`);

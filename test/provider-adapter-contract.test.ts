@@ -63,6 +63,32 @@ test('authorized adapter wrapper never calls a provider on an unresolved policy'
   assert.equal(called, 0);
 });
 
+test('an unknown media field or accessor is rejected before reaching even a blocked adapter', async () => {
+  let executions = 0;
+  const adapter = {
+    id: 'qwen' as const,
+    async inspect() { return 'ready' as const; },
+    async *execute() { executions++; yield event('complete', 1); },
+    async abort() { return 'uncertain' as const; },
+  };
+  const invalid: unknown[] = [
+    { turnID: 'turn1', prompt: 'safe', image: { data: 'secret' } },
+    Object.defineProperty({ turnID: 'turn1', prompt: 'safe' }, 'attachment',
+      { value: 'private', enumerable: false }),
+    { turnID: 'turn1', prompt: [{ type: 'image_url', url: 'file:///secret' }] },
+    Object.defineProperty({ turnID: 'turn1' }, 'prompt', {
+      enumerable: true, get() { throw new Error('untrusted accessor'); },
+    }),
+  ];
+  for (const request of invalid) {
+    await assert.rejects(async () => {
+      for await (const _ of authorizedAdapterEvents(adapter, context,
+        request as { turnID: string; prompt: string })) {}
+    }, /unsupported|text prompt|fields|plain/i);
+  }
+  assert.equal(executions, 0);
+});
+
 const event = (kind: AdapterProgress['kind'], seq: number, text = 'text'): AdapterProgress => {
   if (kind === 'partial' || kind === 'complete') return { kind, turnID: 'turn1', seq, text };
   if (kind === 'error') return { kind, turnID: 'turn1', seq, health: 'layout-unknown' };

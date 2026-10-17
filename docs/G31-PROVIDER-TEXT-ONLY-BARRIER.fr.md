@@ -1,0 +1,7 @@
+# G31 — Une autorisation contractuelle future ne peut pas contourner la validation multimodale
+
+L'enveloppe `authorizedAdapterEvents` est conçue pour devenir l'unique point d'appel des cinq adaptateurs commercialement autorisés. Jusqu'ici elle contrôlait le `turnID` et les droits du fournisseur, mais **pas** l'absence de pièces jointes ou d'accesseurs dans l'objet de requête. Les protections de `BrowserPort` G18 existaient dans une branche parallèle, mais n'étaient pas réutilisées à ce niveau de politique. Une future ouverture d'un profil fournisseur pourrait donc transmettre des champs inattendus à `adapter.execute`.
+
+Le correctif place `assertTextOnlyTurn` **avant toute évaluation de politique et avant tout appel externe**. Il exige exactement deux champs ordinaires `turnID` et `prompt`, rejette les objets multimédias, symboles, accesseurs et propriétés non énumérables, et applique la borne de 16 000 caractères déjà utilisée par l'échange RPC. Une régression RED→GREEN prouve qu'une requête contenant image, champ caché ou getter n'est pas simplement masquée par l'erreur `review-required` et ne peut parvenir au pilote.
+
+Les cinq profils restent **non autorisés** dans `PROVIDER_POLICY_PROFILES`. Cette protection concerne une interface potentielle future ; elle n'approuve ni ne teste les conditions d'utilisation des services et n'active aucun compte web. La branche inclut les tests hors ligne des cinq identités et le transport fictif, mais pas encore l'adoption upstream du navigateur Desktop et sa permission transactionnelle.
