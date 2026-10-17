@@ -29,6 +29,133 @@ index 8ade682658..218870e15a 100644
          grouped,
          inherit,
          Effect.updateContext((context: Context.Context<never>) =>
+diff --git a/packages/core/src/plugin/browser-lease.ts b/packages/core/src/plugin/browser-lease.ts
+new file mode 100644
+index 0000000000..e6c986c4e7
+--- /dev/null
++++ b/packages/core/src/plugin/browser-lease.ts
+@@ -0,0 +1,121 @@
++export * as BrowserLease from "./browser-lease.js"
++
++import { Effect, Exit } from "effect"
++
++/** The caller/plugin does not construct the actual Desktop binding. */
++export type Binding = Readonly<{
++  pluginID: string
++  pluginGeneration: string
++  agentID: string
++  sessionID: string
++  workspaceID: string
++  turnID: string
++  callID: string
++  connectionID: string
++  tabID: string
++  tabGeneration: number
++  action: string
++}>
++
++export type Ticket = Readonly<{ id: string }>
++
++const fields = [
++  "pluginID",
++  "pluginGeneration",
++  "agentID",
++  "sessionID",
++  "workspaceID",
++  "turnID",
++  "callID",
++  "connectionID",
++  "tabID",
++  "tabGeneration",
++  "action",
++] as const
++
++/** Core-local reference contract; not a Desktop-authorized capability. */
++export function make(input: {
++  readonly authorize: (binding: Binding) => Effect.Effect<void, Error>
++  /** Must resolve to trusted current host/session/turn/driver state, not plugin inputs. */
++  readonly live: (binding: Binding) => boolean
++  readonly clock?: () => number
++  readonly ttlMs?: number
++  readonly authorizeTimeoutMs?: number
++}) {
++  const pending = new Map<string, { binding: Binding; epoch: number; expires: number }>()
++  const reserved = new Set<string>()
++  const clock = input.clock ?? Date.now
++  const ttlMs = input.ttlMs ?? 5000
++  let epoch = 0
++  let retired = false
++  const valid = (binding: Binding) =>
++    binding !== null &&
++    typeof binding === "object" &&
++    Object.keys(binding).length === fields.length &&
++    fields.every((field) => {
++      const value = binding[field]
++      return field === "tabGeneration"
++        ? typeof value === "number" && Number.isSafeInteger(value) && value >= 0
++        : typeof value === "string" && value.length > 0 && value.length <= 1024
++    })
++  const same = (a: Binding, b: Binding) => fields.every((field) => a[field] === b[field])
++  const keyOf = (binding: Binding) => JSON.stringify(fields.map((field) => binding[field]))
++  const revoke = () => {
++    epoch++
++    pending.clear()
++    reserved.clear()
++  }
++  return {
++    issue: (binding: Binding) =>
++      Effect.gen(function* () {
++        if (!valid(binding) || retired || !input.live(binding))
++          return yield* Effect.fail(new Error("Browser lease binding invalid or unavailable"))
++        const observed = epoch
++        const key = keyOf(binding)
++        yield* Effect.sync(() => {
++          if (reserved.has(key)) throw new Error("Browser lease binding already reserved or spent")
++          reserved.add(key)
++        })
++        // This may wait for the user. Any intervening revoke poisons the issue.
++        yield* input.authorize(binding).pipe(
++          Effect.timeout(input.authorizeTimeoutMs ?? 30_000),
++          Effect.onExit((exit) =>
++            Exit.isFailure(exit)
++              ? Effect.sync(() => {
++                  if (epoch === observed) reserved.delete(key)
++                })
++              : Effect.void,
++          ),
++        )
++        return yield* Effect.sync(() => {
++          if (retired || epoch !== observed || !input.live(binding))
++            throw new Error("Browser lease revoked during authorization")
++          const ticket = Object.freeze({ id: crypto.randomUUID() })
++          pending.set(ticket.id, { binding: Object.freeze({ ...binding }), epoch, expires: clock() + ttlMs })
++          return ticket
++        })
++      }),
++    /** Synchronous compare-and-consume; never leave an await between this and a local effect. */
++    consume: (ticket: Ticket, actual: Binding) => {
++      const item = pending.get(ticket.id)
++      if (!item) return false
++      pending.delete(ticket.id) // Fail closed even on a mismatched or expired attempt.
++      return (
++        !retired &&
++        item.epoch === epoch &&
++        clock() < item.expires &&
++        valid(actual) &&
++        same(item.binding, actual) &&
++        input.live(actual)
++      )
++    },
++    revoke,
++    retire: () => {
++      retired = true
++      revoke()
++    },
++    get outstanding() {
++      return pending.size
++    },
++  }
++}
 diff --git a/packages/core/src/plugin/browser.ts b/packages/core/src/plugin/browser.ts
 new file mode 100644
 index 0000000000..ffac36d67b
@@ -547,6 +674,169 @@ index 0000000000..293ba7aeca
 +      }),
 +    ),
 +  )
++})
+diff --git a/packages/core/test/plugin/browser-lease.test.ts b/packages/core/test/plugin/browser-lease.test.ts
+new file mode 100644
+index 0000000000..00356b7879
+--- /dev/null
++++ b/packages/core/test/plugin/browser-lease.test.ts
+@@ -0,0 +1,157 @@
++import { test, expect } from "bun:test"
++import { BrowserLease } from "@opencode/core/plugin/browser-lease"
++import { Deferred, Effect, Exit } from "effect"
++
++const binding = {
++  pluginID: "reader",
++  pluginGeneration: "builtin-g1",
++  agentID: "build",
++  sessionID: "ses_A",
++  workspaceID: "wrk_A",
++  turnID: "msg_A",
++  callID: "call_A",
++  connectionID: "desktop_A",
++  tabID: "tab_A",
++  tabGeneration: 2,
++  action: "snapshot",
++} satisfies BrowserLease.Binding
++
++test("revocation during delayed user authorization fails before issuing any grant", async () => {
++  const waiting = Deferred.makeUnsafe<void>()
++  const resume = Deferred.makeUnsafe<void>()
++  const leases = BrowserLease.make({
++    authorize: () => Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(resume))),
++    live: () => true,
++  })
++  const attempt = Effect.runPromiseExit(leases.issue(binding))
++  await Effect.runPromise(Deferred.await(waiting))
++  leases.revoke()
++  await Effect.runPromise(Deferred.succeed(resume, undefined))
++  expect(Exit.isFailure(await attempt)).toBe(true)
++  expect(leases.outstanding).toBe(0)
++})
++
++test("grant consumes only once and revocation between issue and dispatch refuses it", async () => {
++  const leases = BrowserLease.make({ authorize: () => Effect.void, live: () => true })
++  const first = await Effect.runPromise(leases.issue(binding))
++  expect(leases.consume(first, binding)).toBe(true)
++  expect(leases.consume(first, binding)).toBe(false)
++  const nextCall = { ...binding, callID: "call_next" }
++  const second = await Effect.runPromise(leases.issue(nextCall))
++  leases.revoke()
++  expect(leases.consume(second, nextCall)).toBe(false)
++})
++
++test("impostor plugin, different agent, workspace, turn, tab, connection and exact action fail", async () => {
++  for (const edit of [
++    { pluginID: "impostor" },
++    { pluginGeneration: "foreign-generation" },
++    { agentID: "different-agent" },
++    { sessionID: "ses_B" },
++    { workspaceID: "wrk_B" },
++    { turnID: "msg_B" },
++    { callID: "call_B" },
++    { connectionID: "reconnected" },
++    { tabID: "another-tab" },
++    { tabGeneration: 3 },
++    { action: "click" },
++  ]) {
++    const leases = BrowserLease.make({ authorize: () => Effect.void, live: () => true })
++    const ticket = await Effect.runPromise(leases.issue(binding))
++    expect(leases.consume(ticket, { ...binding, ...edit })).toBe(false)
++    expect(leases.consume(ticket, binding)).toBe(false)
++  }
++})
++
++test("driver reload, timeout and lifecycle retirement fail closed", async () => {
++  let alive = true
++  let time = 100
++  const leases = BrowserLease.make({ authorize: () => Effect.void, live: () => alive, clock: () => time, ttlMs: 5 })
++  const detached = await Effect.runPromise(leases.issue(binding))
++  alive = false
++  expect(leases.consume(detached, binding)).toBe(false)
++  alive = true
++  const nextCall = { ...binding, callID: "call_timeout" }
++  const expired = await Effect.runPromise(leases.issue(nextCall))
++  time += 5
++  expect(leases.consume(expired, nextCall)).toBe(false)
++  const finalCall = { ...binding, callID: "call_retired" }
++  const revoked = await Effect.runPromise(leases.issue(finalCall))
++  leases.retire()
++  expect(leases.consume(revoked, finalCall)).toBe(false)
++  expect(Exit.isFailure(await Effect.runPromiseExit(leases.issue(binding)))).toBe(true)
++})
++
++test("two competing consumers cannot both execute, even when launched together", async () => {
++  const leases = BrowserLease.make({ authorize: () => Effect.void, live: () => true })
++  const ticket = await Effect.runPromise(leases.issue(binding))
++  const results = await Promise.all([
++    Promise.resolve().then(() => leases.consume(ticket, binding)),
++    Promise.resolve().then(() => leases.consume(ticket, binding)),
++  ])
++  expect(results.filter(Boolean)).toHaveLength(1)
++})
++
++test("two overlapping issues of the same exact action cannot mint two usable tickets", async () => {
++  const waiting = Deferred.makeUnsafe<void>()
++  const resume = Deferred.makeUnsafe<void>()
++  const leases = BrowserLease.make({
++    authorize: () => Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(resume))),
++    live: () => true,
++  })
++  const first = Effect.runPromiseExit(leases.issue(binding))
++  await Effect.runPromise(Deferred.await(waiting))
++  const duplicate = Effect.runPromiseExit(leases.issue(binding))
++  await Effect.runPromise(Deferred.succeed(resume, undefined))
++  const results = await Promise.all([first, duplicate])
++  expect(results.filter(Exit.isSuccess)).toHaveLength(1)
++  expect(results.filter(Exit.isFailure)).toHaveLength(1)
++  if (Exit.isSuccess(results[0])) expect(leases.consume(results[0].value, binding)).toBe(true)
++  expect(Exit.isFailure(await Effect.runPromiseExit(leases.issue(binding)))).toBe(true)
++})
++
++test("a malformed or incomplete binding is not authorized", async () => {
++  let calls = 0
++  const leases = BrowserLease.make({
++    authorize: () =>
++      Effect.sync(() => {
++        calls++
++      }),
++    live: () => true,
++  })
++  const incomplete = { pluginID: "reader" } as BrowserLease.Binding
++  expect(Exit.isFailure(await Effect.runPromiseExit(leases.issue(incomplete)))).toBe(true)
++  expect(Exit.isFailure(await Effect.runPromiseExit(leases.issue({ ...binding, tabGeneration: -1 })))).toBe(true)
++  expect(Exit.isFailure(await Effect.runPromiseExit(leases.issue({ ...binding, tabGeneration: "2" as never })))).toBe(
++    true,
++  )
++  expect(calls).toBe(0)
++})
++
++test("forged plugin generation fails against trusted live binding, including after reconnect", async () => {
++  let generation = "builtin-g1"
++  const leases = BrowserLease.make({
++    authorize: () => Effect.void,
++    live: (input) => input.pluginGeneration === generation,
++  })
++  expect(Exit.isFailure(await Effect.runPromiseExit(leases.issue({ ...binding, pluginGeneration: "forged" })))).toBe(
++    true,
++  )
++  const ticket = await Effect.runPromise(leases.issue(binding))
++  generation = "builtin-g2"
++  expect(leases.consume(ticket, binding)).toBe(false)
++})
++
++test("hanging permission authorization times out and issues no grant", async () => {
++  let allow = false
++  const leases = BrowserLease.make({
++    authorize: () => (allow ? Effect.void : Effect.never),
++    live: () => true,
++    authorizeTimeoutMs: 20,
++  })
++  expect(Exit.isFailure(await Effect.runPromiseExit(leases.issue(binding)))).toBe(true)
++  expect(leases.outstanding).toBe(0)
++  allow = true
++  const ticket = await Effect.runPromise(leases.issue(binding))
++  expect(leases.consume(ticket, binding)).toBe(true)
 +})
 diff --git a/packages/core/test/plugin/browser-one-shot.test.ts b/packages/core/test/plugin/browser-one-shot.test.ts
 new file mode 100644

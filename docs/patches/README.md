@@ -4,7 +4,9 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `482F2355C465E0BBC7BDB286E3C29804BCF3C4BB58C2950BAA7C905DBF56DA4A`.
+Patch SHA-256: `08604EB7B35E95B23498FB159139C7C3FA40565852BF5B11C8345F3AC39D246D`.
+
+The next stacked Draft adds the **Core-only BrowserLease reference contract** and adversarial tests. Its non-integrated nature and the missing atomic Desktop grant consumption are recorded in [ADR 0003](../ADR/0003-v2-transactional-browser-grant-tcb.md). **No native read/write dispatch uses this new ledger yet**; prior `snapshotOnce` is unchanged.
 
 An additional [one-shot read authority proposal](./one-shot-read-authorization.md) is stacked on #84. It pins a live Core tool turn, trusted plugin generation, workspace, Desktop attachment, tab generation and exact read action. **Only this new snapshotOnce path is one-use; the older read methods are not.** Its limitations and reasons to withhold native writes are recorded separately.
 
