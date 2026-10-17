@@ -2292,7 +2292,7 @@ index 0000000000..bd830ae574
 +  return result
 +}
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
-index 4c6838c70f..b01dddd270 100644
+index 4c6838c70f..2f009ba163 100644
 --- a/packages/plugin-browser/src/connection.ts
 +++ b/packages/plugin-browser/src/connection.ts
 @@ -10,9 +10,15 @@ import { BrowserTunnel } from "./tunnel.js"
@@ -2308,7 +2308,7 @@ index 4c6838c70f..b01dddd270 100644
 +  pending: Map<string, { command: Browser.Command; result: Deferred.Deferred<Browser.Result, Tool.Error>;
 +    read?: { readonly ticket: string; readonly tabID: Browser.TabID; readonly generation: number;
 +      readonly expires: number; readonly authorized: () => boolean;
-+      consumed: boolean; committed: boolean } }>
++      consumed: boolean; committed: boolean; live: boolean } }>
    tunnels: BrowserTunnel.Tunnels
  }
  
@@ -2444,7 +2444,7 @@ index 4c6838c70f..b01dddd270 100644
              return yield* Effect.fail(call.error("unavailable", "Browser is unavailable.", {}))
            browser.state = input.state
          }),
-@@ -115,18 +150,51 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -115,18 +150,55 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
          Effect.gen(function* () {
            const browser = browsers.get(input.sessionID)
            const pending =
@@ -2477,6 +2477,7 @@ index 4c6838c70f..b01dddd270 100644
 +            browser.state.tabs.some((tab) => tab.id === read.tabID && tab.generation === read.generation)
 +          // Once the Core lease or tab is stale, never resurrect this spent grant.
 +          if (!allowed) read.committed = false
++          if (allowed) read.live = true
 +          return allowed
 +        }),
        result: (input, call) =>
@@ -2489,16 +2490,19 @@ index 4c6838c70f..b01dddd270 100644
            if (!pending) return
 +          if (pending.read) {
 +            const read = pending.read
-+            if (!read.committed || !read.authorized() || !browser.state.tabs.some((tab) =>
++            if (!read.committed || !read.live || !read.authorized() || !browser.state.tabs.some((tab) =>
 +                tab.id === read.tabID && tab.generation === read.generation)) {
 +              read.committed = false
++              yield* Deferred.fail(pending.result, new Tool.Error({
++                message: "Browser read lacked a current Core read.live authorization.",
++              }))
 +              return yield* Effect.fail(call.error("unavailable", "Uncommitted or stale read cannot return a result.", {}))
 +            }
 +          }
            if (input.outcome.type === "failure")
              return yield* Deferred.fail(
                pending.result,
-@@ -163,6 +231,19 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -163,9 +235,22 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
    )
  
    return {
@@ -2517,8 +2521,12 @@ index 4c6838c70f..b01dddd270 100644
 +      }),
      target: Effect.fn("BrowserConnection.target")(function* (sessionID: Session.ID, action: Browser.Action) {
        const browser = browsers.get(sessionID)
-       if (!browser)
-@@ -177,10 +258,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+-      if (!browser)
++      if (!browser || !browser.ready || browser.closing)
+         return yield* new Tool.Error({
+           message:
+             "[browser.disconnected] No desktop browser is connected to this session. Open this session in the desktop app and wait for it to connect. Then call browser.tabs.list({}). Repeating browser actions while disconnected will not help.",
+@@ -177,10 +262,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              "[browser.tab_unavailable] This tab is closed or does not belong to the connected session. Call browser.tabs.list({}) and use an exact returned tabID. If no tabs exist, use browser.tabs.open({}). Never substitute a request ID, file ID, or element ref for tabID.",
          })
        // Keep the selected attachment and document, even while permissions or file IO wait.
@@ -2534,7 +2542,7 @@ index 4c6838c70f..b01dddd270 100644
              Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
              Effect.mapError(
                (error) =>
-@@ -194,7 +279,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -194,7 +283,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              ),
            ),
          request: (files: readonly Browser.File[], target?: Browser.Target) =>
@@ -2545,7 +2553,7 @@ index 4c6838c70f..b01dddd270 100644
 +            if (!Browser.legacyActionAllowed(action.type))
 +              return yield* new Tool.Error({ message: "Legacy browser content read lacks Core authority; use snapshotOnce for snapshots." })
 +            if (
-+              !active ||
++              !active || !browser.ready || browser.closing ||
 +              browsers.get(sessionID) !== browser ||
 +              (tab && browser.state.tabs.find((item) => item.id === tab.id)?.generation !== tab.generation)
 +            )
@@ -2561,7 +2569,7 @@ index 4c6838c70f..b01dddd270 100644
 +            once = true // Burn before any asynchronous work, including disconnection.
 +            if (!stillAuthorized())
 +              return yield* new Tool.Error({ message: "Core permission was revoked before snapshot dispatch." })
-+            if (!active || browsers.get(sessionID) !== browser ||
++            if (!active || !browser.ready || browser.closing || browsers.get(sessionID) !== browser ||
 +              browser.state.tabs.find((item) => item.id === tab.id)?.generation !== tab.generation)
 +              return yield* new Tool.Error({ message: "Read-only snapshot attachment or tab changed." })
 +            return yield* request(rpc, browser, action, tab, [], {}, stillAuthorized)
@@ -2569,7 +2577,7 @@ index 4c6838c70f..b01dddd270 100644
        }
      }),
    }
-@@ -207,6 +318,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -207,6 +322,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
    tab: Browser.Tab | undefined,
    files: readonly Browser.File[],
    inspection: Pick<Browser.Command, "inspect" | "target">,
@@ -2577,7 +2585,7 @@ index 4c6838c70f..b01dddd270 100644
  ) {
    const requestID = crypto.randomUUID()
    const pending = yield* Deferred.make<Browser.Result, Tool.Error>()
-@@ -214,9 +326,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -214,9 +330,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
      (action.type === "files.upload" || action.type === "files.drop") && !inspection.inspect
        ? { ...action, paths: files.map((file) => file.name) }
        : action
@@ -2588,7 +2596,7 @@ index 4c6838c70f..b01dddd270 100644
 +      ...(ticket ? { readCommit: ticket } : {}) },
      result: pending,
 +    ...(ticket && tab ? { read: { ticket, tabID: tab.id, generation: tab.generation,
-+      expires: performance.now() + 5000, authorized: readGuard!, consumed: false, committed: false } } : {}),
++      expires: performance.now() + 5000, authorized: readGuard!, consumed: false, committed: false, live: false } } : {}),
    })
    return yield* rpc.events.emit("control", { type: "command", connectionID: browser.connectionID, requestID }).pipe(
      Effect.mapError(
@@ -3403,10 +3411,10 @@ index 0000000000..23935de9c0
 +})
 diff --git a/packages/plugin-browser/test/read-commit.test.ts b/packages/plugin-browser/test/read-commit.test.ts
 new file mode 100644
-index 0000000000..d26051debc
+index 0000000000..7ab7a9b35d
 --- /dev/null
 +++ b/packages/plugin-browser/test/read-commit.test.ts
-@@ -0,0 +1,269 @@
+@@ -0,0 +1,291 @@
 +import { expect, test } from "bun:test"
 +import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect"
 +import { AbsolutePath } from "@opencode/schema/schema"
@@ -3511,12 +3519,34 @@ index 0000000000..d26051debc
 +    const command = yield* commands.command({ ...base, requestID }, caller)
 +    expect(yield* commands["read.commit"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(true)
 +    expect(yield* commands["read.commit"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(false)
++    expect(yield* commands["read.live"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(true)
 +    yield* commands.result({ ...base, requestID, outcome: { type: "success", result: {
 +      value: { content: "WEBBRIDGE_LOCAL_PAGE_OK:fixture", truncated: false }, files: [],
 +    } } }, caller)
 +    const response = (yield* Fiber.join(reading)) as { value: { content: string } }
 +    expect(response.value.content).toBe("WEBBRIDGE_LOCAL_PAGE_OK:fixture")
 +    expect(Exit.isFailure(yield* Effect.exit(target.requestOnce([], () => true)))).toBe(true)
++  }))
++})
++
++test("a forged or stale Desktop cannot disclose a committed snapshot without Core read.live", async () => {
++  await harness(({ target, commands, next, base }) => Effect.gen(function* () {
++    const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
++    const requestID = yield* Deferred.await(next)
++    const caller = { error: (_: string, message: string) => new Error(message) }
++    const command = yield* commands.command({ ...base, requestID }, caller)
++    expect(yield* commands["read.commit"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(true)
++    // The token is consumed, but Chromium must not return page contents
++    // until Core independently authorizes a read.live immediately before effect.
++    const outcome = { type: "success", result: { value: { content: "PRIVATE_DOC_UNCOMMITTED_LIVE", truncated: false }, files: [] } }
++    expect(Exit.isFailure(yield* Effect.exit(commands.result({ ...base, requestID, outcome }, caller)))).toBe(true)
++    expect(yield* commands["read.live"]({ ...base, requestID, ticket: "forged" }, caller)).toBe(false)
++    // An early attempted disclosure irreversibly revokes this read.
++    expect(yield* commands["read.live"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(false)
++    // Retired requests may ACK a duplicate RPC for compatibility but never deliver data.
++    yield* commands.result({ ...base, requestID, outcome }, caller)
++    // Fail the waiting tool promptly rather than leaving a 60-second timeout.
++    expect(Exit.isFailure(yield* Fiber.await(reading))).toBe(true)
 +  }))
 +})
 +
