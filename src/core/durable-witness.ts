@@ -45,9 +45,11 @@ export class DurableWitness {
       if (journalExists) throw new Error('missing witness: explicit secure enrollment required');
       return witness;
     }
-    if (!journalExists || !lstatSync(file).isFile() || lstatSync(file).size > 1024) {
+    const entry = lstatSync(file);
+    if (!journalExists || !entry.isFile() || entry.size > 1024) {
       throw new Error('witness cannot be reused or is invalid');
     }
+    if (entry.nlink !== 1) throw new Error('witness hardlink violates external trust boundary');
     let raw: unknown;
     try { raw = JSON.parse(readFileSync(file, 'utf8')); }
     catch { throw new Error('invalid witness record'); }
@@ -74,6 +76,9 @@ export class DurableWitness {
     }
     // Re-read before transition, detecting out-of-band witness replacement or deletion.
     if (this.current) {
+      if (!existsSync(this.file) || lstatSync(this.file).nlink !== 1) {
+        throw new Error('witness hardlink or missing record: external trust boundary lost');
+      }
       if (!existsSync(this.file) || readFileSync(this.file, 'utf8') !== JSON.stringify(this.current)) {
         throw new Error('witness changed outside current journal owner');
       }

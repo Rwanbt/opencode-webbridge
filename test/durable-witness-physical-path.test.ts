@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
   symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +31,35 @@ test('external witness cannot be placed physically inside journal through a pare
     assert.deepEqual(reopen.status(), [{ turnID: 'safe', phase: 'prepared' }]);
     reopen.close();
   } finally { rmSync(root, { force: true, recursive: true }); }
+});
+
+test('external witness record must not share an inode with a hardlink inside the journal', () => {
+  const root = mkdtempSync(join(tmpdir(), 'webbridge-e2-hardlink-'));
+  const journalDir = join(root, 'journal');
+  const witnessDir = join(root, 'witness');
+  try {
+    const first = DurableRelayJournal.open(journalDir, owner, key, { witnessDir });
+    first.prepare('turn1'); first.close();
+    const witness = join(witnessDir, readdirSync(witnessDir).find((f) => f.endsWith('.json'))!);
+    linkSync(witness, join(journalDir, 'internal-hardlink.json'));
+    assert.throws(() => DurableRelayJournal.open(journalDir, owner, key, { witnessDir }),
+      /witness.*(hardlink|links|outside|physical)/i);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('in-process witness rejects a newly added hardlink before next journal transition', () => {
+  const root = mkdtempSync(join(tmpdir(), 'webbridge-e2-hardlink-live-'));
+  const journalDir = join(root, 'journal');
+  const witnessDir = join(root, 'witness');
+  try {
+    const live = DurableRelayJournal.open(journalDir, owner, key, { witnessDir });
+    live.prepare('turn1');
+    const witness = join(witnessDir, readdirSync(witnessDir).find((f) => f.endsWith('.json'))!);
+    linkSync(witness, join(journalDir, 'internal-hardlink.json'));
+    assert.throws(() => live.cancelled('turn1'), /witness.*(hardlink|outside|boundary)/i);
+    assert.deepEqual(live.status(), [{ turnID: 'turn1', phase: 'prepared' }]);
+    live.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('both cross-file crash orderings refuse replay without operator recovery', () => {
