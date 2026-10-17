@@ -156,6 +156,8 @@ jobs:
         run: node --test dist/test/tool-proposal.test.js dist/test/tool-flow.test.js dist/test/workspace-path.test.js
       - name: G136 prevent concurrent double-effect and uncertain replay (fixture authority only)
         run: node --test dist/test/effect-broker.test.js dist/test/tool-broker.test.js
+      - name: G140 durable anti-replay fence restart/rollback/lock (local temp files only)
+        run: node --test dist/test/durable-operation-fence.test.js
 
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
