@@ -21,6 +21,7 @@
     "preview:rpc-package": "node scripts/offline-rpc-package.mjs",
     "smoke:rpc-package-native": "node scripts/offline-rpc-package.mjs --native",
     "smoke:packaged-model": "npm run build && node scripts/smoke-packaged-model.mjs",
+    "check:desktop-g92": "node scripts/g92-desktop-preflight.mjs",
     "smoke:package-native": "node scripts/offline-package-preview.mjs --native",
     "smoke:native": "npm run build && node scripts/smoke-native-provider.mjs",
     "smoke:browser": "npm run build && node scripts/smoke-native-provider.mjs --browser-fixture",

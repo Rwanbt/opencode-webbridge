@@ -64,6 +64,8 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build
+      - name: G92 official installed Desktop safe preflight only (never starts Electron)
+        run: npm run check:desktop-g92
       - name: Native protocol and fail-closed deltas, no browser or account
         run: node --test dist/test/browser-exchange.test.js dist/test/rpc-relay-port.test.js dist/test/rpc-browser-port.test.js dist/test/fixture-inference.test.js
 
