@@ -142,11 +142,40 @@ export class BrowserHostCapability implements BrowserPort {
   }
 
   async cancel(binding: TabClaim, turnID: string): Promise<boolean> {
-    return this.owned(binding, true).port.cancel(binding, turnID);
+    assertOpaqueID(turnID, 'turnID');
+    const host = this.owned(binding, true);
+    // Cancellation delegates to the host driver; a finished/claimed turn
+    // reports false. Authority is re-checked around the await so a late
+    // revocation cannot be silently ignored for an in-flight cancel.
+    try {
+      await this.authorize(host);
+    } catch {
+      return false;
+    }
+    this.owned(binding, true);
+    let result: boolean;
+    try {
+      result = await host.port.cancel(binding, turnID);
+    } catch {
+      throw new Error('browser cancel outcome uncertain: reconcile before retry');
+    }
+    if (result) this.dispatched.delete(turnID);
+    try {
+      await this.authorize(host);
+      this.owned(binding, true);
+    } catch {
+      // Consent revoked during cancel: report uncertain rather than success.
+      throw new Error('browser cancel outcome uncertain: reconcile before retry');
+    }
+    return result;
   }
 
   async release(binding: TabClaim): Promise<void> {
-    await this.owned(binding, true).port.release(binding);
+    // Cleanup must remain possible even after consent/permission revocation;
+    // otherwise a revoked host could never release its binding.
+    const host = this.owned(binding, true);
+    await host.port.release(binding);
+    this.dispatched.clear();
     this.active = false;
   }
 }
