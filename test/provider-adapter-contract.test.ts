@@ -36,8 +36,14 @@ test('policy matrix covers every provider and never silently approves automation
   }
 });
 
+test('Qwen consumer May 19 2026 terms prohibit automated extraction, not merely unverified', () => {
+  const policy = PROVIDER_POLICY_PROFILES.qwen;
+  assert.equal(policy.automatedOutput, 'prohibited');
+  assert.equal(assessAdapter(context, 'turn1'), 'policy-blocked');
+});
+
 test('consent and a forged ready gate cannot override policy; identities cannot cross tenants', () => {
-  assert.equal(assessAdapter(context, 'turn1'), 'review-required');
+  assert.equal(assessAdapter(context, 'turn1'), 'policy-blocked');
   assert.equal(assessAdapter({ ...context, binding: { ...context.binding, providerID: 'gemini' } }, 'turn1'), 'account-mismatch');
   assert.equal(assessAdapter({ ...context, gate: { ...gate, id: 'chatgpt' } }, 'turn1'), 'account-mismatch');
   const approvedLooking = { ...context, gate: { ...gate, id: 'deepseek' as const },
@@ -59,7 +65,7 @@ test('authorized adapter wrapper never calls a provider on an unresolved policy'
     async abort() { return 'uncertain' as const; },
   };
   const consume = async () => { for await (const _ of authorizedAdapterEvents(adapter, context, { turnID: 'turn1', prompt: 'hi' })) {} };
-  await assert.rejects(consume(), /review-required/);
+  await assert.rejects(consume(), /policy-blocked/);
   assert.equal(called, 0);
 });
 

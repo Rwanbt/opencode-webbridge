@@ -21,7 +21,7 @@ test('all five signed-in fixture accounts still have blocked policy and zero ada
     assert.equal(await adapter.inspect(ctx), 'authentication-required');
     fixture.observe(ctx.binding, 'fixture-ui', 1, 'signed-in');
     assert.deepEqual(fixture.status(ctx.binding), { health: 'ready', source: 'fixture-ui' });
-    const policy = provider.id === 'gemini' || provider.id === 'qwen' ? 'review-required' : 'policy-blocked';
+    const policy = provider.id === 'gemini' ? 'review-required' : 'policy-blocked';
     assert.equal(await adapter.inspect(ctx), policy);
     await assert.rejects(async () => {
       for await (const _ of authorizedAdapterEvents(adapter, ctx, { turnID: 'turn1', prompt: 'fixture only' })) {}

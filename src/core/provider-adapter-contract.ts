@@ -34,7 +34,7 @@ export const PROVIDER_POLICY_PROFILES: Readonly<Record<WebProviderID, ProviderPo
     automatedOutput: 'conditional-unverified', streaming: 'unverified', tools: 'blocked', attachments: 'blocked' }),
   qwen: Object.freeze({ id: 'qwen', termsURL: 'https://qwen.ai/termsservice',
     termsDate: '2026-05-19', reviewedOn: '2026-10-17', automatedInput: 'unverified',
-    automatedOutput: 'unverified', streaming: 'unverified', tools: 'blocked', attachments: 'blocked' }),
+    automatedOutput: 'prohibited', streaming: 'blocked', tools: 'blocked', attachments: 'blocked' }),
   mistral: Object.freeze({ id: 'mistral', termsURL: 'https://legal.mistral.ai/terms/eu-consumers-terms-of-service/',
     termsDate: '2026-10-08', reviewedOn: '2026-10-17', automatedInput: 'unverified',
     automatedOutput: 'prohibited', streaming: 'blocked', tools: 'blocked', attachments: 'blocked' }),
