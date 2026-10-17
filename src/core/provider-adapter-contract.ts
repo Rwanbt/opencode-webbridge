@@ -79,9 +79,37 @@ export function snapshotAdapterTurn(request: unknown): Readonly<TurnRequest> {
   return Object.freeze({ turnID: id, prompt });
 }
 
+/** Reject accessor/hidden ownership and consent fields without reading them. */
+function exactData(value: unknown, fields: readonly string[]): Readonly<Record<string, unknown>> {
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype ||
+    Reflect.ownKeys(value).length !== fields.length) throw new Error('invalid adapter authorization context');
+  const copy: Record<string, unknown> = {};
+  for (const key of fields) {
+    const field = Object.getOwnPropertyDescriptor(value, key);
+    if (!field?.enumerable || !Object.hasOwn(field, 'value')) {
+      throw new Error('invalid adapter authorization context');
+    }
+    copy[key] = field.value;
+  }
+  return Object.freeze(copy);
+}
+
+export function snapshotAdapterContext(context: unknown): Readonly<AdapterContext> {
+  const root = exactData(context, ['binding', 'gate', 'consent']);
+  const binding = exactData(root.binding, ['sessionID', 'providerID', 'tabID', 'accountRef']);
+  const gate = exactData(root.gate, ['id', 'policy', 'transport', 'browser', 'authenticated',
+    'consented', 'textInput', 'textOutput', 'tools', 'streaming']);
+  const consent = root.consent === null ? null : exactData(root.consent,
+    ['providerID', 'accountRef', 'sessionID', 'turnID', 'operation', 'approved']);
+  return Object.freeze({ binding, gate, consent }) as unknown as Readonly<AdapterContext>;
+}
+
 /** Static policy cannot be overridden by a forged runtime gate or consent. */
 export function assessAdapter(context: AdapterContext, turnID: string): AdapterHealthCode {
-  const { binding, gate, consent } = context;
+  let captured: Readonly<AdapterContext>;
+  try { captured = snapshotAdapterContext(context); }
+  catch { return 'account-mismatch'; }
+  const { binding, gate, consent } = captured;
   if (![binding.sessionID, binding.tabID, binding.accountRef, turnID].every((id) =>
     typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id))) return 'account-mismatch';
   if (!WEB_PROVIDER_CATALOG.some(({ id }) => id === binding.providerID) || gate.id !== binding.providerID) {
@@ -112,11 +140,16 @@ export async function* authorizedAdapterEvents(
   // Reject unsupported inputs before interpreting user-supplied fields or ever
   // reaching an adapter. A future policy approval must not bypass this gate.
   const fixed = snapshotAdapterTurn(request);
-  const health = assessAdapter(context, fixed.turnID);
-  if (adapter.id !== context.binding.providerID || health !== 'ready') {
-    throw new Error(`adapter blocked: ${adapter.id !== context.binding.providerID ? 'account-mismatch' : health}`);
+  let captured: Readonly<AdapterContext>;
+  try { captured = snapshotAdapterContext(context); }
+  catch { throw new Error('adapter blocked: account-mismatch'); }
+  const health = assessAdapter(captured, fixed.turnID);
+  if (health !== 'ready') throw new Error(`adapter blocked: ${health}`);
+  const id = Object.getOwnPropertyDescriptor(adapter, 'id');
+  if (!id || !Object.hasOwn(id, 'value') || id.value !== captured.binding.providerID) {
+    throw new Error('adapter blocked: account-mismatch');
   }
-  yield* validatedAdapterProgress(adapter.execute(context, fixed), fixed.turnID);
+  yield* validatedAdapterProgress(adapter.execute(captured, fixed), fixed.turnID);
 }
 
 /** A terminal result must not be exposed before the producer closes cleanly. */

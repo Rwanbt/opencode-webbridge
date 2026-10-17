@@ -58,6 +58,59 @@ test('consent and a forged ready gate cannot override policy; identities cannot 
   assert.equal(assessAdapter(context, 'turn2'), 'consent-required');
 });
 
+test('adapter authorization never executes accessors or accepts hidden owner fields', () => {
+  let getters = 0;
+  const owner = Object.defineProperty({ ...context.binding }, 'accountRef', {
+    enumerable: true, get() { getters++; return 'accountA'; },
+  });
+  const permission = Object.defineProperty({ ...context.gate }, 'policy', {
+    enumerable: true, get() { getters++; throw new Error('Bearer DO-NOT-LEAK'); },
+  });
+  const hidden = Object.defineProperty({ ...context }, 'credential', {
+    enumerable: false, value: 'SESSION-COOKIE',
+  });
+  for (const candidate of [
+    { ...context, binding: owner },
+    { ...context, gate: permission },
+    hidden,
+  ]) {
+    assert.equal(assessAdapter(candidate, 'turn1'), 'account-mismatch');
+  }
+  assert.equal(getters, 0);
+});
+
+test('blocked provider does not invoke hostile adapter identity accessor', async () => {
+  let getters = 0;
+  let effects = 0;
+  const hostile = {
+    get id() { getters++; throw new Error('Bearer SECRET-IDENTITY'); },
+    async inspect() { return 'ready' as const; },
+    async *execute() { effects++; yield event('complete', 1, 'never'); },
+    async abort() { return 'uncertain' as const; },
+  };
+  await assert.rejects(async () => {
+    for await (const _ of authorizedAdapterEvents(hostile as unknown as import('../src/core/provider-adapter-contract.js').ProviderAdapter,
+      context, { turnID: 'turn1', prompt: 'no automation' })) { /* intentionally empty */ }
+  }, /adapter blocked: policy-blocked/);
+  assert.equal(getters, 0);
+  assert.equal(effects, 0);
+});
+
+test('captured provider authorization context remains stable across asynchronous callbacks', async () => {
+  const original: AdapterContext = { binding: { ...context.binding }, gate: { ...context.gate },
+    consent: { ...context.consent! } };
+  const { snapshotAdapterContext } = await import('../src/core/provider-adapter-contract.js');
+  const fixed = snapshotAdapterContext(original);
+  assert.notStrictEqual(fixed, original);
+  assert.equal(Object.isFrozen(fixed.binding), true);
+  assert.equal(Object.isFrozen(fixed.gate), true);
+  assert.equal(Object.isFrozen(fixed.consent), true);
+  (original.binding as { accountRef: string }).accountRef = 'victim';
+  (original.gate as { policy: string }).policy = 'prohibited';
+  assert.equal(fixed.binding.accountRef, 'accountA');
+  assert.equal(fixed.gate.policy, 'permitted');
+});
+
 test('authorized adapter wrapper never calls a provider on an unresolved policy', async () => {
   let called = 0;
   const adapter = {
