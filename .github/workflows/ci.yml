@@ -247,6 +247,24 @@ jobs:
       - name: G153 actual root native selected model DOM RPC Git effects read-only before SSE
         run: npm run smoke:g153-root-git
 
+  g155-explicit-cdp-readonly:
+    name: G155 explicit user CDP discovery and read-only heading transport
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - name: Real Chromium CDP permitted tab and replaced/hostile negative checks
+        run: node --test dist/test/g155-explicit-cdp-read.test.js
+        env:
+          G155_REAL_CDP: '1'
+
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
     runs-on: ubuntu-latest
