@@ -193,6 +193,23 @@ jobs:
       - name: Build and lifecycle-test the ACTUAL inert WebBridge entrypoint, not a synthetic fixture
         run: npm run smoke:actual-package-native
 
+  g147-native-host-authorization:
+    name: G147 official CLI 2.0.32 native host authorization NO-GO probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - name: G147 execute SDK, official Desktop source, HTTP cross-process RPC and fail-closed attestation probe
+        run: node --test scripts/test-g147-native-host-authorization.mjs
+        env:
+          G147_OFFICIAL_CLI: '1'
+
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
     runs-on: ubuntu-latest

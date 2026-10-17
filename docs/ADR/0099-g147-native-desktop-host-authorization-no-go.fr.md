@@ -1,0 +1,17 @@
+# ADR 0099 — G147, preuve négative d'autorité Desktop depuis le plugin public
+
+**Décision : NO-GO d'attestation OS/Desktop, sans activation.** Branche isolée issue exclusivement de G146 #224, SHA `05cf830d1f0601ae93e083f2533a85d5363c0e30` (push `39074443062` et PR `39074493225` réussis 8/8 chacun). Aucun changement de `src/index.ts`, `src/plugin.ts`, de l'application installée, des fournisseurs E5 ni du patch Core V2.
+
+## Contrats officiels réellement inspectés
+
+Le SDK public `@opencode/plugin@2.0.29` épinglé expose `Context.permission` et `Context.rpc`, sans `VerifiedDesktopPeer`, session IPC OS ou epoch de révocation transport. Le handler RPC `promise` reçoit `signal` et `error`, et `effect` seulement `error` ; ils ne donnent aucune preuve d'origine OS au plugin. `permission.assert` règle une demande de permission du Core, **pas** l'identité native du processus appelant. La vérification SHA-256 du patch natif appliqué au Core officiel `4617210822bdbb31e5749751afbfb4584ccedac8` reste exactement `77B5FF872F5F3D1EB641896AD16FC6C50D8F21AD54BFA797D7519F1990A0685F`. Le patch constate lui-même l'absence d'identité transport dans `RpcCallContext` et refuse le premier `experimental.browser.attach` en l'absence de `DesktopAttachAuthority` fiable.
+
+La sonde G147 réemploie la lecture vérifiée des quatre fichiers source officiels du Desktop/SDK au tag 2.0.32, puis exécute le handler d'installation d'extension de l'Electron empaqueté **dans une VM avec doubles**, démontrant son refus sans aucun effet host. Cette partie reste un test de **source officielle**, jamais un lancement d'Electron.
+
+## Expérience CLI native : contre-exemple RED et refus GREEN
+
+Sous Linux CI, un profil OpenCode et une instance `@opencode/cli@2.0.32` officielle sont créés dans un répertoire temporaire ; un plugin **de diagnostic uniquement** y enregistre une RPC portable `inspect`. Deux appelants distincts (processus de test et processus Node enfant) présentent le **même Basic bearer éphémère** et les mêmes revendications `claimedElectron`, `peerPID`, `verified`, `ipcSession`, `revocationEpoch`, plus des headers pseudo-Desktop. Le cas RED montre qu'accorder l'autorité sur la seule base de ces valeurs serait contournable. Le cas GREEN examine le **contexte réel fourni par OpenCode à la RPC** : aucun principal OS/Desktop vérifié n'est transmis ; toute demande d'attache privilégiée reste refusée en l'absence d'un tel canal. Le fait que les deux processus puissent appeler la RPC ordinaire démontre précisément que Basic/JSON/header ne prouvent pas l'identité Desktop.
+
+Cette sonde vérifie un chemin RPC réel du CLI officiel mais **n'exécute ni Desktop Electron réel ni IPC OS**. L'absence constatée dans ce chemin ne constitue pas une preuve universelle d'impossibilité technique : seul un contrat upstream de canal OS authentifié, avec autorité Core propriétaire, epoch de révocation, permissions et validation Desktop packagé peut lever le NO-GO. Aucun patch upstream spéculatif n'a été produit.
+
+Les seuils restent `commercialProvidersOperational=[]` (0/5), `productionAcceptedStoryIDs=[]` (0/54), `webbridgeWritesEnabled=false`, `nativeDesktopElectronE2E=false` ; aucune lecture browser commerciale ou écriture n'est activée. G125/G130, les tests Linux de G145, le vrai paquet racine inerte G143 et la sécurité native G141 restent qualifiés séparément en CI, sans prétendre à leur co-exécution dans un même processus Electron.
