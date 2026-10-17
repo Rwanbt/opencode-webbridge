@@ -88,6 +88,8 @@ export class OfflineToolPermissionReview {
     readonly authorityEpoch: () => string;
     readonly permission: NativePermission;
     readonly tools: ReadonlyMap<string, NativeToolDefinition>;
+    /** Native-owned durable single-use journal precommit; must complete synchronously. */
+    readonly reserveOperation?: (operationID: string, scope: ToolScope) => void;
   }) {}
 
   async review(raw: unknown): Promise<{ readonly status: 'checked-only'; readonly operationID: string }> {
@@ -132,6 +134,10 @@ export class OfflineToolPermissionReview {
     if (this.attempted.size >= 1024) throw new Error('native tool review capacity exhausted; operator recovery required');
     this.attempted.add(proposal.operationID); // before first await, including denied/uncertain prompts
     current();
+    if (this.host.reserveOperation) {
+      const saved: unknown = this.host.reserveOperation(proposal.operationID, scope);
+      if (saved !== undefined) throw new Error('native tool durable reservation must complete synchronously');
+    }
     await this.host.permission.assert({ ...input, resources: [...resources] });
     current();
     await this.host.permission.assert({ ...input, resources: [...resources] }); // re-evaluate after consent
