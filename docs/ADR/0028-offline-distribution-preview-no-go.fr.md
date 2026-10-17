@@ -25,7 +25,9 @@ HOME/APPDATA/XDG dans ce dossier et sans héritage des credentials.
 Aucun `npm install -g`, aucune écriture à la config de l'OpenCode officiel.
 Une vérification facultative lance **un seul serveur OpenCode CLI 2.0.29** sous
 ce profil isolé, sans Chromium, et exige que `/api/plugin` expose l'identité
-du paquet installé. La CI réutilise la CLI déjà présente dans le job G1.
+du paquet installé. Le serveur impose un mot de passe éphémère généré localement,
+et la vérification utilise uniquement cette authentification HTTP locale ;
+les diagnostics masquent sa valeur. La CI réutilise la CLI du job G1.
 
 **Limites :** l'essai natif démontre uniquement la découverte d'un plugin
 inerte, sans Desktop/Electron ni activation de modèle. Aucune signature de

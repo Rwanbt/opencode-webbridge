@@ -1,6 +1,6 @@
 /** OFFLINE distribution experiment: npm tarball, isolated prefix, verified rollback. */
 import { spawnSync, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -98,7 +98,11 @@ async function nativeSmoke(profile, env, temp, bin) {
   const pluginDir = join(profile, 'node_modules', NAME);
   const config = JSON.stringify({ plugins: [pathToFileURL(pluginDir).href] });
   await writeFile(join(configDir, 'opencode.json'), config);
-  const sandbox = { ...env, OPENCODE_CONFIG_DIR: configDir, OPENCODE_CONFIG_CONTENT: config };
+  const password = randomBytes(32).toString('hex');
+  const sandbox = {
+    ...env, OPENCODE_CONFIG_DIR: configDir, OPENCODE_CONFIG_CONTENT: config,
+    OPENCODE_SERVER_PASSWORD: password,
+  };
   const socket = createServer();
   await new Promise((ok, fail) => { socket.once('error', fail); socket.listen(0, '127.0.0.1', ok); });
   const port = socket.address().port;
@@ -117,6 +121,7 @@ async function nativeSmoke(profile, env, temp, bin) {
     for (let i = 0; i < 80 && child.exitCode === null; i++) {
       try {
         const result = await fetch(`http://127.0.0.1:${port}/api/plugin`, {
+          headers: { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}` },
           signal: AbortSignal.timeout(500),
         });
         if (result.ok) {
@@ -129,7 +134,7 @@ async function nativeSmoke(profile, env, temp, bin) {
       }
       await new Promise((r) => setTimeout(r, 150));
     }
-    if (!registered) throw new Error(`native OpenCode v2 packaged preview unavailable; exit=${child.exitCode}, inventory=${inventory}, diagnostic=${diagnostics}`);
+    if (!registered) throw new Error(`native OpenCode v2 packaged preview unavailable; exit=${child.exitCode}, inventory=${inventory}, diagnostic=${diagnostics.replaceAll(password, '[REDACTED]')}`);
   } finally {
     if (child.exitCode === null) child.kill();
     await Promise.race([new Promise((ok) => child.once('close', ok)),
