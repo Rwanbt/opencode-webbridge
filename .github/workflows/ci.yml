@@ -96,6 +96,8 @@ jobs:
       - run: npm run build
       - name: Native protocol and fail-closed deltas, no browser or account
         run: node --test dist/test/browser-exchange.test.js dist/test/rpc-relay-port.test.js dist/test/rpc-browser-port.test.js dist/test/fixture-inference.test.js
+      - name: Encrypted durable read ACK, crash and rollback fixtures (no Chromium)
+        run: node --test dist/test/durable-read-ack-sink.test.js dist/test/checkpointed-read-observer.test.js
 
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
