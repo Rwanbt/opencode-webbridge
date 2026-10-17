@@ -4,13 +4,15 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `6A3716287E43AFE3676A72CD12BA00BF8C32EC0624BB3D7E139B64331FDC0793`.
+Patch SHA-256: `1C76F576A1918E68845D784CAB14731F08F4D873FDB03F2D65DA9FB25D3455B0`.
 
 Follow-up to #110: [ADR 0004](../ADR/0004-core-permission-browser-read-epoch.md) adds a real, read-only `Permission.Service.browserRead` authority with policy-version invalidation and RED→GREEN Core integration tests. This ledger is **not invoked by Desktop or existing browser tools**, and cannot grant native writes.
 
 Independent hostile E2 follow-up to #114: permission-hook registration/removal now increments a synchronous revision observed by `browserRead` before issuance and consumption. Public Agent getters return detached snapshots so callers cannot silently mutate the Agent State permissions that underpin its revision. Two live Permission.Service regressions were RED on #114 and GREEN with the fix; other mutable hook closure changes, caller provenance and the Desktop effect boundary remain explicitly uncertified in ADR 0004.
 
 Further isolated security follow-up to Draft #120: `Permission.Service.browserRead` now requires a **fresh interactive consent request for the exact scoped `browser_plugin` resource**, even when a previously saved or configured wildcard says `allow`. It preserves configured/hook denials and sets `save: []`; replying `always` cannot save future approvals. Existing generic `Permission.Service.assert` behavior is unchanged. A real Saved wildcard race test was RED before the fix (completed without emitting any `Permission.Event.Asked`) and GREEN afterward. This remains a Core reference, without Desktop consumption or write effects.
+
+Independent integration on top of #123 composes [Core hook/precise interactive consent](../ADR/0004-core-permission-browser-read-epoch.md) and [Desktop one-use read commit](../ADR/0004-v2-desktop-read-commit.fr.md) with the fail-closed [G37 authority and legacy snapshot gates](../ADR/0005-native-read-authority-gate.fr.md) in a **single pinned official upstream patch**. `snapshotOnce` now issues and consumes a real `Permission.Service.browserRead` lease before dispatch; a revoked epoch refuses the read. The older plugin snapshot and Code Mode `browser.snapshot` are temporarily refused. **Other browser read tools are not all covered; Core→Desktop revocation remains non-atomic; no writes are enabled.** The old `ctx.browser.snapshot` usage shown below is historical and is deliberately refused by this security follow-up.
 
 The next stacked Draft adds the **Core-only BrowserLease reference contract** and adversarial tests. Its non-integrated nature and the missing atomic Desktop grant consumption are recorded in [ADR 0003](../ADR/0003-v2-transactional-browser-grant-tcb.md). **No native read/write dispatch uses this new ledger yet**; prior `snapshotOnce` is unchanged.
 
