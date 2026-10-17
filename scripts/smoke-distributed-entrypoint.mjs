@@ -149,14 +149,18 @@ async function nativeProof(temp, env, entry, bin, fixture) {
     if (!fixture && /webbridge-fixture|webbridge-native-fixture|webbridge-g99-page/i.test(models))
       throw new Error('inert distributed entrypoint unexpectedly advertised fixture model');
     if (fixture) {
-      for (let i = 0; i < 20 && !models.includes('webbridge-native-fixture'); i++) {
+      // /api/provider lists provider *info*, not nested model IDs. A selected
+      // native model turn below is the actual proof of model availability.
+      for (let i = 0; i < 20 && !models.includes('"id":"webbridge-fixture"'); i++) {
         await new Promise((done) => setTimeout(done, 150));
         models = await inventory();
       }
-      if (!models.includes('webbridge-native-fixture'))
-        throw new Error('G150 opt-in failed to register model in actual root: ' +
-          'providerInventory=' + models.slice(-650) +
-          ' cliDiagnostic=' + stderr.slice(-700).replaceAll(password, '[REDACTED]'));
+      if (!models.includes('"id":"webbridge-fixture"'))
+        throw new Error('G150 opt-in failed to register provider in actual root: ' +
+          'cliDiagnostic=' + stderr.slice(-500)
+            .replaceAll(password, '[REDACTED]')
+            .replaceAll(fixture.env.WEBBRIDGE_FIXTURE_TOKEN, '[REDACTED]')
+            .replaceAll(fixture.env.WEBBRIDGE_G81_SECRET, '[REDACTED]'));
       const headersJSON = { ...headers, 'Content-Type': 'application/json' };
       const call = (scope, secret, nonce) => fetch(
         base + '/api/rpc/webbridge-g81-package/challenge', {
