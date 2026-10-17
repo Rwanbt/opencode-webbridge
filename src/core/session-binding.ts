@@ -6,6 +6,7 @@
  */
 
 import { assertOpaqueID } from './browser-port.js';
+import { WEB_PROVIDER_CATALOG } from '../catalog.js';
 
 export interface SessionBinding {
   readonly sessionID: string;
@@ -51,6 +52,8 @@ export class SessionBindingRegistry {
     for (const [k, v] of Object.entries({ sessionID, providerID, accountRef, tabID, tabGeneration })) {
       try { assertOpaqueID(v, k); } catch { return { ok: false, reason: 'invalid-id' }; }
     }
+    if (!WEB_PROVIDER_CATALOG.some(({ id }) => id === providerID))
+      return { ok: false, reason: 'invalid-id' };
     if (typeof now !== 'number' || !Number.isSafeInteger(now) || now < 0) {
       return { ok: false, reason: 'invalid-id' };
     }

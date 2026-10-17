@@ -91,3 +91,9 @@ test('browser-authored getters cannot execute during new tab binding', () => {
   assert.equal(reads, 0);
   assert.equal(reg.size(), 0);
 });
+
+test('unknown synthetic provider identifier is not accepted as a valid account binding', () => {
+  const reg = new SessionBindingRegistry();
+  assert.deepEqual(reg.bind({ ...base, providerID: 'forged' }), { ok: false, reason: 'invalid-id' });
+  assert.equal(reg.size(), 0);
+});

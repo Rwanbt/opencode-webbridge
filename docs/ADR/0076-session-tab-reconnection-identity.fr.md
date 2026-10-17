@@ -17,7 +17,7 @@ Les six tests runtime ajoutés ont reproduit ces défauts avant correction.
 ## GREEN
 
 - Le registre refuse le changement silencieux de fournisseur à portée égale,
-  copie exclusivement des descripteurs de données propres, fige les liaisons
+  refuse les identifiants hors catalogue, copie exclusivement des descripteurs de données propres, fige les liaisons
   exposées et conserve la date originale d'un bind identique.
 - La reconnexion exige les cinq identifiants opaques du plugin/connexion/session,
   exactement, des timestamps/âges entiers finis positifs et l'absence de
