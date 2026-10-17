@@ -19,6 +19,25 @@ export type OfflineObservation = Readonly<{
   signedIn: boolean;
 }>;
 
+/** Copy data descriptors only; no invocation of browser/fixture-authored getters. */
+function dataRecord(value: unknown, fields: readonly string[]): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype) throw new Error('expected plain data record');
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== fields.length || keys.some((key) => typeof key !== 'string' || !fields.includes(key))) {
+    throw new Error('expected exact plain data record');
+  }
+  const copy: Record<string, unknown> = Object.create(null);
+  for (const field of fields) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, field);
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) throw new Error('expected plain data record, no accessors');
+    copy[field] = descriptor.value;
+  }
+  return copy;
+}
+
+const bindingFields = ['providerID', 'sessionID', 'accountRef', 'tabID', 'connectionID', 'generation'];
+
 /** State machine only, not an automated service adapter or a readiness grant. */
 export class OfflineAdapterSession {
   private binding?: OfflineBinding;
@@ -39,23 +58,23 @@ export class OfflineAdapterSession {
   }
 
   private validate(binding: OfflineBinding): OfflineBinding {
-    if (!binding || typeof binding !== 'object' ||
-      Object.keys(binding).sort().join(',') !==
-        'accountRef,connectionID,generation,providerID,sessionID,tabID' ||
-      binding.providerID !== this.providerID ||
-      !Number.isSafeInteger(binding.generation) || binding.generation < 0) {
+    const raw = dataRecord(binding, bindingFields);
+    if (raw.providerID !== this.providerID ||
+      !Number.isSafeInteger(raw.generation) || (raw.generation as number) < 0) {
       throw new Error('invalid fixture binding or credential-like field');
     }
     for (const field of ['sessionID', 'accountRef', 'tabID', 'connectionID'] as const)
-      assertOpaqueID(binding[field], field);
-    return Object.freeze({ ...binding });
+      assertOpaqueID(raw[field] as string, field);
+    return Object.freeze(raw) as unknown as OfflineBinding;
   }
 
   private owned(actual: OfflineBinding): OfflineBinding {
     const registered = this.binding;
-    if (!registered || !actual ||
+    if (!registered || !actual) throw new Error('offline adapter owner, account or generation mismatch');
+    const checked = this.validate(actual);
+    if (
       Object.keys(registered).some((field) =>
-        registered[field as keyof OfflineBinding] !== actual[field as keyof OfflineBinding])) {
+        registered[field as keyof OfflineBinding] !== checked[field as keyof OfflineBinding])) {
       throw new Error('offline adapter owner, account or generation mismatch');
     }
     return registered;
@@ -69,12 +88,12 @@ export class OfflineAdapterSession {
 
   /** Host-supplied MANUAL status observation, never a credential or login automation. */
   observe(input: OfflineObservation): void {
-    if (!input || Object.keys(input).sort().join(',') !== 'binding,signedIn' ||
-      typeof input.signedIn !== 'boolean') throw new Error('invalid manual observation');
-    this.owned(input.binding);
+    const data = dataRecord(input, ['binding', 'signedIn']);
+    if (typeof data.signedIn !== 'boolean') throw new Error('invalid manual observation');
+    this.owned(data.binding as OfflineBinding);
     if (this.phase === 'streaming' || this.phase === 'uncertain')
       throw new Error('in-flight or uncertain turn requires reconciliation');
-    this.phase = input.signedIn ? 'fixture-ready' : 'login-required';
+    this.phase = data.signedIn ? 'fixture-ready' : 'login-required';
   }
 
   start(binding: OfflineBinding, turnID: string): void {
@@ -90,16 +109,16 @@ export class OfflineAdapterSession {
 
   progress(binding: OfflineBinding, event: { turnID: string; seq: number; text: string }): void {
     this.owned(binding);
-    if (this.phase !== 'streaming' || !this.turn || event.turnID !== this.turn.id)
+    const data = dataRecord(event, ['turnID', 'seq', 'text']);
+    if (this.phase !== 'streaming' || !this.turn || data.turnID !== this.turn.id)
       throw new Error('offline adapter turn not streaming or wrong identity');
-    if (Object.keys(event).sort().join(',') !== 'seq,text,turnID' ||
-      !Number.isSafeInteger(event.seq) || event.seq !== this.turn.seq + 1)
+    if (!Number.isSafeInteger(data.seq) || data.seq !== this.turn.seq + 1)
       throw new Error('offline adapter fragment out of order');
-    if (typeof event.text !== 'string' || !event.text || event.text.length > 4096 ||
-      this.turn.text.length + event.text.length > 16_000 || event.seq > 63)
+    if (typeof data.text !== 'string' || !data.text || data.text.length > 4096 ||
+      this.turn.text.length + data.text.length > 16_000 || (data.seq as number) > 63)
       throw new Error('offline adapter fragment out of bounds');
-    this.turn.seq = event.seq;
-    this.turn.text += event.text;
+    this.turn.seq = data.seq as number;
+    this.turn.text += data.text;
   }
 
   finish(binding: OfflineBinding, turnID: string, finalText: string): string {
@@ -132,9 +151,10 @@ export class OfflineAdapterSession {
   /** No automatic retry even after an operator observed the final outcome. */
   reconcile(binding: OfflineBinding, evidence: { turnID: string; outcome: 'observed-applied' | 'observed-not-applied'; hash: string }): void {
     this.owned(binding);
-    if (this.phase !== 'uncertain' || !this.turn || this.turn.id !== evidence.turnID ||
-      !/^[a-f0-9]{64}$/.test(evidence.hash) ||
-      !['observed-applied', 'observed-not-applied'].includes(evidence.outcome)) {
+    const data = dataRecord(evidence, ['turnID', 'outcome', 'hash']);
+    if (this.phase !== 'uncertain' || !this.turn || this.turn.id !== data.turnID ||
+      typeof data.hash !== 'string' || !/^[a-f0-9]{64}$/.test(data.hash) ||
+      !['observed-applied', 'observed-not-applied'].includes(data.outcome as string)) {
       throw new Error('invalid operator reconciliation evidence');
     }
     this.phase = 'login-required'; // Explicit manual observation required again.
