@@ -1963,7 +1963,7 @@ index 108846d5ac..0ca9e11d0d 100644
      transform: (callback) =>
        providers.transform((editor) =>
 diff --git a/packages/gui-extensions/src/browser/pane.ts b/packages/gui-extensions/src/browser/pane.ts
-index 91de480703..f4978fcbfd 100644
+index 91de480703..c8d73dc902 100644
 --- a/packages/gui-extensions/src/browser/pane.ts
 +++ b/packages/gui-extensions/src/browser/pane.ts
 @@ -13,6 +13,7 @@ import { destinationOrigin, fileURLWithin, refusal } from "./policy"
@@ -2033,6 +2033,15 @@ index 91de480703..f4978fcbfd 100644
                        }),
                      ),
                      Effect.ensuring(Effect.sync(() => entry.requests.delete(message.requestID))),
+@@ -281,7 +320,7 @@ export function createBrowserPane(input: {
+               receive,
+               Stream.fromQueue(outbound).pipe(Stream.runForEach((send) => send)),
+               Deferred.await(connected).pipe(
+-                Effect.andThen(rpc.attach({ ...attachment, version: 4 }, options)),
++                Effect.andThen(rpc.attach({ ...attachment, version: 5 }, options)),
+                 Effect.tap((result) =>
+                   Effect.sync(() => {
+                     if (result === "replaced") reason = "browser.pane.replaced"
 @@ -336,6 +375,10 @@ export function createBrowserPane(input: {
      },
      async command(window: number, binding: string, command: Browser.Action) {
@@ -2231,7 +2240,7 @@ index 0000000000..bd830ae574
 +  return result
 +}
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
-index 4c6838c70f..dc40612747 100644
+index 4c6838c70f..ef9078bc0d 100644
 --- a/packages/plugin-browser/src/connection.ts
 +++ b/packages/plugin-browser/src/connection.ts
 @@ -12,7 +12,10 @@ type Attachment = {
@@ -2258,7 +2267,16 @@ index 4c6838c70f..dc40612747 100644
              return yield* Effect.fail(call.error("unavailable", "Session belongs to another location.", {}))
            const browser = yield* Effect.acquireRelease(
              Effect.gen(function* () {
-@@ -120,6 +126,27 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -100,7 +106,7 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+           )
+           yield* grant(input.sessionID)
+           yield* rpc.events
+-            .emit("control", { type: "attached", connectionID: input.connectionID, version: 4 })
++            .emit("control", { type: "attached", connectionID: input.connectionID, version: 5 })
+             .pipe(Effect.orDie)
+           return yield* Deferred.await(browser.closed)
+         }).pipe(Effect.scoped),
+@@ -120,6 +126,31 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              return yield* Effect.fail(call.error("unavailable", "Browser request is no longer available.", {}))
            return pending.command
          }),
@@ -2279,24 +2297,33 @@ index 4c6838c70f..dc40612747 100644
 +          const browser = browsers.get(input.sessionID)
 +          if (!browser || browser.connectionID !== input.connectionID) return false
 +          const read = browser.pending.get(input.requestID)?.read
-+          return !!read && read.consumed && read.committed && read.ticket === input.ticket &&
++          if (!read || !read.consumed || !read.committed || read.ticket !== input.ticket) return false
++          const allowed =
 +            performance.now() < read.expires && read.authorized() &&
 +            browser.state.tabs.some((tab) => tab.id === read.tabID && tab.generation === read.generation)
++          // Once the Core lease or tab is stale, never resurrect this spent grant.
++          if (!allowed) read.committed = false
++          return allowed
 +        }),
        result: (input, call) =>
          Effect.gen(function* () {
            const browser = browsers.get(input.sessionID)
-@@ -127,6 +154,9 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -127,6 +158,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              return yield* Effect.fail(call.error("unavailable", "Browser is unavailable.", {}))
            const pending = browser.pending.get(input.requestID)
            if (!pending) return
-+          if (pending.read && (!pending.read.committed || !pending.read.authorized() || !browser.state.tabs.some((tab) =>
-+            tab.id === pending.read!.tabID && tab.generation === pending.read!.generation)))
-+            return yield* Effect.fail(call.error("unavailable", "Uncommitted or stale read cannot return a result.", {}))
++          if (pending.read) {
++            const read = pending.read
++            if (!read.committed || !read.authorized() || !browser.state.tabs.some((tab) =>
++                tab.id === read.tabID && tab.generation === read.generation)) {
++              read.committed = false
++              return yield* Effect.fail(call.error("unavailable", "Uncommitted or stale read cannot return a result.", {}))
++            }
++          }
            if (input.outcome.type === "failure")
              return yield* Deferred.fail(
                pending.result,
-@@ -177,10 +207,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -177,10 +216,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              "[browser.tab_unavailable] This tab is closed or does not belong to the connected session. Call browser.tabs.list({}) and use an exact returned tabID. If no tabs exist, use browser.tabs.open({}). Never substitute a request ID, file ID, or element ref for tabID.",
          })
        // Keep the selected attachment and document, even while permissions or file IO wait.
@@ -2312,7 +2339,7 @@ index 4c6838c70f..dc40612747 100644
              Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
              Effect.mapError(
                (error) =>
-@@ -194,7 +228,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -194,7 +237,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              ),
            ),
          request: (files: readonly Browser.File[], target?: Browser.Target) =>
@@ -2347,7 +2374,7 @@ index 4c6838c70f..dc40612747 100644
        }
      }),
    }
-@@ -207,6 +267,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -207,6 +276,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
    tab: Browser.Tab | undefined,
    files: readonly Browser.File[],
    inspection: Pick<Browser.Command, "inspect" | "target">,
@@ -2355,7 +2382,7 @@ index 4c6838c70f..dc40612747 100644
  ) {
    const requestID = crypto.randomUUID()
    const pending = yield* Deferred.make<Browser.Result, Tool.Error>()
-@@ -214,9 +275,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -214,9 +284,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
      (action.type === "files.upload" || action.type === "files.drop") && !inspection.inspect
        ? { ...action, paths: files.map((file) => file.name) }
        : action
@@ -2423,7 +2450,7 @@ index 3ef7c6b877..67ff73dcd1 100644
      }),
  })
 diff --git a/packages/plugin-browser/src/rpc.ts b/packages/plugin-browser/src/rpc.ts
-index aaba261a16..ddaa2da10b 100644
+index aaba261a16..118d883003 100644
 --- a/packages/plugin-browser/src/rpc.ts
 +++ b/packages/plugin-browser/src/rpc.ts
 @@ -495,6 +495,18 @@ export const Operations = [
@@ -2454,7 +2481,23 @@ index aaba261a16..ddaa2da10b 100644
  }).annotate({ identifier: "Browser.Command" })
  export interface Command extends Schema.Schema.Type<typeof Command> {}
  export const Result = Schema.Struct({ value: Schema.Json, files: Schema.Array(File) }).annotate({
-@@ -555,6 +569,9 @@ export const Definition = Rpc.define({
+@@ -534,7 +548,7 @@ export const TunnelRead = Schema.Struct({ data: bytes, eof: Schema.Boolean })
+ export type TunnelRead = typeof TunnelRead.Type
+ const errors = { unavailable: Schema.Struct({}) }
+ export const Control = Schema.Union([
+-  Schema.Struct({ type: Schema.Literal("attached"), connectionID: Schema.String, version: Schema.Literal(4) }),
++  Schema.Struct({ type: Schema.Literal("attached"), connectionID: Schema.String, version: Schema.Literal(5) }),
+   Schema.Struct({
+     type: Schema.Literal("command"),
+     connectionID: Schema.String,
+@@ -549,12 +563,15 @@ export const Definition = Rpc.define({
+   id: "experimental.browser",
+   methods: {
+     attach: {
+-      input: Schema.Struct({ ...attachment, version: Schema.Literal(4) }),
++      input: Schema.Struct({ ...attachment, version: Schema.Literal(5) }),
+       output: Schema.Literals(["closed", "replaced"]),
+       errors,
      },
      state: { input: Schema.Struct({ ...attachment, state: State }), output: Schema.Void, errors },
      command: { input: Schema.Struct(request), output: Command, errors },
@@ -2466,7 +2509,7 @@ index aaba261a16..ddaa2da10b 100644
      "tunnel.read": { input: Schema.Struct(tunnel), output: TunnelRead, errors },
 diff --git a/packages/plugin-browser/test/connection-location.test.ts b/packages/plugin-browser/test/connection-location.test.ts
 new file mode 100644
-index 0000000000..cbfd5b5d12
+index 0000000000..26b2c4078a
 --- /dev/null
 +++ b/packages/plugin-browser/test/connection-location.test.ts
 @@ -0,0 +1,63 @@
@@ -2486,7 +2529,7 @@ index 0000000000..cbfd5b5d12
 +  let workspaceID = Workspace.ID.make("wrk_other")
 +  let attach:
 +    | ((
-+        input: { sessionID: Session.ID; connectionID: string; version: 4 },
++        input: { sessionID: Session.ID; connectionID: string; version: 5 },
 +        caller: {
 +          error: (type: string, message: string, data: object) => Error
 +        },
@@ -2518,10 +2561,10 @@ index 0000000000..cbfd5b5d12
 +        if (!attach) throw new Error("Browser RPC not registered")
 +        const caller = { error: (_type: string, message: string) => new Error(message) }
 +        const refused = yield* Effect.exit(
-+          attach({ sessionID, connectionID: "desktop_wrong", version: 4 }, caller).pipe(Effect.timeout("1 second")),
++          attach({ sessionID, connectionID: "desktop_wrong", version: 5 }, caller).pipe(Effect.timeout("1 second")),
 +        )
 +        workspaceID = Workspace.ID.make("wrk_owner")
-+        const running = yield* attach({ sessionID, connectionID: "desktop_owner", version: 4 }, caller).pipe(
++        const running = yield* attach({ sessionID, connectionID: "desktop_owner", version: 5 }, caller).pipe(
 +          Effect.forkScoped({ startImmediately: true }),
 +        )
 +        yield* Deferred.await(attached)
@@ -2535,7 +2578,7 @@ index 0000000000..cbfd5b5d12
 +})
 diff --git a/packages/plugin-browser/test/read-commit.test.ts b/packages/plugin-browser/test/read-commit.test.ts
 new file mode 100644
-index 0000000000..a6267ad35c
+index 0000000000..e2165a97be
 --- /dev/null
 +++ b/packages/plugin-browser/test/read-commit.test.ts
 @@ -0,0 +1,221 @@
@@ -2586,7 +2629,7 @@ index 0000000000..a6267ad35c
 +  const caller = { error: (_: string, msg: string) => new Error(msg) }
 +  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
 +    const scope = yield* BrowserConnection.make(ctx)
-+    const attachedFiber = yield* commands.attach({ sessionID, connectionID, version: 4 }, caller)
++    const attachedFiber = yield* commands.attach({ sessionID, connectionID, version: 5 }, caller)
 +      .pipe(Effect.forkScoped({ startImmediately: true }))
 +    yield* Deferred.await(attached)
 +    yield* commands.state({ sessionID, connectionID, state: state(1) }, caller)
@@ -2760,6 +2803,23 @@ index 0000000000..a6267ad35c
 +    yield* Fiber.interrupt(reading)
 +  }))
 +})
+diff --git a/packages/plugin-browser/test/rpc.test.ts b/packages/plugin-browser/test/rpc.test.ts
+index af1d5b53f0..df0b60e6e0 100644
+--- a/packages/plugin-browser/test/rpc.test.ts
++++ b/packages/plugin-browser/test/rpc.test.ts
+@@ -53,6 +53,12 @@ test("network lifecycle and RPC version are explicit", () => {
+   expect(() =>
+     Schema.decodeUnknownSync(Browser.Control)({ type: "attached", connectionID: "old-client", version: 3 }),
+   ).toThrow()
++  // V4 Desktops never call read.live, so a V5 Core must reject their attachment.
++  expect(() => Schema.decodeUnknownSync(Browser.Control)({ type: "attached", connectionID: "old-client", version: 4 })).toThrow()
++  expect(() => Schema.decodeUnknownSync(Browser.Definition.methods.attach.input)({
++    sessionID: "ses_test", connectionID: "old-client", version: 4,
++  })).toThrow()
++  expect(Schema.decodeUnknownSync(Browser.Control)({ type: "attached", connectionID: "v5", version: 5 }).version).toBe(5)
+   expect(() =>
+     Schema.decodeUnknownSync(Browser.Control)({ type: "attached", connectionID: "old-client", version: 2 }),
+   ).toThrow()
 diff --git a/packages/plugin/src/effect/browser.ts b/packages/plugin/src/effect/browser.ts
 new file mode 100644
 index 0000000000..d2f214974f
