@@ -2594,10 +2594,10 @@ index 4c6838c70f..b01dddd270 100644
      Effect.mapError(
 diff --git a/packages/plugin-browser/src/http-forward.ts b/packages/plugin-browser/src/http-forward.ts
 new file mode 100644
-index 0000000000..682b676534
+index 0000000000..f7a634d1ab
 --- /dev/null
 +++ b/packages/plugin-browser/src/http-forward.ts
-@@ -0,0 +1,187 @@
+@@ -0,0 +1,194 @@
 +import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http"
 +import { once } from "node:events"
 +import type { Duplex } from "node:stream"
@@ -2693,8 +2693,12 @@ index 0000000000..682b676534
 +    // Deliberately do not call tunnel.end(): HTTP/1.1 needs the response after
 +    // request EOF. The origin knows the upload length or receives chunked EOF.
 +  })()
++  // Register the rejection handler before any awaited response read. If the
++  // upload fails early, closing this tunnel wakes a blocked response reader.
++  void upload.catch(() => tunnel.destroy())
 +
 +  const reader = new Reader(tunnel)
++  const deadline = setTimeout(() => tunnel.destroy(new Error("Browser HTTP tunnel timed out")), 30_000)
 +  try {
 +    let status = 0
 +    let upstream: IncomingHttpHeaders = {}
@@ -2733,11 +2737,12 @@ index 0000000000..682b676534
 +    if (transfer && (transfer.toLowerCase() !== "chunked" || length !== undefined))
 +      throw new Error("Ambiguous upstream HTTP framing")
 +    if (length && !/^(0|[1-9][0-9]*)$/.test(length)) throw new Error("Invalid HTTP content length")
-+    const outgoing = { ...upstream }
-+    delete outgoing["transfer-encoding"]
-+    delete outgoing.connection
-+    delete outgoing["proxy-authenticate"]
-+    delete outgoing["proxy-authorization"]
++    const hop = new Set([
++      "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
++      "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade",
++    ])
++    String(upstream.connection ?? "").split(",").forEach((name) => hop.add(name.trim().toLowerCase()))
++    const outgoing = Object.fromEntries(Object.entries(upstream).filter(([name]) => !hop.has(name)))
 +    response.writeHead(status, { ...outgoing, connection: "close" })
 +    const push = async (chunk: Buffer) => {
 +      if (chunk.length && !response.write(chunk)) await once(response, "drain")
@@ -2783,6 +2788,8 @@ index 0000000000..682b676534
 +  } catch (error) {
 +    tunnel.destroy()
 +    throw error
++  } finally {
++    clearTimeout(deadline)
 +  }
 +}
 diff --git a/packages/plugin-browser/src/index.ts b/packages/plugin-browser/src/index.ts
@@ -3829,7 +3836,7 @@ index 0000000000..8d082e36c1
 +  }
 +})
 diff --git a/packages/plugin-browser/test/tunnel.test.ts b/packages/plugin-browser/test/tunnel.test.ts
-index 027ef204e2..5a06eb6456 100644
+index 027ef204e2..fedaaada5d 100644
 --- a/packages/plugin-browser/test/tunnel.test.ts
 +++ b/packages/plugin-browser/test/tunnel.test.ts
 @@ -1,5 +1,5 @@
@@ -3927,7 +3934,7 @@ index 027ef204e2..5a06eb6456 100644
    const tunnel = BrowserTunnel.make()
    const destinations: Browser.TunnelTarget[] = []
    const proxy = await BrowserProxy.make({
-@@ -122,6 +142,116 @@ test("HTTP proxy requires local credentials and resolves targets only through it
+@@ -122,6 +142,165 @@ test("HTTP proxy requires local credentials and resolves targets only through it
    } finally {
      await proxy.close()
      tunnel.dispose()
@@ -3994,7 +4001,7 @@ index 027ef204e2..5a06eb6456 100644
 +      sent = true
 +      void (async () => {
 +        for (const part of [
-+          "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n",
++          "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/plain\r\nConnection: X-Secret, close\r\nX-Secret: must-not-leak\r\nKeep-Alive: timeout=10\r\nProxy-Authenticate: Basic foreign\r\n\r\n",
 +          "3;ext=yes\r\na",
 +          "bc\r\n4\r\ndefg\r",
 +          "\n0\r\nX-Debug: test\r\n\r\n",
@@ -4021,7 +4028,7 @@ index 027ef204e2..5a06eb6456 100644
 +      close: (id) => Effect.runPromise(tunnel.close(id)),
 +    })
 +    const credentials = `Basic ${Buffer.from(`${proxy.credentials.username}:${proxy.credentials.password}`).toString("base64")}`
-+    const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
++    const result = await new Promise<{ status: number; body: string; headers: import("node:http").IncomingHttpHeaders }>((resolve, reject) => {
 +      const req = request({
 +        hostname: proxy!.host, port: proxy!.port, method: "GET",
 +        path: "http://example.test/a?b=c",
@@ -4029,12 +4036,16 @@ index 027ef204e2..5a06eb6456 100644
 +      }, (res) => {
 +        const parts: Buffer[] = []
 +        res.on("data", (chunk: Buffer) => parts.push(chunk))
-+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(parts).toString() }))
++        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(parts).toString(), headers: res.headers }))
 +      })
 +      req.once("error", reject)
 +      req.end()
 +    })
-+    expect(result).toEqual({ status: 200, body: "abcdefg" })
++    expect(result.status).toBe(200)
++    expect(result.body).toBe("abcdefg")
++    expect(result.headers["x-secret"]).toBeUndefined()
++    expect(result.headers["keep-alive"]).toBeUndefined()
++    expect(result.headers["proxy-authenticate"]).toBeUndefined()
 +    expect(wire).toContain("GET /a?b=c HTTP/1.1")
 +    expect(wire.toLowerCase()).not.toContain("proxy-authorization")
 +  } finally {
@@ -4044,6 +4055,51 @@ index 027ef204e2..5a06eb6456 100644
 +    await new Promise<void>((resolve) => backend.close(() => resolve()))
 +  }
 +}, 15_000)
++
++test("truncated authenticated HTTP upload aborts the authorized upstream tunnel", async () => {
++  const connected = Promise.withResolvers<Socket>()
++  const ended = Promise.withResolvers<void>()
++  const backend = createServer((socket) => {
++    connected.resolve(socket)
++    socket.once("close", () => ended.resolve())
++  })
++  await once(backend.listen(0, "127.0.0.1"), "listening")
++  const address = backend.address()
++  if (!address || typeof address === "string") throw new Error("No interrupted-upload fixture")
++  const reset = localFixture(address.port)
++  const tunnel = BrowserTunnel.make()
++  let proxy: Awaited<ReturnType<typeof BrowserProxy.make>> | undefined
++  let client: Socket | undefined
++  try {
++    proxy = await BrowserProxy.make({
++      open: (_target, signal) =>
++        Effect.runPromise(tunnel.open({ host: "127.0.0.1", port: address.port }), { signal }),
++      read: (id, signal) => Effect.runPromise(tunnel.read(id), { signal }),
++      write: (id, data, end, signal) => Effect.runPromise(tunnel.write(id, data, end), { signal }),
++      close: (id) => Effect.runPromise(tunnel.close(id)),
++    })
++    const credentials = `Basic ${Buffer.from(`${proxy.credentials.username}:${proxy.credentials.password}`).toString("base64")}`
++    client = createConnection({ host: proxy.host, port: proxy.port })
++    client.on("error", () => undefined)
++    await once(client, "connect")
++    client.write(`POST http://example.test/upload HTTP/1.1\r\nHost: example.test\r\nProxy-Authorization: ${credentials}\r\nContent-Length: 99\r\nConnection: close\r\n\r\nabc`)
++    await Promise.race([
++      connected.promise,
++      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Tunnel did not open")), 2500)),
++    ])
++    client.destroy()
++    await Promise.race([
++      ended.promise,
++      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Upload abort left tunnel open")), 2500)),
++    ])
++  } finally {
++    client?.destroy()
++    await proxy?.close()
++    tunnel.dispose()
++    reset()
++    await new Promise<void>((resolve) => backend.close(() => resolve()))
++  }
++}, 10_000)
 diff --git a/packages/plugin/src/effect/browser.ts b/packages/plugin/src/effect/browser.ts
 new file mode 100644
 index 0000000000..d2f214974f
