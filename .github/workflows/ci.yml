@@ -111,6 +111,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: G132 bounded durable finish:stop observation with negative persistence probes
+        run: node --test scripts/test-g125-persisted-session.mjs
       - name: Install exact official CLI 2.0.32, never replace system Desktop
         run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
       - name: Install ephemeral Linux Chromium shell
@@ -131,6 +133,8 @@ jobs:
       - run: npm ci
       - name: G132 verify exact G131 native patch bytes and unchanged G130 Chromium fixture
         run: node scripts/check-g119-cross-stream.mjs
+      - name: G132 reject missing or fabricated final persistent session history
+        run: node --test scripts/test-g125-persisted-session.mjs
       - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
       - name: Install isolated headless Chromium for localhost only
         run: npx playwright install --with-deps --only-shell chromium
