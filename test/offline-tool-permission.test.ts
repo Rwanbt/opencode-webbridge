@@ -158,3 +158,60 @@ test('untrusted mutation cannot retarget native bash permission while user confi
   assert.deepEqual(seen, ['session_1:bash:echo hello', 'session_1:bash:echo hello']);
   assert.equal(h.executions(), 0);
 });
+
+test('one operation cannot request two approvals concurrently or replay after approval', async () => {
+  let entered!: () => void;
+  let resume!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const pending = new Promise<void>((resolve) => { resume = resolve; });
+  let assertions = 0;
+  const h = harness(async () => {
+    assertions++;
+    if (assertions === 1) { entered(); await pending; }
+  });
+  const first = h.review.review(proposal);
+  await started;
+  await assert.rejects(h.review.review(proposal), /replay|already reviewed|duplicate/i);
+  resume();
+  assert.deepEqual(await first, { status: 'checked-only', operationID: 'op_1' });
+  await assert.rejects(h.review.review(proposal), /replay|already reviewed|duplicate/i);
+  assert.equal(assertions, 2);
+  assert.equal(h.executions(), 0);
+});
+
+test('native permission mapping mutation during consent invalidates review', async () => {
+  for (const kind of ['action', 'resources', 'registry'] as const) {
+    let entered!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const pending = new Promise<void>((resolve) => { resume = resolve; });
+    let calls = 0;
+    const h = harness(async () => { if (++calls === 1) { entered(); await pending; } });
+    const task = h.review.review(proposal);
+    await started;
+    const definition = h.tools.get('safe_echo')!;
+    if (kind === 'action') definition.action = 'bash';
+    else if (kind === 'resources') definition.resources = () => ['terminal:*'];
+    else h.tools.set('safe_echo', { ...definition });
+    resume();
+    await assert.rejects(task, /mapping|revoked|changed/);
+    assert.equal(calls, 1, kind);
+    assert.equal(h.executions(), 0);
+  }
+});
+
+test('denied permission is tombstoned; review capacity fails closed rather than evicting', async () => {
+  let calls = 0;
+  const denied = harness(async () => { calls++; throw new Error('native denied'); });
+  await assert.rejects(denied.review.review(proposal), /native denied/);
+  await assert.rejects(denied.review.review(proposal), /replay/);
+  assert.equal(calls, 1);
+
+  const full = harness(async () => {});
+  for (let n = 0; n < 1024; n++) {
+    const item = { ...proposal, operationID: `op_${n}` };
+    assert.equal((await full.review.review(item)).status, 'checked-only');
+  }
+  await assert.rejects(full.review.review({ ...proposal, operationID: 'op_new' }), /capacity exhausted/);
+  await assert.rejects(full.review.review({ ...proposal, operationID: 'op_0' }), /replay/);
+});

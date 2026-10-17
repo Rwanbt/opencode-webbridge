@@ -80,6 +80,9 @@ type NativePermission = Pick<Plugin.Context['permission'], 'assert'>;
 
 /** OFFLINE review with real SDK permission.assert interface; no executor, no grant token. */
 export class OfflineToolPermissionReview {
+  // Volatile review-only fence: no duplicate or concurrent consent for one operation.
+  // Never evict entries to make an old operation replayable within this reviewer.
+  private readonly attempted = new Set<string>();
   constructor(private readonly host: {
     readonly getScope: () => ToolScope;
     readonly authorityEpoch: () => string;
@@ -109,15 +112,29 @@ export class OfflineToolPermissionReview {
         Object.keys(scope).some((key) => scope[key as keyof ToolScope] !== now[key as keyof ToolScope])) {
         throw new Error('native tool scope or authority revoked');
       }
+      // Native-owned registry/policy may change during an interactive assert.
+      // A stale permission check must never be represented as current review.
+      if (this.host.tools.get(proposal.tool.name) !== definition ||
+        definition.action !== input.action || !definition.validateArguments(proposal.tool.arguments)) {
+        throw new Error('native tool permission mapping changed during review');
+      }
+      const mapped = definition.resources(proposal.tool.arguments);
+      if (!Array.isArray(mapped) || mapped.length !== resources.length ||
+        mapped.some((value, i) => value !== resources[i])) {
+        throw new Error('native tool permission mapping changed during review');
+      }
     };
     const input = {
       sessionID: scope.sessionID as Parameters<NativePermission['assert']>[0]['sessionID'],
       action: definition.action, resources: [...resources],
     };
+    if (this.attempted.has(proposal.operationID)) throw new Error('native tool proposal replay denied');
+    if (this.attempted.size >= 1024) throw new Error('native tool review capacity exhausted; operator recovery required');
+    this.attempted.add(proposal.operationID); // before first await, including denied/uncertain prompts
     current();
-    await this.host.permission.assert(input);
+    await this.host.permission.assert({ ...input, resources: [...resources] });
     current();
-    await this.host.permission.assert(input); // re-evaluate after potentially interactive consent
+    await this.host.permission.assert({ ...input, resources: [...resources] }); // re-evaluate after consent
     current();
     return { status: 'checked-only', operationID: proposal.operationID };
   }
