@@ -1,7 +1,7 @@
 /** Full native model -> authenticated loopback -> OpenCode RPC -> fake companion -> answer. */
 import { randomBytes } from 'node:crypto';
 import { strict as assert } from 'node:assert';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,7 @@ import { RpcBrowserFixturePort } from '../dist/src/testing/rpc-browser-port.js';
 import { openLocalChatPage } from '../dist/src/testing/local-chat-page.js';
 import { openLocalBrowserCompanion, submitLocalPageTurn } from '../dist/src/testing/local-browser-companion.js';
 import { nativeOpenCodeExecutable } from '../dist/src/testing/native-cli-launcher.js';
+import { trackNativeChild } from '../dist/src/testing/native-child-lifecycle.js';
 
 const useRealPage = process.argv.includes('--real-page');
 const EXPECTED = useRealPage ? 'WEBBRIDGE_LOCAL_PAGE_OK:' : 'WEBBRIDGE_MODEL_RPC_END_TO_END_OK';
@@ -35,20 +36,6 @@ function launch(bin, args, cwd, env) {
     shell: process.platform === 'win32' && /\.cmd$/i.test(bin) });
 }
 
-async function stop(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  let timeout;
-  const closed = new Promise((resolve) => {
-    child.once('close', resolve);
-    timeout = setTimeout(resolve, 5_000);
-  });
-  if (process.platform === 'win32' && child.pid) {
-    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-  } else child.kill();
-  await closed;
-  clearTimeout(timeout);
-}
-
 const temp = await mkdtemp(join(tmpdir(), 'webbridge-g4-e2e-'));
 const journalDir = await mkdtemp(join(tmpdir(), 'webbridge-g6-journal-'));
 const witnessDir = await mkdtemp(join(tmpdir(), 'webbridge-g20-witness-'));
@@ -58,6 +45,8 @@ const headers = { Authorization: `Basic ${Buffer.from(`opencode:${password}`).to
   'Content-Type': 'application/json' };
 let server;
 let runner;
+let stopServer;
+let stopRunner;
 let fake;
 let localPage;
 let browserCompanion;
@@ -68,6 +57,7 @@ let browserProgressChunks = 0;
 let sawPrompt = false;
 let rpcCalls = 0;
 let companionFailure;
+let verifiedOutput;
 
 async function rpc(method, payload) {
   rpcCalls++;
@@ -119,6 +109,7 @@ try {
   env.WEBBRIDGE_FIXTURE_URL = fake.baseURL;
   const bin = nativeOpenCodeExecutable();
   server = launch(bin, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], temp, env);
+  stopServer = trackNativeChild(server);
   server.stderr.on('data', (chunk) => { serverError = (serverError + chunk.toString('utf8')).slice(-4000); });
   server.stdout.on('data', () => {});
 
@@ -174,6 +165,7 @@ try {
     runner = launch(bin, ['run', '--server', serverURL, '--model',
       'webbridge-fixture/webbridge-native-fixture', '--format', 'json',
       'WEBBRIDGE_G4_QUESTION: answer from the local fake companion, no tools.'], temp, env);
+    stopRunner = trackNativeChild(runner);
     runner.stdout.on('data', (chunk) => { output = (output + chunk.toString('utf8')).slice(-40_000); });
     runner.stderr.on('data', (chunk) => { serverError = (serverError + chunk.toString('utf8')).slice(-4000); });
     runner.once('error', reject);
@@ -182,7 +174,10 @@ try {
   let timeout;
   const result = await Promise.race([
     runnerResult,
-    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('native run timed out')), 45_000); }),
+    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(
+      `native run timed out: marker=${output.includes(EXPECTED)}; jobs=${companionJobs}; ` +
+      `prompt=${sawPrompt}; HTTP=${fake.requests()}; DOM-progress=${browserProgressChunks}; ` +
+      `runner-exited=${runner.exitCode !== null}`)), 45_000); }),
   ]).finally(() => clearTimeout(timeout));
   active = false;
   await companion;
@@ -192,19 +187,24 @@ try {
       (useRealPage && browserProgressChunks < companionJobs * 2)) {
     throw new Error(`native session or relay incomplete: exit=${result}; jobs=${companionJobs}; receivedPrompt=${sawPrompt}; HTTP=${fake.requests()}`);
   }
-  console.log(`G4 native model-to-RPC-to-${useRealPage ? 'real-local-browser' : 'fake-companion'} E2E PASS: HTTP=${fake.requests()}, companionJobs=${companionJobs}, DOM-progress=${browserProgressChunks}, RPC=${rpcCalls}, response=true`);
+  verifiedOutput = `G4 native model-to-RPC-to-${useRealPage ? 'real-local-browser' : 'fake-companion'} E2E PASS: HTTP=${fake.requests()}, companionJobs=${companionJobs}, DOM-progress=${browserProgressChunks}, RPC=${rpcCalls}, response=true`;
 } catch (error) {
   process.exitCode = 1;
   const safe = String(error).replaceAll(secret, '[REDACTED]').replaceAll(password, '[REDACTED]').replaceAll(modelToken, '[REDACTED]');
   console.error(`G4 native E2E FAILED: ${safe}; diagnostic=${serverError.slice(-550).replaceAll(secret, '[REDACTED]')}`);
 } finally {
   active = false;
-  await stop(runner);
-  await stop(server);
+  // Try both process stops even if one fails. Never delete a live watched profile.
+  const failures = [];
+  for (const lifecycle of [stopRunner, stopServer]) {
+    if (lifecycle) try { await lifecycle.stop(); } catch (error) { failures.push(error); }
+  }
   if (fake) await fake.close();
   if (browserCompanion) await browserCompanion.close();
   if (localPage) await localPage.close();
+  if (failures.length) throw new AggregateError(failures, 'native child cleanup incomplete');
   await rm(temp, { recursive: true, force: true, maxRetries: 12, retryDelay: 500 });
   await rm(journalDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 500 });
   await rm(witnessDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 500 });
 }
+if (verifiedOutput && !process.exitCode) console.log(verifiedOutput);

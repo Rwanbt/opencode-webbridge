@@ -100,5 +100,5 @@ try {
 } finally {
   await fixture.close();
   if (useBrowserFixture) await browser.release(fakeBinding);
-  await rm(temp, { recursive: true, force: true });
+  await rm(temp, { recursive: true, force: true, maxRetries: 12, retryDelay: 500 });
 }
