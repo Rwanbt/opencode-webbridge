@@ -11,9 +11,10 @@ export const G113 = 'e1a04479876fcb469309cbbb9526639964bf35e3';
 export const ARTIFACT = 'docs/patches/opencode-v2-4617210-browser-plugin-capability.patch';
 export const EXPECTED = Object.freeze({
   [ARTIFACT]: 'fe5ae887ca3feb1c2a2e170a12b7a9c89e79684e80ee5ce656c7377604f753e8',
-  'scripts/smoke-combined-page.mjs': '8e4b3be8416f7e85445c9b3deeb75ba5418e60680485129c4dd5aabfdafda95d',
+  // G125 extends the same G113 executable local browser test with durable-session checks.
+  'scripts/smoke-combined-page.mjs': 'f2340ffb72f1fbf3174d806b12d337fb4f0ac389ad971fb9cf252272377ba431',
   'fixtures/g97-combined-preview.mjs': '474d653b41c54c840125b04488ceb975022935ef409eb911cfa7f5a6481c5468',
-  'scripts/offline-rpc-package.mjs': 'dd0c96a561ade756bd09739d14c596de4525a4bb4ff6e219251e93050447abc5',
+  'scripts/offline-rpc-package.mjs': '65f5852028e85f8e1ea007030df5a07cfe872b5e691a0a4c7eedea6fa4142e6a',
 });
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // Git for Windows may check out the pre-existing G113 *.mjs files in CRLF,

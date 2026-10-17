@@ -25,7 +25,8 @@ export async function durableSession(url, headers, sessionID, { expected, prompt
   assert.ok(Array.isArray(messages?.data), 'official message history missing');
   const text = (message) => (message.content ?? []).filter((part) => part.type === 'text')
     .map((part) => part.text).join('');
-  assert.ok(messages.data.some((message) => message.type === 'user' && text(message).includes(prompt)),
+  assert.ok(messages.data.some((message) => message.type === 'user' &&
+    typeof message.text === 'string' && message.text.includes(prompt)),
     'persisted native user prompt is missing');
   const assistant = messages.data.filter((message) => message.type === 'assistant');
   if (expected) {
