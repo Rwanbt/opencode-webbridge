@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-10-17",
+  "backlog": { "epics": 9, "stories": 54, "mappedIssues": 63, "crosscuttingIssues": [1, 2, 3], "totalIssues": 66 },
+  "acceptance": { "productionAcceptedStoryIDs": [], "commercialProvidersOperational": [], "nativeDesktopElectronE2E": false, "atomicCoreChromiumRevocation": false, "commercialAutomationAuthorized": false, "webbridgeWritesEnabled": false },
+  "evidence": [
+    { "pr": 142, "sha": "527aec1de4dff3397889ba8f7bfc782eb3aeaec2", "checks": 6, "scope": "native-partial" },
+    { "pr": 143, "sha": "2d974c887d6e76bb9e77c3e14369a40ba5b482ce", "checks": 6, "scope": "native-partial" },
+    { "pr": 144, "sha": "6fcbcede5de8cafa28809685ab597160579a7536", "checks": 6, "scope": "offline-partial" },
+    { "pr": 145, "sha": "f9fa51f8146c879ebcf4ba54753c7b8ff5ab2e0e", "checks": 6, "scope": "native-partial" },
+    { "pr": 146, "sha": "570eeabe63ae5983c5a355f06f972ce915e69d1c", "checks": 6, "scope": "native-partial" },
+    { "pr": 147, "sha": "55917004cf1d46e7beb7dd6bac698d7235681c66", "checks": 6, "scope": "native-partial" },
+    { "pr": 148, "sha": "fd2a3e9615b3a0b9dbcdfb8cf5125bc549ddd766", "checks": 6, "scope": "native-partial" },
+    { "pr": 149, "sha": "9fbc42ab6e19fd45423f21f1109e0c69fbe50062", "checks": 6, "scope": "offline-partial" },
+    { "pr": 150, "sha": "0028f00ede8257dd47cf374e1d08a85154a1a3e7", "checks": 6, "scope": "chromium-fixture-partial" },
+    { "pr": 151, "sha": "ff66b26d8c8b6307c5825f214642eff372fa43ff", "checks": 6, "scope": "model-sse-fixture-partial" },
+    { "pr": 152, "sha": "af518998786409622078fe1f0c9e0f48a7d7fd19", "checks": 8, "scope": "offline-ci-partial" },
+    { "pr": 153, "sha": "4d7156ae0b09cdd89bc3835d975468095f5f5d22", "checks": 8, "scope": "offline-security-partial" },
+    { "pr": 154, "sha": "31d5ae5e679ddde752ab98184e5e86c236a516c0", "checks": 8, "scope": "offline-adapters-partial" }
+  ],
+  "blockers": ["unattested Desktop attach principal", "non-atomic Core revocation to Chromium effect", "durable post-crash uncertain effects", "native Git/terminal/subagents", "unverified commercial provider permission", "missing official Electron E2E"]
+}
