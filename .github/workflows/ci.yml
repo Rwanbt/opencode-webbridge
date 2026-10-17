@@ -40,6 +40,8 @@ jobs:
         run: npm run smoke:package-native
       - name: Native CLI packaged RPC authority, upgrade and rollback (no Chromium)
         run: npm run smoke:rpc-package-native
+      - name: G88 installed RPC through official CLI model turn and progressive fake SSE
+        run: npm run smoke:packaged-model
       - run: npm run smoke:native
       - run: npm run smoke:browser
       - run: npm run smoke:rpc

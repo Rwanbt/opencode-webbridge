@@ -27,16 +27,19 @@ async function freePort() {
   return port;
 }
 
-async function smokeNative(profile, env, temp, executable, version) {
+async function smokeNative(profile, env, temp, executable, version, modelBridge) {
   const configDir = join(temp, 'native-g81');
   await mkdir(configDir, { recursive: true });
   const packageDir = join(profile, 'node_modules', fixture.name);
-  const config = JSON.stringify({ plugins: [pathToFileURL(packageDir).href] });
+  const extra = modelBridge ? await modelBridge.prepare({ temp, env, version }) : undefined;
+  const config = JSON.stringify({ plugins: [pathToFileURL(packageDir).href,
+    ...(extra ? [pathToFileURL(extra.modelPluginDir).href] : [])] });
   await writeFile(join(configDir, 'opencode.json'), config);
   const password = randomBytes(32).toString('hex');
   const secret = randomBytes(32).toString('hex');
   const sandbox = { ...env, OPENCODE_CONFIG_DIR: configDir, OPENCODE_CONFIG_CONTENT: config,
-    OPENCODE_SERVER_PASSWORD: password, WEBBRIDGE_G81_TEST_ONLY: '1', WEBBRIDGE_G81_SECRET: secret };
+    OPENCODE_SERVER_PASSWORD: password, WEBBRIDGE_G81_TEST_ONLY: '1', WEBBRIDGE_G81_SECRET: secret,
+    ...extra?.env };
   const port = await freePort();
   const server = spawn(executable, ['serve', '--print-logs', '--log-level', 'debug',
     '--hostname', '127.0.0.1', '--port', String(port)], {
@@ -106,7 +109,10 @@ async function smokeNative(profile, env, temp, executable, version) {
     if (replay.ok && replayBody.includes(receipt(nonce))) {
       throw new Error('native RPC replay produced second receipt');
     }
-    return { version, nativeRpc: true, wrongScopeDenied: true, wrongSecretDenied: true, replayDenied: true };
+    const model = extra ? await extra.verify({ url, headers, secret, executable, env: sandbox, temp,
+      version }) : undefined;
+    return { version, nativeRpc: true, wrongScopeDenied: true, wrongSecretDenied: true,
+      replayDenied: true, ...(model ? { model } : {}) };
   } catch (error) {
     const clean = (pluginDiagnostics.slice(0, 16).join('\n') + '\n' + String(error))
       .replaceAll(password, '[REDACTED]').replaceAll(secret, '[REDACTED]');
@@ -118,10 +124,11 @@ async function smokeNative(profile, env, temp, executable, version) {
       } else server.kill();
     }
     await Promise.race([new Promise((ok) => server.once('close', ok)), pause(3000)]);
+    await extra?.close();
   }
 }
 
-export async function exerciseRPCPackage({ nativeBin } = {}) {
+export async function exerciseRPCPackage({ nativeBin, modelBridge } = {}) {
   const temp = await mkdtemp(join(tmpdir(), 'webbridge-g81-rpc-package-'));
   const env = isolatedEnvironment(temp);
   try {
@@ -145,9 +152,9 @@ export async function exerciseRPCPackage({ nativeBin } = {}) {
     if (!denied || await installed(profile, fixture) !== '0.0.2') {
       throw new Error('corrupt archive changed the active RPC package');
     }
-    const upgrade = nativeBin ? await smokeNative(profile, env, temp, nativeBin, '0.0.2') : undefined;
+    const upgrade = nativeBin ? await smokeNative(profile, env, temp, nativeBin, '0.0.2', modelBridge) : undefined;
     await install(a, a.hash, env, temp, profile, fixture);
-    const rollback = nativeBin ? await smokeNative(profile, env, temp, nativeBin, '0.0.1') : undefined;
+    const rollback = nativeBin ? await smokeNative(profile, env, temp, nativeBin, '0.0.1', modelBridge) : undefined;
     npmCLI(['uninstall', fixture.name, '--prefix', profile, '--offline', '--ignore-scripts',
       '--no-save', '--no-package-lock', '--no-audit', '--no-fund'], env, temp);
     if (existsSync(join(profile, 'node_modules', fixture.name))) throw new Error('RPC fixture uninstall failed');
