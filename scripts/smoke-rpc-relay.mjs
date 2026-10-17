@@ -1,20 +1,12 @@
 /** Smoke the actual OpenCode v2 plugin RPC endpoint with synthetic data only. */
 import { randomBytes } from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-
-function binary() {
-  if (process.env.OPENCODE_BIN) return process.env.OPENCODE_BIN;
-  if (process.platform !== 'win32') return 'opencode';
-  const found = spawnSync('where.exe', ['opencode.cmd'], { encoding: 'utf8' });
-  const path = found.stdout?.split(/\r?\n/).find((line) => line.toLowerCase().endsWith('opencode.cmd'));
-  if (!path) throw new Error('OpenCode v2 launcher unavailable');
-  return path.trim();
-}
+import { nativeOpenCodeExecutable } from '../dist/src/testing/native-cli-launcher.js';
 
 async function freePort() {
   const srv = createServer();
@@ -56,7 +48,7 @@ try {
     WEBBRIDGE_RELAY_JOURNAL_DIR: journalDir,
     OPENCODE_SERVER_PASSWORD: password,
   });
-  const exe = binary();
+  const exe = nativeOpenCodeExecutable();
   server = spawn(exe, ['serve', '--print-logs', '--log-level', 'debug', '--hostname', '127.0.0.1', '--port', String(port)], {
     cwd: tmp, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     shell: process.platform === 'win32' && /\.cmd$/i.test(exe),

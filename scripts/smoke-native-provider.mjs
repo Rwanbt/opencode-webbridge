@@ -1,5 +1,5 @@
 /** Manual G1 smoke: native OpenCode 2 session invokes our local fixture only. */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -8,17 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { FIXTURE_MODEL, FIXTURE_REPLY, openFixtureServer } from '../dist/src/testing/fixture-inference.js';
 import { FakeBrowserPort } from '../dist/src/testing/fake-browser.js';
 import { browserFixtureResponder } from '../dist/src/testing/browser-fixture-relay.js';
-
-function findBinary() {
-  if (process.env.OPENCODE_BIN) return process.env.OPENCODE_BIN;
-  if (process.platform !== 'win32') return 'opencode';
-  // OpenCode 1 and OpenCode 2 may both be on PATH. The user's `opencode.cmd`
-  // resolves to the v2 npm binary; a separately built `.exe` may be an older major version.
-  const found = spawnSync('where.exe', ['opencode.cmd'], { encoding: 'utf8' });
-  const binary = found.stdout?.split(/\r?\n/).find((line) => line.toLowerCase().endsWith('opencode.cmd'));
-  if (!binary) throw new Error('OpenCode v2 .cmd missing; set OPENCODE_BIN to its launcher');
-  return binary.trim();
-}
+import { nativeOpenCodeExecutable } from '../dist/src/testing/native-cli-launcher.js';
 
 function run(binary, env, cwd) {
   return new Promise((resolvePromise, reject) => {
@@ -96,7 +86,7 @@ try {
     WEBBRIDGE_FIXTURE_URL: fixture.baseURL,
     WEBBRIDGE_FIXTURE_TOKEN: token,
   };
-  const binary = findBinary();
+  const binary = nativeOpenCodeExecutable();
   const result = await run(binary, env, temp);
   const responded = result.stdout.includes(FIXTURE_REPLY);
   const connected = fixture.requests() > 0 && (!useBrowserFixture || forwarded > 0);

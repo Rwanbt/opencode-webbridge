@@ -12,6 +12,7 @@ import { browserFixtureResponder } from '../dist/src/testing/browser-fixture-rel
 import { RpcBrowserFixturePort } from '../dist/src/testing/rpc-browser-port.js';
 import { openLocalChatPage } from '../dist/src/testing/local-chat-page.js';
 import { openLocalBrowserCompanion, submitLocalPageTurn } from '../dist/src/testing/local-browser-companion.js';
+import { nativeOpenCodeExecutable } from '../dist/src/testing/native-cli-launcher.js';
 
 const useRealPage = process.argv.includes('--real-page');
 const EXPECTED = useRealPage ? 'WEBBRIDGE_LOCAL_PAGE_OK:' : 'WEBBRIDGE_MODEL_RPC_END_TO_END_OK';
@@ -20,15 +21,6 @@ const secret = randomBytes(32).toString('hex');
 const password = randomBytes(32).toString('hex');
 const modelToken = randomBytes(32).toString('hex');
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function executable() {
-  if (process.env.OPENCODE_BIN) return process.env.OPENCODE_BIN;
-  if (process.platform !== 'win32') return 'opencode';
-  const found = spawnSync('where.exe', ['opencode.cmd'], { encoding: 'utf8' });
-  const path = found.stdout?.split(/\r?\n/).find((line) => line.toLowerCase().endsWith('opencode.cmd'));
-  if (!path) throw new Error('OpenCode v2 launcher unavailable');
-  return path.trim();
-}
 
 async function freePort() {
   const srv = createServer();
@@ -125,7 +117,7 @@ try {
   await portAdapter.claim(binding);
   fake = await openFixtureServer({ token: modelToken, respond: browserFixtureResponder(portAdapter, binding) });
   env.WEBBRIDGE_FIXTURE_URL = fake.baseURL;
-  const bin = executable();
+  const bin = nativeOpenCodeExecutable();
   server = launch(bin, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], temp, env);
   server.stderr.on('data', (chunk) => { serverError = (serverError + chunk.toString('utf8')).slice(-4000); });
   server.stdout.on('data', () => {});
