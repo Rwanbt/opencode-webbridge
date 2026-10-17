@@ -27,6 +27,8 @@ jobs:
       - name: D01/D02 execute pinned official Desktop 2.0.32 packaged IPC refusal
         run: npm run check:d01d02
       - run: npm test
+      - name: G137 Linux real temporary FS/Git read-only executor under hostile paths and revocations
+        run: npm run build && node --test dist/test/offline-readonly-tool-executor.test.js
       - name: Deterministic offline package, upgrade, rollback and uninstall
         run: npm run preview:package
       - name: Packaged RPC fixture offline upgrade, tamper denial and rollback
@@ -111,6 +113,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: G137 bounded official durable finish observation and forged/missing rejection
+        run: node --test scripts/test-g125-persisted-session.mjs
       - name: Install exact official CLI 2.0.32, never replace system Desktop
         run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
       - name: Install ephemeral Linux Chromium shell
@@ -129,6 +133,10 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: G137 verify exact G132 native patch and preserved G130 Chromium fixture
+        run: node scripts/check-g119-cross-stream.mjs
+      - name: G137 strict durable session completion/restart negative cases
+        run: node --test scripts/test-g125-persisted-session.mjs
       - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
       - name: Install isolated headless Chromium for localhost only
         run: npx playwright install --with-deps --only-shell chromium
@@ -156,6 +164,8 @@ jobs:
         run: node --test dist/test/tool-proposal.test.js dist/test/tool-flow.test.js dist/test/workspace-path.test.js
       - name: G136 prevent concurrent double-effect and uncertain replay (fixture authority only)
         run: node --test dist/test/effect-broker.test.js dist/test/tool-broker.test.js
+      - name: G137 fixture FS/Git authorization and OS refusal, without Windows Chromium
+        run: node --test dist/test/offline-readonly-tool-executor.test.js
 
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
@@ -178,13 +188,13 @@ jobs:
       - name: Install upstream dependencies
         run: bun install --frozen-lockfile
         working-directory: ${{ runner.temp }}/opencode-v2
-      - name: G129 native G126 first-attach and RPC registration RED→GREEN plus G106 policy regressions
+      - name: G137 pinned G131 document finality, G126 provenance, G106 policy and one-shot Core broker
         working-directory: ${{ runner.temp }}/opencode-v2
         run: |
           bun run --cwd packages/plugin typecheck
           bun run --cwd packages/plugin-browser typecheck
           bun run --cwd packages/core typecheck
           bun run --cwd packages/gui-extensions typecheck
-          (cd packages/core && bun test test/permission.test.ts test/permission-browser-lease.test.ts test/plugin/browser-lease.test.ts test/plugin/browser-capability.test.ts test/plugin/browser-rpc-provenance.test.ts)
-          (cd packages/plugin-browser && bun test test/read-commit.test.ts test/first-attach-authority.test.ts test/connection-location.test.ts)
+          (cd packages/core && bun test test/permission.test.ts test/permission-browser-lease.test.ts test/plugin/browser-lease.test.ts test/plugin/browser-one-shot.test.ts test/plugin/browser-capability.test.ts test/plugin/browser-rpc-provenance.test.ts)
+          (cd packages/plugin-browser && bun test test/read-commit.test.ts test/first-attach-authority.test.ts test/connection-location.test.ts test/attach-ownership.test.ts test/tunnel-provenance.test.ts)
           (cd packages/gui-extensions && bun test src/browser/read-commit-gate.test.ts)

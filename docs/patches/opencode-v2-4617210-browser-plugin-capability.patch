@@ -2568,7 +2568,7 @@ index 0000000000..bd830ae574
 +  return result
 +}
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
-index 4c6838c70f..f46873508b 100644
+index 4c6838c70f..6cb9d9ba8c 100644
 --- a/packages/plugin-browser/src/connection.ts
 +++ b/packages/plugin-browser/src/connection.ts
 @@ -1,7 +1,7 @@
@@ -2580,7 +2580,7 @@ index 4c6838c70f..f46873508b 100644
  import type { Session } from "@opencode/schema/session"
  import { Tool } from "@opencode/schema/tool"
  import { Deferred, Effect, Schema, Stream } from "effect"
-@@ -10,53 +10,73 @@ import { BrowserTunnel } from "./tunnel.js"
+@@ -10,53 +10,74 @@ import { BrowserTunnel } from "./tunnel.js"
  
  type Attachment = {
    connectionID: string
@@ -2592,6 +2592,7 @@ index 4c6838c70f..f46873508b 100644
 -  pending: Map<string, { command: Browser.Command; result: Deferred.Deferred<Browser.Result, Tool.Error> }>
 +  pending: Map<string, { command: Browser.Command; result: Deferred.Deferred<Browser.Result, Tool.Error>;
 +    read?: { readonly ticket: string; readonly tabID: Browser.TabID; readonly generation: number;
++      readonly url: string;
 +      readonly expires: number; readonly authorized: () => boolean;
 +      consumed: boolean; committed: boolean; live: boolean } }>
    tunnels: BrowserTunnel.Tunnels
@@ -2665,7 +2666,7 @@ index 4c6838c70f..f46873508b 100644
        browser.tunnels.dispose()
        yield* Deferred.succeed(browser.closed, reason)
      })
-@@ -64,12 +84,16 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -64,12 +85,16 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
      active = false
      return Effect.forEach(browsers.keys(), (id) => close(id), { discard: true })
    })
@@ -2683,7 +2684,7 @@ index 4c6838c70f..f46873508b 100644
        ? Effect.succeed(browser.tunnels)
        : Effect.fail(new Error("Browser attachment is unavailable; its network connections were closed."))
    }
-@@ -80,34 +104,60 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -80,53 +105,137 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
            const session = yield* ctx.session
              .get({ sessionID: input.sessionID })
              .pipe(Effect.mapError(() => call.error("unavailable", "Session not found.", {})))
@@ -2748,9 +2749,28 @@ index 4c6838c70f..f46873508b 100644
 -          if (!browser || browser.connectionID !== input.connectionID)
 +          if (!matches(browser, input))
              return yield* Effect.fail(call.error("unavailable", "Browser is unavailable.", {}))
++          // A delayed Desktop state must not roll an already-observed tab back to
++          // an old document generation and re-authorize a previously stale read.
++          const earlier = new Map(browser.state.tabs.map((tab) => [tab.id, tab]))
++          if (input.state.tabs.some((tab) => {
++            const seen = earlier.get(tab.id)
++            return !!seen && tab.generation < seen.generation
++          }))
++            return yield* Effect.fail(call.error("unavailable", "Stale browser tab generation.", {}))
++          for (const pending of browser.pending.values()) {
++            const read = pending.read
++            if (!read) continue
++            const current = input.state.tabs.find((tab) => tab.id === read.tabID)
++            if (current?.generation === read.generation && current.url === read.url) continue
++            // The first replacement irrevocably burns the old read receipt,
++            // even if an out-of-order state later restores its old generation.
++            read.consumed = true
++            read.committed = false
++            read.live = false
++          }
            browser.state = input.state
          }),
-@@ -115,18 +165,57 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+       command: (input, call) =>
          Effect.gen(function* () {
            const browser = browsers.get(input.sessionID)
            const pending =
@@ -2769,7 +2789,7 @@ index 4c6838c70f..f46873508b 100644
 +          read.consumed = true // Burn BEFORE any comparison; no second guess or retry.
 +          read.committed = performance.now() < read.expires && read.ticket === input.ticket &&
 +            read.authorized() &&
-+            browser.state.tabs.some((tab) => tab.id === read.tabID && tab.generation === read.generation)
++            browser.state.tabs.some((tab) => tab.id === read.tabID && tab.generation === read.generation && tab.url === read.url)
 +          return read.committed
 +        }),
 +      "read.live": (input) =>
@@ -2780,7 +2800,7 @@ index 4c6838c70f..f46873508b 100644
 +          if (!read || !read.consumed || !read.committed || read.ticket !== input.ticket) return false
 +          const allowed =
 +            performance.now() < read.expires && read.authorized() &&
-+            browser.state.tabs.some((tab) => tab.id === read.tabID && tab.generation === read.generation)
++            browser.state.tabs.some((tab) => tab.id === read.tabID && tab.generation === read.generation && tab.url === read.url)
 +          // Once the Core lease or tab is stale, never resurrect this spent grant.
 +          if (!allowed) read.committed = false
 +          if (!allowed || read.live) return false
@@ -2799,7 +2819,7 @@ index 4c6838c70f..f46873508b 100644
 +            const read = pending.read
 +            if (!read.committed || !read.live || performance.now() >= read.expires ||
 +              !read.authorized() || !browser.state.tabs.some((tab) =>
-+                tab.id === read.tabID && tab.generation === read.generation)) {
++                tab.id === read.tabID && tab.generation === read.generation && tab.url === read.url)) {
 +              read.committed = false
 +              yield* Deferred.fail(pending.result, new Tool.Error({
 +                message: "Browser read lacked a current Core read.live authorization.",
@@ -2810,7 +2830,7 @@ index 4c6838c70f..f46873508b 100644
            if (input.outcome.type === "failure")
              return yield* Deferred.fail(
                pending.result,
-@@ -163,9 +252,22 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -163,9 +272,22 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
    )
  
    return {
@@ -2834,7 +2854,7 @@ index 4c6838c70f..f46873508b 100644
          return yield* new Tool.Error({
            message:
              "[browser.disconnected] No desktop browser is connected to this session. Open this session in the desktop app and wait for it to connect. Then call browser.tabs.list({}). Repeating browser actions while disconnected will not help.",
-@@ -177,10 +279,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -177,10 +299,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              "[browser.tab_unavailable] This tab is closed or does not belong to the connected session. Call browser.tabs.list({}) and use an exact returned tabID. If no tabs exist, use browser.tabs.open({}). Never substitute a request ID, file ID, or element ref for tabID.",
          })
        // Keep the selected attachment and document, even while permissions or file IO wait.
@@ -2850,7 +2870,7 @@ index 4c6838c70f..f46873508b 100644
              Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
              Effect.mapError(
                (error) =>
-@@ -194,7 +300,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -194,7 +320,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              ),
            ),
          request: (files: readonly Browser.File[], target?: Browser.Target) =>
@@ -2885,7 +2905,7 @@ index 4c6838c70f..f46873508b 100644
        }
      }),
    }
-@@ -207,6 +339,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -207,6 +359,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
    tab: Browser.Tab | undefined,
    files: readonly Browser.File[],
    inspection: Pick<Browser.Command, "inspect" | "target">,
@@ -2893,7 +2913,7 @@ index 4c6838c70f..f46873508b 100644
  ) {
    const requestID = crypto.randomUUID()
    const pending = yield* Deferred.make<Browser.Result, Tool.Error>()
-@@ -214,9 +347,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -214,9 +367,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
      (action.type === "files.upload" || action.type === "files.drop") && !inspection.inspect
        ? { ...action, paths: files.map((file) => file.name) }
        : action
@@ -2903,7 +2923,7 @@ index 4c6838c70f..f46873508b 100644
 +    command: { action: command, ...(tab ? { generation: tab.generation } : {}), files, ...inspection,
 +      ...(ticket ? { readCommit: ticket } : {}) },
      result: pending,
-+    ...(ticket && tab ? { read: { ticket, tabID: tab.id, generation: tab.generation,
++    ...(ticket && tab ? { read: { ticket, tabID: tab.id, generation: tab.generation, url: tab.url,
 +      expires: performance.now() + 5000, authorized: readGuard!, consumed: false, committed: false, live: false } } : {}),
    })
    return yield* rpc.events.emit("control", { type: "command", connectionID: browser.connectionID, requestID }).pipe(
@@ -3792,10 +3812,10 @@ index 0000000000..d87088d9e7
 +})
 diff --git a/packages/plugin-browser/test/read-commit.test.ts b/packages/plugin-browser/test/read-commit.test.ts
 new file mode 100644
-index 0000000000..845c13f269
+index 0000000000..7718777103
 --- /dev/null
 +++ b/packages/plugin-browser/test/read-commit.test.ts
-@@ -0,0 +1,334 @@
+@@ -0,0 +1,392 @@
 +import { expect, spyOn, test } from "bun:test"
 +import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect"
 +import { AbsolutePath } from "@opencode/schema/schema"
@@ -3907,6 +3927,64 @@ index 0000000000..845c13f269
 +    const response = (yield* Fiber.join(reading)) as { value: { content: string } }
 +    expect(response.value.content).toBe("WEBBRIDGE_LOCAL_PAGE_OK:fixture")
 +    expect(Exit.isFailure(yield* Effect.exit(target.requestOnce([], () => true)))).toBe(true)
++  }))
++})
++
++test("an out-of-order state cannot resurrect a pending read from a replaced document", async () => {
++  await harness(({ target, commands, next, base, scope }) => Effect.gen(function* () {
++    const caller = { error: (_: string, message: string) => new Error(message) }
++    const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
++    const requestID = yield* Deferred.await(next)
++    const command = yield* commands.command({ ...base, requestID }, caller)
++    const ticket = { ...base, requestID, ticket: command.readCommit }
++    // A navigation advanced the tab generation; delayed old state arrives afterward.
++    yield* commands.state({ ...base, state: state(2) }, caller)
++    expect(Exit.isFailure(yield* Effect.exit(commands.state({ ...base, state: state(1) }, caller)))).toBe(true)
++    expect((yield* scope.tabs(sessionID)).tabs[0]?.generation).toBe(2)
++    expect(yield* commands["read.commit"](ticket, caller)).toBe(false)
++    expect(yield* commands["read.live"](ticket, caller)).toBe(false)
++    expect(Exit.isFailure(yield* Effect.exit(commands.result({ ...base, requestID, outcome: {
++      type: "success", result: { value: { content: "OLD_DOCUMENT_SECRET", truncated: false }, files: [] },
++    } }, caller)))).toBe(true)
++    expect(Exit.isFailure(yield* Fiber.await(reading))).toBe(true)
++  }))
++})
++
++test("a read.live receipt cannot be resurrected after an intervening tab replacement", async () => {
++  await harness(({ target, commands, next, base }) => Effect.gen(function* () {
++    const caller = { error: (_: string, message: string) => new Error(message) }
++    const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
++    const requestID = yield* Deferred.await(next)
++    const command = yield* commands.command({ ...base, requestID }, caller)
++    const ticket = { ...base, requestID, ticket: command.readCommit }
++    expect(yield* commands["read.commit"](ticket, caller)).toBe(true)
++    expect(yield* commands["read.live"](ticket, caller)).toBe(true)
++    yield* commands.state({ ...base, state: state(2) }, caller)
++    expect(Exit.isFailure(yield* Effect.exit(commands.state({ ...base, state: state(1) }, caller)))).toBe(true)
++    expect(Exit.isFailure(yield* Effect.exit(commands.result({ ...base, requestID, outcome: {
++      type: "success", result: { value: { content: "EXPIRED_TAB_SECRET", truncated: false }, files: [] },
++    } }, caller)))).toBe(true)
++    expect(Exit.isFailure(yield* Fiber.await(reading))).toBe(true)
++  }))
++})
++
++test("URL change at unchanged generation burns an already-committed read", async () => {
++  await harness(({ target, commands, next, base }) => Effect.gen(function* () {
++    const caller = { error: (_: string, message: string) => new Error(message) }
++    const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
++    const requestID = yield* Deferred.await(next)
++    const command = yield* commands.command({ ...base, requestID }, caller)
++    const ticket = { ...base, requestID, ticket: command.readCommit }
++    expect(yield* commands["read.commit"](ticket, caller)).toBe(true)
++    yield* commands.state({ ...base, state: {
++      ...state(1), tabs: state(1).tabs.map((tab) => ({ ...tab, url: "https://different.example/" })),
++    } }, caller)
++    yield* commands.state({ ...base, state: state(1) }, caller)
++    expect(yield* commands["read.live"](ticket, caller)).toBe(false)
++    expect(Exit.isFailure(yield* Effect.exit(commands.result({ ...base, requestID, outcome: {
++      type: "success", result: { value: { content: "DOCUMENT_AFTER_NAVIGATION", truncated: false }, files: [] },
++    } }, caller)))).toBe(true)
++    expect(Exit.isFailure(yield* Fiber.await(reading))).toBe(true)
 +  }))
 +})
 +
