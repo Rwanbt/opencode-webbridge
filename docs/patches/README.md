@@ -4,7 +4,7 @@
 
 **Exact base:** official [`anomalyco/opencode` V2 `4617210822bdbb31e5749751afbfb4584ccedac8`](https://github.com/anomalyco/opencode/commit/4617210822bdbb31e5749751afbfb4584ccedac8). Apply **only** to that commit; this is an upstream patch proposal, not installed WebBridge code. Parent WebBridge PR: [#78](https://github.com/Rwanbt/opencode-webbridge/pull/78).
 
-Patch SHA-256: `50C710D21A2397802EE5D99C9A4AFAA12EBA2C6356261CFD38C97909C04F50DA`.
+Patch SHA-256: `FE5AE887CA3FEB1C2A2E170A12B7A9C89E79684E80EE5CE656C7377604F753E8` (exact vetted G106 #187 artifact, integrated with G113 #190).
 
 Follow-up to #110: [ADR 0004](../ADR/0004-core-permission-browser-read-epoch.md) adds a real, read-only `Permission.Service.browserRead` authority with policy-version invalidation and RED→GREEN Core integration tests. This ledger is **not invoked by Desktop or existing browser tools**, and cannot grant native writes.
 
@@ -31,6 +31,8 @@ G61 introduces a **separate private per-attachment proof** alongside the public 
 G62 closes an attachment-initialization race: before the asynchronous session permission update finishes, **no privileged browser RPC or server TCP tunnel may use the attachment**, even with the correct V6 proof. A displaced attachment cannot become ready when its late permission update returns. A deterministic deferred-authorization native host test and the precise compatibility limitations are in [ADR 0012](../ADR/0012-browser-attachment-activation-gate.fr.md). This is not Desktop process attestation or a cross-process atomic permission-effect boundary.
 
 G63 restores only **first-party browser.tabs.list and plugin ctx.browser.tabs metadata** from the session-isolated Core state mirror after V6 proof-checked `state` updates. The mirror returns detached tab snapshots, while legacy `target.request('tabs.list')`, direct GUI IPC and all content/capture reads remain denied. Normal Core `browser`/`browser_plugin` permissions still apply at tool/plugin entry; see [ADR 0013](../ADR/0013-core-owned-tab-metadata.fr.md). No new WebBridge navigation or writing right is granted; this does not attest the Desktop process or solve cross-process atomicity.
+
+G106 #187 keeps G104 snapshot/read.live protections and additionally prevents `browser.tabs.list` from returning obsolete metadata after saved-rule, agent/hook, session or consent changes during asynchronous permission checks or host inventory. It snapshots a Core-owned browser-policy generation, rechecks it after all awaits, and denies stale results while preserving authorized tab listing. The entire G106 patch artifact above is installed **only into the isolated CI clone of official V2**; the G113 single npm test plugin/Chromium page-close flow is a separate actual native CLI executable tested on the **same WebBridge commit**. See [ADR 0042](../ADR/0042-core-browser-tabs-policy-epoch.fr.md) and [ADR 0064](../ADR/0064-g106-g113-native-coexistence-no-go.fr.md). No claim that official packaged Electron ran or that cross-process Core permission revocation is atomic.
 
 Independent E2 follow-up: the Core reference ledger now snapshots the entire validated binding **before** asynchronous authorization, refuses mutation during the await, and preserves spent-call tombstones through `revoke()` to prevent replay of the same call in a later epoch. Tickets use a bounded monotonic lifetime. Regression tests exercise forged plugin/session/action mutation, post-revoke replay, and clock rollback; the ledger remains disconnected from Desktop and **does not authorize writes**.
 

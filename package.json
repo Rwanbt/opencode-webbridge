@@ -17,6 +17,7 @@
     "check:backlog": "node scripts/check-backlog.mjs",
     "check:progress": "node scripts/check-progress.mjs",
     "check:policy": "node scripts/check-provider-policy.mjs",
+    "check:g119": "node scripts/check-g119-cross-stream.mjs",
     "preview:package": "node scripts/offline-package-preview.mjs",
     "preview:rpc-package": "node scripts/offline-rpc-package.mjs",
     "smoke:rpc-package-native": "node scripts/offline-rpc-package.mjs --native",

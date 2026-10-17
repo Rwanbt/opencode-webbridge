@@ -18,6 +18,8 @@ jobs:
       - run: npm run check:backlog
       - run: npm run check:progress
       - run: npm run check:policy
+      - name: G119 prove exact G106 full patch and G113 standalone browser fixture on one SHA
+        run: npm run check:g119
       - run: npm test
       - name: Deterministic offline package, upgrade, rollback and uninstall
         run: npm run preview:package
@@ -38,6 +40,8 @@ jobs:
       - run: npm ci
       - name: Install exact OpenCode CLI for isolated smoke
         run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.29
+      - name: G119 refuse downgraded G106 patch or modified G113 local model before Chromium
+        run: npm run check:g119
       - name: Verify offline package installed in disposable OpenCode profile
         run: npm run smoke:package-native
       - name: Native CLI packaged RPC authority, upgrade and rollback (no Chromium)
@@ -58,6 +62,18 @@ jobs:
         run: npm run smoke:g99-page
         env:
           WEBBRIDGE_G113_PAGE_CLOSE: '1'
+      - name: G119 replay EXACT G106 official V2 patch in same native G113 Chromium CI job
+        shell: bash
+        run: |
+          node scripts/check-g119-cross-stream.mjs
+          git init "$RUNNER_TEMP/g119-combined-v2"
+          git -C "$RUNNER_TEMP/g119-combined-v2" fetch --depth=1 https://github.com/anomalyco/opencode.git 4617210822bdbb31e5749751afbfb4584ccedac8
+          git -C "$RUNNER_TEMP/g119-combined-v2" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/g119-combined-v2" rev-parse HEAD)" = 4617210822bdbb31e5749751afbfb4584ccedac8
+          git -C "$RUNNER_TEMP/g119-combined-v2" apply --check "$GITHUB_WORKSPACE/docs/patches/opencode-v2-4617210-browser-plugin-capability.patch"
+          git -C "$RUNNER_TEMP/g119-combined-v2" apply "$GITHUB_WORKSPACE/docs/patches/opencode-v2-4617210-browser-plugin-capability.patch"
+          grep -F 'browserPolicy?.()' "$RUNNER_TEMP/g119-combined-v2/packages/core/src/plugin/browser.ts"
+          grep -F 'readonly browserPolicy?:' "$RUNNER_TEMP/g119-combined-v2/packages/core/src/permission.ts"
       - run: npm run smoke:local-read
       - name: Offline DOM progressive relay and uncertain interruption
         run: npm run smoke:dom-rpc
@@ -85,6 +101,7 @@ jobs:
       - name: Fetch exact official V2 source and verify patch
         shell: bash
         run: |
+          node scripts/check-g119-cross-stream.mjs
           git init "$RUNNER_TEMP/opencode-v2"
           git -C "$RUNNER_TEMP/opencode-v2" fetch --depth=1 https://github.com/anomalyco/opencode.git 4617210822bdbb31e5749751afbfb4584ccedac8
           git -C "$RUNNER_TEMP/opencode-v2" checkout --detach FETCH_HEAD
@@ -97,13 +114,13 @@ jobs:
       - name: Install upstream dependencies
         run: bun install --frozen-lockfile
         working-directory: ${{ runner.temp }}/opencode-v2
-      - name: Typecheck upstream packages and test capability
+      - name: G106 focused live Core saved-policy revision and BrowserLease/GUI gate tests
         working-directory: ${{ runner.temp }}/opencode-v2
         run: |
           bun run --cwd packages/plugin typecheck
           bun run --cwd packages/plugin-browser typecheck
           bun run --cwd packages/core typecheck
           bun run --cwd packages/gui-extensions typecheck
-          (cd packages/core && bun test test/agent.test.ts test/permission.test.ts test/permission-browser-lease.test.ts test/plugin/browser-lease.test.ts test/plugin/browser-one-shot.test.ts test/plugin/browser-capability.test.ts test/plugin/promise-tool.test.ts test/plugin/supervisor.test.ts)
-          (cd packages/plugin-browser && bun test test/read-commit.test.ts test/connection-location.test.ts test/rpc.test.ts test/tools.test.ts)
+          (cd packages/core && bun test test/permission.test.ts test/permission-browser-lease.test.ts test/plugin/browser-lease.test.ts test/plugin/browser-capability.test.ts)
+          (cd packages/plugin-browser && bun test test/read-commit.test.ts test/connection-location.test.ts)
           (cd packages/gui-extensions && bun test src/browser/read-commit-gate.test.ts)

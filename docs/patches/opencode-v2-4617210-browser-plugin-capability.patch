@@ -53,7 +53,7 @@ index 14732fdd75..a8230b27ae 100644
      })
    }),
 diff --git a/packages/core/src/permission.ts b/packages/core/src/permission.ts
-index 2aecebb0ce..758726c33c 100644
+index 2aecebb0ce..bf1ffc79aa 100644
 --- a/packages/core/src/permission.ts
 +++ b/packages/core/src/permission.ts
 @@ -12,6 +12,8 @@ import { SessionStore } from "./session/store.js"
@@ -65,17 +65,19 @@ index 2aecebb0ce..758726c33c 100644
  
  const PermissionEffect = Permission.Effect
  export { PermissionEffect as Effect }
-@@ -108,6 +110,9 @@ export interface Interface {
+@@ -108,6 +110,11 @@ export interface Interface {
    readonly get: (id: ID) => Effect.Effect<Request | undefined>
    readonly forSession: (sessionID: SessionSchema.ID) => Effect.Effect<ReadonlyArray<Request>>
    readonly list: () => Effect.Effect<ReadonlyArray<Request>>
 +  /** Restricted Core-only reference authority: does not authorize Desktop browser effects. */
 +  /** Optional in test doubles; real Permission.Service always supplies this authority. */
 +  readonly browserRead?: ReturnType<typeof BrowserLease.make>
++  /** Core-only saved/agent/hook policy fence across awaited metadata reads. */
++  readonly browserPolicy?: () => number | undefined
  }
  
  export class Service extends Context.Service<Service, Interface>()("@opencode/Permission") {}
-@@ -129,9 +134,13 @@ const layer = Layer.effect(
+@@ -129,9 +136,13 @@ const layer = Layer.effect(
      const hooks = yield* PluginHooks.Service
      const pending = new Map<ID, Pending>()
      let closed = false
@@ -89,7 +91,7 @@ index 2aecebb0ce..758726c33c 100644
        yield* Effect.forEach(Array.from(pending.values()), (item) =>
          bus
            .publish(Permission.Event.Replied, {
-@@ -228,7 +237,7 @@ const layer = Layer.effect(
+@@ -228,7 +239,7 @@ const layer = Layer.effect(
        return { id: value.id, effect: result.effect }
      })
  
@@ -98,7 +100,7 @@ index 2aecebb0ce..758726c33c 100644
        Effect.gen(function* () {
          if (closed) return yield* Effect.die(new DeclinedError())
          const result = yield* evaluateInput(input)
-@@ -242,7 +251,9 @@ const layer = Layer.effect(
+@@ -242,7 +253,9 @@ const layer = Layer.effect(
                  reason: result.message,
                })
              }
@@ -109,27 +111,28 @@ index 2aecebb0ce..758726c33c 100644
              const item = yield* create(request(input, result.message), input.agent)
              return yield* restore(Deferred.await(item.deferred)).pipe(
                // Deliberate defect tunnel: leaves wrap execution in blanket `mapError`, which
-@@ -262,6 +273,58 @@ const layer = Layer.effect(
+@@ -262,6 +275,59 @@ const layer = Layer.effect(
        }),
      )
  
 +    // Core authority owns the lease epoch, not a plugin-supplied predicate. This deliberately
 +    // supports only a read action; external session/agent/saved-rule changes still require
 +    // an atomic mutation hook before this can be trusted for browser effect dispatch.
-+    const browserRead = BrowserLease.make({
-+      live: () => {
++    const browserPolicy = () => {
 +        const a = agents.revision?.()
 +        const s = saved.revision?.()
 +        const h = hooks.permissionRevision?.()
-+        if (a === undefined || s === undefined || h === undefined) return false
++        if (a === undefined || s === undefined || h === undefined) return undefined
 +        if (a !== agentRevision || s !== savedRevision || h !== hookRevision) {
 +          agentRevision = a
 +          savedRevision = s
 +          hookRevision = h
 +          browserRead.revoke() // Synchronous before any next issue/consume.
 +        }
-+        return !closed
-+      },
++        return closed ? undefined : browserRead.revision
++      }
++    const browserRead = BrowserLease.make({
++      live: () => browserPolicy() !== undefined,
 +      authorize: (binding) =>
 +        Effect.gen(function* () {
 +          if (binding.action !== "snapshot.once")
@@ -168,7 +171,7 @@ index 2aecebb0ce..758726c33c 100644
      const reply = Effect.fn("Permission.reply")((input: ReplyInput) =>
        Effect.uninterruptible(
          Effect.gen(function* () {
-@@ -274,6 +337,7 @@ const layer = Layer.effect(
+@@ -274,6 +340,7 @@ const layer = Layer.effect(
            })
  
            if (input.reply === "reject") {
@@ -176,12 +179,12 @@ index 2aecebb0ce..758726c33c 100644
              yield* Deferred.fail(
                existing.deferred,
                input.message ? new CorrectedError({ feedback: input.message }) : new DeclinedError(),
-@@ -336,7 +400,7 @@ const layer = Layer.effect(
+@@ -336,7 +403,7 @@ const layer = Layer.effect(
        return Array.from(pending.values(), (item) => item.request).filter((request) => request.sessionID === sessionID)
      })
  
 -    return Service.of({ ask, assert, reply, get, forSession, list, close })
-+    return Service.of({ ask, assert, reply, get, forSession, list, close, browserRead })
++    return Service.of({ ask, assert, reply, get, forSession, list, close, browserRead, browserPolicy })
    }),
  )
  
@@ -264,10 +267,10 @@ index 8ade682658..218870e15a 100644
          Effect.updateContext((context: Context.Context<never>) =>
 diff --git a/packages/core/src/plugin/browser-lease.ts b/packages/core/src/plugin/browser-lease.ts
 new file mode 100644
-index 0000000000..49887aafe8
+index 0000000000..eb2fa054e8
 --- /dev/null
 +++ b/packages/core/src/plugin/browser-lease.ts
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,151 @@
 +export * as BrowserLease from "./browser-lease.js"
 +
 +import { Effect, Exit } from "effect"
@@ -413,14 +416,18 @@ index 0000000000..49887aafe8
 +    get outstanding() {
 +      return pending.size
 +    },
++    /** Core-only policy generation, also advances for session and user rejection events. */
++    get revision() {
++      return epoch
++    },
 +  }
 +}
 diff --git a/packages/core/src/plugin/browser.ts b/packages/core/src/plugin/browser.ts
 new file mode 100644
-index 0000000000..0ed6d6bead
+index 0000000000..bd554d6c8c
 --- /dev/null
 +++ b/packages/core/src/plugin/browser.ts
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,119 @@
 +export * as PluginBrowser from "./browser.js"
 +
 +import type { BrowserDomain, BrowserDriver } from "@opencode/plugin/effect/browser"
@@ -433,7 +440,7 @@ index 0000000000..0ed6d6bead
 +
 +/** Location-local broker. The registered driver never leaves the trusted host. */
 +export function make(
-+  permission: Pick<Permission.Interface, "assert" | "browserRead">,
++  permission: Pick<Permission.Interface, "assert" | "browserRead" | "browserPolicy">,
 +  scope?: {
 +    readonly location: Location.Ref
 +    readonly session: (id: Session.ID) => Effect.Effect<Location.Ref | undefined, Error>
@@ -506,10 +513,16 @@ index 0000000000..0ed6d6bead
 +          if (retired) return yield* Effect.fail(new Error("Plugin generation unloaded"))
 +          const owner = driver
 +          if (!owner) return yield* Effect.fail(new Error("Desktop browser not connected"))
++          const revision = permission.browserPolicy?.()
++          if (revision === undefined)
++            return yield* Effect.fail(new Error("Core browser policy revision unavailable"))
 +          yield* authorize(input.sessionID, "tabs.list")
-+          if (driver !== owner || retired)
-+            return yield* Effect.fail(new Error("Browser host changed during authorization"))
-+          return yield* owner.host.tabs(input)
++          if (driver !== owner || retired || permission.browserPolicy?.() !== revision)
++            return yield* Effect.fail(new Error("Browser policy or host changed during authorization"))
++          const result = yield* owner.host.tabs(input)
++          if (driver !== owner || retired || permission.browserPolicy?.() !== revision)
++            return yield* Effect.fail(new Error("Browser policy or host changed during tab inventory"))
++          return result
 +        }),
 +      // Legacy ctx.browser.snapshot has no trusted tool turn or Core epoch.
 +      snapshot: () => Effect.fail(new Error("Legacy plugin snapshot lacks Core authority; use snapshotOnce")),
@@ -798,10 +811,10 @@ index a7db22b729..0b48b09ddb 100644
            while: (error) => "type" in error && error.type === "unavailable",
 diff --git a/packages/core/test/permission-browser-lease.test.ts b/packages/core/test/permission-browser-lease.test.ts
 new file mode 100644
-index 0000000000..a3ac1e1cb4
+index 0000000000..8b3b60111b
 --- /dev/null
 +++ b/packages/core/test/permission-browser-lease.test.ts
-@@ -0,0 +1,446 @@
+@@ -0,0 +1,469 @@
 +import { Tool } from "@opencode/schema/tool"
 +import { SessionMessage } from "@opencode/schema/session-message"
 +import { BrowserTurn } from "@opencode/core/tool/browser-turn"
@@ -999,12 +1012,14 @@ index 0000000000..a3ac1e1cb4
 +      { action: "browser_plugin", resource: "*", effect: "allow" },
 +    ])
 +    const permission = yield* Permission.Service
++    const before = permission.browserPolicy?.()
 +    const ticket = yield* permission.browserRead!.issue(binding)
 +    const bus = yield* Bus.Service
 +    yield* bus.publish(SessionEvent.Permissions, {
 +      sessionID,
 +      permissions: [{ action: "browser_plugin", resource: "*", effect: "deny" }],
 +    })
++    expect(permission.browserPolicy?.()).not.toBe(before)
 +    expect(permission.browserRead!.consume(ticket, binding)).toBe(false)
 +    expect(permission.browserRead!.outstanding).toBe(0)
 +  }),
@@ -1065,6 +1080,27 @@ index 0000000000..a3ac1e1cb4
 +    yield* saved.add({ projectID: Project.ID.global, action: "browser_plugin", resources: ["*"] })
 +    expect(permission.browserRead!.consume(ticket, binding)).toBe(false)
 +    expect(permission.browserRead!.outstanding).toBe(0)
++  }),
++)
++
++test.effect("real saved-rule mutation invalidates an already consumed native read before host live validation", () =>
++  Effect.gen(function* () {
++    yield* setup([
++      { action: "browser", resource: "*", effect: "allow" },
++      { action: "browser_plugin", resource: "*", effect: "allow" },
++    ])
++    const permission = yield* Permission.Service
++    const before = permission.browserPolicy?.()
++    expect(before).toBeDefined()
++    const ticket = yield* permission.browserRead!.issue(binding)
++    expect(permission.browserRead!.consume(ticket, binding)).toBe(true)
++    expect(permission.browserRead!.current(ticket, binding)).toBe(true)
++    const saved = yield* PermissionSaved.Service
++    yield* saved.add({ projectID: Project.ID.global, action: "browser_plugin", resources: ["*"] })
++    expect(permission.browserPolicy?.()).not.toBe(before)
++    expect(permission.browserRead!.current(ticket, binding)).toBe(false)
++    // Reallowing a policy never resurrects a consumed read from a previous epoch.
++    expect(permission.browserRead!.current(ticket, binding)).toBe(false)
 +  }),
 +)
 +
@@ -1250,10 +1286,10 @@ index 0000000000..a3ac1e1cb4
 +)
 diff --git a/packages/core/test/plugin/browser-capability.test.ts b/packages/core/test/plugin/browser-capability.test.ts
 new file mode 100644
-index 0000000000..0a8bd5467d
+index 0000000000..907ba5a6da
 --- /dev/null
 +++ b/packages/core/test/plugin/browser-capability.test.ts
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,199 @@
 +import { expect, test } from "bun:test"
 +import type { Context } from "@opencode/plugin/effect/plugin"
 +import { PluginBrowser } from "@opencode/core/plugin/browser"
@@ -1296,6 +1332,7 @@ index 0000000000..0a8bd5467d
 +  const calls: string[] = []
 +  const actions: string[] = []
 +  const broker = PluginBrowser.make({
++    browserPolicy: () => 0,
 +    assert: (input) => {
 +      actions.push(`${input.action}:${input.resources.join(",")}`)
 +      return input.action === deny
@@ -1377,6 +1414,7 @@ index 0000000000..0a8bd5467d
 +  const release = Deferred.makeUnsafe<void>()
 +  const calls: string[] = []
 +  const broker = PluginBrowser.make({
++    browserPolicy: () => 0,
 +    assert: (input) =>
 +      input.action === "browser_plugin"
 +        ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))
@@ -1413,6 +1451,7 @@ index 0000000000..0a8bd5467d
 +  let revoked = false
 +  const invoked: string[] = []
 +  const broker = PluginBrowser.make({
++    browserPolicy: () => 0,
 +    assert: (input) =>
 +      Effect.gen(function* () {
 +        if (input.action === "browser" && ++checks === 2) {
@@ -1686,10 +1725,10 @@ index 0000000000..6e53adf475
 +})
 diff --git a/packages/core/test/plugin/browser-one-shot.test.ts b/packages/core/test/plugin/browser-one-shot.test.ts
 new file mode 100644
-index 0000000000..6323fc2b9a
+index 0000000000..118f73afca
 --- /dev/null
 +++ b/packages/core/test/plugin/browser-one-shot.test.ts
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,318 @@
 +import { test, expect } from "bun:test"
 +import { PluginBrowser } from "@opencode/core/plugin/browser"
 +import { BrowserLease } from "@opencode/core/plugin/browser-lease"
@@ -1702,7 +1741,7 @@ index 0000000000..6323fc2b9a
 +import { Location } from "@opencode/schema/location"
 +import { AbsolutePath } from "@opencode/schema/schema"
 +import { Workspace } from "@opencode/schema/workspace"
-+import { Deferred, Effect, Exit, Scope } from "effect"
++import { Deferred, Effect, Exit, Fiber, Scope } from "effect"
 +import { testEffect } from "../lib/effect"
 +import { PluginTestLayer } from "./fixture"
 +
@@ -1727,6 +1766,7 @@ index 0000000000..6323fc2b9a
 +        Effect.sync(() => {
 +          grants.push(`${input.action}:${input.resources.join(",")}`)
 +        }),
++      browserPolicy: () => 0,
 +      ...(withAuthority ? { browserRead: BrowserLease.make({
 +        authorize: (input) => Effect.sync(() => {
 +          grants.push(`browserRead:${input.pluginID}:${input.pluginGeneration}:${input.agentID}:${input.action}:${input.sessionID}:${input.turnID}:${input.callID}:${input.connectionID}:${input.tabID}:${input.tabGeneration}`)
@@ -1822,6 +1862,64 @@ index 0000000000..6323fc2b9a
 +    }))
 +  })))
 +  expect(f.reads).toBe(0)
++})
++
++test("a saved-rule epoch change while browser.tabs.list permission awaits cannot disclose stale metadata", async () => {
++  let policyEpoch = 0
++  let calls = 0
++  let disclosed = 0
++  const awaiting = Deferred.makeUnsafe<void>()
++  const resume = Deferred.makeUnsafe<void>()
++  const broker = PluginBrowser.make({
++    assert: () => Effect.gen(function* () {
++      calls++
++      if (calls === 2) {
++        yield* Deferred.succeed(awaiting, undefined)
++        yield* Deferred.await(resume)
++      }
++    }),
++    browserPolicy: () => policyEpoch,
++  } as never, { location, session: () => Effect.succeed(location) })
++  const owner = broker("opencode.browser", true)
++  const consumer = broker("external-reader")
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    yield* owner.register({
++      tabs: () => Effect.sync(() => { disclosed++; return [{ id: "tab_private", title: "stale" }] }),
++      snapshot: () => Effect.fail(new Error("not used")),
++    } as never)
++    const pending = yield* consumer.tabs({ sessionID }).pipe(Effect.exit, Effect.forkScoped)
++    yield* Deferred.await(awaiting)
++    policyEpoch++ // Saved-rule mutation while permission.assert is waiting.
++    yield* Deferred.succeed(resume, undefined)
++    expect(Exit.isFailure(yield* Fiber.join(pending))).toBe(true)
++  })))
++  expect(disclosed).toBe(0)
++})
++
++test("saved-rule revision during asynchronous Desktop tab inventory rejects the stale result", async () => {
++  let policyEpoch = 0
++  const awaiting = Deferred.makeUnsafe<void>()
++  const resume = Deferred.makeUnsafe<void>()
++  const broker = PluginBrowser.make({
++    assert: () => Effect.void,
++    browserPolicy: () => policyEpoch,
++  } as never, { location, session: () => Effect.succeed(location) })
++  const owner = broker("opencode.browser", true)
++  const consumer = broker("external-reader")
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    yield* owner.register({
++      tabs: () => Deferred.succeed(awaiting, undefined).pipe(
++        Effect.andThen(Deferred.await(resume)),
++        Effect.as([{ id: "tab_private", title: "secret" }]),
++      ),
++      snapshot: () => Effect.fail(new Error("not used")),
++    } as never)
++    const pending = yield* consumer.tabs({ sessionID }).pipe(Effect.exit, Effect.forkScoped)
++    yield* Deferred.await(awaiting)
++    policyEpoch++ // A revocation while the native driver awaits its inventory.
++    yield* Deferred.succeed(resume, undefined)
++    expect(Exit.isFailure(yield* Fiber.join(pending))).toBe(true)
++  })))
 +})
 +
 +test("mutating the trusted tool agent cannot borrow a more privileged Core read principal", async () => {
@@ -2292,31 +2390,87 @@ index 0000000000..bd830ae574
 +  return result
 +}
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
-index 4c6838c70f..9ce9839433 100644
+index 4c6838c70f..2f009ba163 100644
 --- a/packages/plugin-browser/src/connection.ts
 +++ b/packages/plugin-browser/src/connection.ts
-@@ -10,9 +10,14 @@ import { BrowserTunnel } from "./tunnel.js"
+@@ -10,9 +10,15 @@ import { BrowserTunnel } from "./tunnel.js"
  
  type Attachment = {
    connectionID: string
 +  attachmentProof: string
 +  ready: boolean
++  closing: boolean
    state: Browser.State
    closed: Deferred.Deferred<"closed" | "replaced">
 -  pending: Map<string, { command: Browser.Command; result: Deferred.Deferred<Browser.Result, Tool.Error> }>
 +  pending: Map<string, { command: Browser.Command; result: Deferred.Deferred<Browser.Result, Tool.Error>;
 +    read?: { readonly ticket: string; readonly tabID: Browser.TabID; readonly generation: number;
 +      readonly expires: number; readonly authorized: () => boolean;
-+      consumed: boolean; committed: boolean } }>
++      consumed: boolean; committed: boolean; live: boolean } }>
    tunnels: BrowserTunnel.Tunnels
  }
  
-@@ -64,12 +69,15 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -26,37 +32,43 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+   yield* ctx.agent.transform((editor) =>
+     editor.list().forEach((agent) => agent.permissions.push({ action: "browser", resource: "*", effect: "deny" })),
+   )
+-  // Each attachment adds and removes its own allow, so a replaced attachment keeps the new one's.
++  // The session may already carry an explicit allow. Do not remove somebody else's rule on teardown.
+   const grant = (sessionID: Session.ID) =>
+     Effect.acquireRelease(
+       ctx.session.get({ sessionID }).pipe(
+-        Effect.flatMap((session) =>
+-          ctx.session.update({
++        Effect.flatMap((session) => {
++          const rules = session.permissions ?? []
++          if (rules.some((rule) => rule.action === "browser" && rule.resource === "*" && rule.effect === "allow"))
++            return Effect.succeed(false)
++          return ctx.session.update({
+             sessionID,
+-            permissions: [...(session.permissions ?? []), { action: "browser", resource: "*", effect: "allow" }],
+-          }),
+-        ),
++            permissions: [...rules, { action: "browser", resource: "*", effect: "allow" }],
++          }).pipe(Effect.as(true))
++        }),
+         Effect.orDie,
+       ),
+-      () =>
++      (owned) =>
++        owned ?
+         ctx.session.get({ sessionID }).pipe(
+           Effect.flatMap((session) => {
+             const permissions = session.permissions ?? []
+-            const index = permissions.findIndex(
++            const index = permissions.findLastIndex(
+               (rule) => rule.action === "browser" && rule.resource === "*" && rule.effect === "allow",
+             )
+             if (index === -1) return Effect.void
+             return ctx.session.update({ sessionID, permissions: permissions.toSpliced(index, 1) })
+           }),
+           Effect.ignore,
+-        ),
++        ) : Effect.void,
+     )
+   let active = true
+   const close = (sessionID: Session.ID, reason: "closed" | "replaced" = "closed") =>
+     Effect.gen(function* () {
+       const browser = browsers.get(sessionID)
+       if (!browser) return
+-      browsers.delete(sessionID)
++      // Keep this slot reserved until the attachment scope releases its session grant.
++      browser.closing = true
++      browser.ready = false
+       browser.tunnels.dispose()
+       yield* Deferred.succeed(browser.closed, reason)
+     })
+@@ -64,12 +76,16 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
      active = false
      return Effect.forEach(browsers.keys(), (id) => close(id), { discard: true })
    })
 +  const matches = (browser: Attachment | undefined, input: { connectionID: string; attachmentProof: string }): browser is Attachment =>
-+    !!browser && browser.ready && browser.connectionID === input.connectionID && browser.attachmentProof === input.attachmentProof
++    !!browser && browser.ready && !browser.closing &&
++    browser.connectionID === input.connectionID && browser.attachmentProof === input.attachmentProof
    const tunnels = (input: {
      sessionID: Session.ID
      connectionID: string
@@ -2328,7 +2482,7 @@ index 4c6838c70f..9ce9839433 100644
        ? Effect.succeed(browser.tunnels)
        : Effect.fail(new Error("Browser attachment is unavailable; its network connections were closed."))
    }
-@@ -80,7 +88,10 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -80,34 +96,53 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
            const session = yield* ctx.session
              .get({ sessionID: input.sessionID })
              .pipe(Effect.mapError(() => call.error("unavailable", "Session not found.", {})))
@@ -2340,23 +2494,39 @@ index 4c6838c70f..9ce9839433 100644
              return yield* Effect.fail(call.error("unavailable", "Session belongs to another location.", {}))
            const browser = yield* Effect.acquireRelease(
              Effect.gen(function* () {
-@@ -88,6 +99,8 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
-               yield* close(input.sessionID, "replaced")
++              const closed = yield* Deferred.make<"closed" | "replaced">()
+               if (!active) return yield* Effect.fail(call.error("unavailable", "Browser is unavailable.", {}))
+-              yield* close(input.sessionID, "replaced")
++              // A new RPC client can self-mint the V6 proof. Never allow takeover
++              // without a trusted transport identity (currently unavailable).
++              if (browsers.has(input.sessionID))
++                return yield* Effect.fail(call.error("unavailable", "Browser session is already attached.", {}))
                const browser: Attachment = {
                  connectionID: input.connectionID,
 +                attachmentProof: input.attachmentProof,
 +                ready: false,
++                closing: false,
                  state: { tabs: [], focusedTabID: null },
-                 closed: yield* Deferred.make<"closed" | "replaced">(),
+-                closed: yield* Deferred.make<"closed" | "replaced">(),
++                closed,
                  pending: new Map(),
-@@ -99,15 +112,20 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
-             (browser) => (browsers.get(input.sessionID) === browser ? close(input.sessionID) : Effect.void),
+                 tunnels: BrowserTunnel.make(),
+               }
+               browsers.set(input.sessionID, browser)
+               return browser
+             }),
+-            (browser) => (browsers.get(input.sessionID) === browser ? close(input.sessionID) : Effect.void),
++            (browser) => Effect.sync(() => {
++              if (browsers.get(input.sessionID) === browser) browsers.delete(input.sessionID)
++              browser.ready = false
++              browser.tunnels.dispose()
++            }),
            )
            yield* grant(input.sessionID)
 +          // Publishing this attachment or allowing any RPC before the session
 +          // permission update completes would expose the host during its await.
-+          if (browsers.get(input.sessionID) !== browser)
-+            return yield* Effect.fail(call.error("unavailable", "Browser attachment replaced during initialization.", {}))
++          if (browsers.get(input.sessionID) !== browser || browser.closing || !active)
++            return yield* Effect.fail(call.error("unavailable", "Browser attachment closed during initialization.", {}))
 +          browser.ready = true
            yield* rpc.events
 -            .emit("control", { type: "attached", connectionID: input.connectionID, version: 4 })
@@ -2372,7 +2542,7 @@ index 4c6838c70f..9ce9839433 100644
              return yield* Effect.fail(call.error("unavailable", "Browser is unavailable.", {}))
            browser.state = input.state
          }),
-@@ -115,18 +133,51 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -115,18 +150,55 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
          Effect.gen(function* () {
            const browser = browsers.get(input.sessionID)
            const pending =
@@ -2405,6 +2575,7 @@ index 4c6838c70f..9ce9839433 100644
 +            browser.state.tabs.some((tab) => tab.id === read.tabID && tab.generation === read.generation)
 +          // Once the Core lease or tab is stale, never resurrect this spent grant.
 +          if (!allowed) read.committed = false
++          if (allowed) read.live = true
 +          return allowed
 +        }),
        result: (input, call) =>
@@ -2417,16 +2588,19 @@ index 4c6838c70f..9ce9839433 100644
            if (!pending) return
 +          if (pending.read) {
 +            const read = pending.read
-+            if (!read.committed || !read.authorized() || !browser.state.tabs.some((tab) =>
++            if (!read.committed || !read.live || !read.authorized() || !browser.state.tabs.some((tab) =>
 +                tab.id === read.tabID && tab.generation === read.generation)) {
 +              read.committed = false
++              yield* Deferred.fail(pending.result, new Tool.Error({
++                message: "Browser read lacked a current Core read.live authorization.",
++              }))
 +              return yield* Effect.fail(call.error("unavailable", "Uncommitted or stale read cannot return a result.", {}))
 +            }
 +          }
            if (input.outcome.type === "failure")
              return yield* Deferred.fail(
                pending.result,
-@@ -163,6 +214,19 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -163,9 +235,22 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
    )
  
    return {
@@ -2445,8 +2619,12 @@ index 4c6838c70f..9ce9839433 100644
 +      }),
      target: Effect.fn("BrowserConnection.target")(function* (sessionID: Session.ID, action: Browser.Action) {
        const browser = browsers.get(sessionID)
-       if (!browser)
-@@ -177,10 +241,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+-      if (!browser)
++      if (!browser || !browser.ready || browser.closing)
+         return yield* new Tool.Error({
+           message:
+             "[browser.disconnected] No desktop browser is connected to this session. Open this session in the desktop app and wait for it to connect. Then call browser.tabs.list({}). Repeating browser actions while disconnected will not help.",
+@@ -177,10 +262,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              "[browser.tab_unavailable] This tab is closed or does not belong to the connected session. Call browser.tabs.list({}) and use an exact returned tabID. If no tabs exist, use browser.tabs.open({}). Never substitute a request ID, file ID, or element ref for tabID.",
          })
        // Keep the selected attachment and document, even while permissions or file IO wait.
@@ -2462,7 +2640,7 @@ index 4c6838c70f..9ce9839433 100644
              Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
              Effect.mapError(
                (error) =>
-@@ -194,7 +262,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -194,7 +283,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              ),
            ),
          request: (files: readonly Browser.File[], target?: Browser.Target) =>
@@ -2473,7 +2651,7 @@ index 4c6838c70f..9ce9839433 100644
 +            if (!Browser.legacyActionAllowed(action.type))
 +              return yield* new Tool.Error({ message: "Legacy browser content read lacks Core authority; use snapshotOnce for snapshots." })
 +            if (
-+              !active ||
++              !active || !browser.ready || browser.closing ||
 +              browsers.get(sessionID) !== browser ||
 +              (tab && browser.state.tabs.find((item) => item.id === tab.id)?.generation !== tab.generation)
 +            )
@@ -2489,7 +2667,7 @@ index 4c6838c70f..9ce9839433 100644
 +            once = true // Burn before any asynchronous work, including disconnection.
 +            if (!stillAuthorized())
 +              return yield* new Tool.Error({ message: "Core permission was revoked before snapshot dispatch." })
-+            if (!active || browsers.get(sessionID) !== browser ||
++            if (!active || !browser.ready || browser.closing || browsers.get(sessionID) !== browser ||
 +              browser.state.tabs.find((item) => item.id === tab.id)?.generation !== tab.generation)
 +              return yield* new Tool.Error({ message: "Read-only snapshot attachment or tab changed." })
 +            return yield* request(rpc, browser, action, tab, [], {}, stillAuthorized)
@@ -2497,7 +2675,7 @@ index 4c6838c70f..9ce9839433 100644
        }
      }),
    }
-@@ -207,6 +301,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -207,6 +322,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
    tab: Browser.Tab | undefined,
    files: readonly Browser.File[],
    inspection: Pick<Browser.Command, "inspect" | "target">,
@@ -2505,7 +2683,7 @@ index 4c6838c70f..9ce9839433 100644
  ) {
    const requestID = crypto.randomUUID()
    const pending = yield* Deferred.make<Browser.Result, Tool.Error>()
-@@ -214,9 +309,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -214,9 +330,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
      (action.type === "files.upload" || action.type === "files.drop") && !inspection.inspect
        ? { ...action, paths: files.map((file) => file.name) }
        : action
@@ -2516,10 +2694,210 @@ index 4c6838c70f..9ce9839433 100644
 +      ...(ticket ? { readCommit: ticket } : {}) },
      result: pending,
 +    ...(ticket && tab ? { read: { ticket, tabID: tab.id, generation: tab.generation,
-+      expires: performance.now() + 5000, authorized: readGuard!, consumed: false, committed: false } } : {}),
++      expires: performance.now() + 5000, authorized: readGuard!, consumed: false, committed: false, live: false } } : {}),
    })
    return yield* rpc.events.emit("control", { type: "command", connectionID: browser.connectionID, requestID }).pipe(
      Effect.mapError(
+diff --git a/packages/plugin-browser/src/http-forward.ts b/packages/plugin-browser/src/http-forward.ts
+new file mode 100644
+index 0000000000..f7a634d1ab
+--- /dev/null
++++ b/packages/plugin-browser/src/http-forward.ts
+@@ -0,0 +1,194 @@
++import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http"
++import { once } from "node:events"
++import type { Duplex } from "node:stream"
++
++// The Bun node:http ClientRequest adapter ignores Agent.createConnection and
++// fetches the URL directly. This codec operates ONLY on an already authorized
++// TunnelSocket; it never opens a destination socket or resolves a hostname.
++const MAX_HEADERS = 64 * 1024
++const MAX_LINE = 8 * 1024
++
++class Reader {
++  private readonly source: AsyncIterator<Buffer>
++  private buffer = Buffer.alloc(0)
++  constructor(socket: Duplex) {
++    this.source = socket[Symbol.asyncIterator]() as AsyncIterator<Buffer>
++  }
++  async fill(): Promise<boolean> {
++    if (this.buffer.length) return true
++    const next = await this.source.next()
++    if (next.done) return false
++    this.buffer = Buffer.from(next.value)
++    return true
++  }
++  async read(size: number): Promise<Buffer> {
++    if (!(await this.fill())) throw new Error("Truncated upstream HTTP response")
++    const part = this.buffer.subarray(0, Math.min(size, this.buffer.length))
++    this.buffer = this.buffer.subarray(part.length)
++    return part
++  }
++  async exact(size: number): Promise<Buffer> {
++    const chunks: Buffer[] = []
++    let left = size
++    while (left) {
++      const part = await this.read(left)
++      chunks.push(part)
++      left -= part.length
++    }
++    return Buffer.concat(chunks, size)
++  }
++  async line(limit = MAX_LINE): Promise<string> {
++    const chunks: Buffer[] = []
++    let size = 0
++    while (true) {
++      if (!(await this.fill())) throw new Error("Incomplete upstream HTTP headers")
++      const at = this.buffer.indexOf("\r\n")
++      if (at !== -1) {
++        size += at
++        if (size > limit) throw new Error("Upstream HTTP header line too long")
++        chunks.push(this.buffer.subarray(0, at))
++        this.buffer = this.buffer.subarray(at + 2)
++        return Buffer.concat(chunks).toString("latin1")
++      }
++      size += this.buffer.length
++      if (size > limit) throw new Error("Upstream HTTP header line too long")
++      chunks.push(this.buffer)
++      this.buffer = Buffer.alloc(0)
++    }
++  }
++  async untilEOF(push: (buffer: Buffer) => Promise<void>) {
++    while (await this.fill()) await push(await this.read(this.buffer.length))
++  }
++}
++
++async function write(socket: Duplex, bytes: Uint8Array | string) {
++  if (socket.destroyed) throw new Error("Browser tunnel closed during HTTP upload")
++  if (!socket.write(bytes)) await once(socket, "drain")
++}
++
++export async function forwardHttp(
++  incoming: IncomingMessage,
++  response: ServerResponse,
++  tunnel: Duplex,
++  url: URL,
++  headers: IncomingHttpHeaders,
++) {
++  const host = url.host
++  headers.host = host
++  headers.connection = "close"
++  const hasLength = headers["content-length"] !== undefined
++  const chunkedUpload = !hasLength && incoming.headers["transfer-encoding"] !== undefined
++  if (chunkedUpload) headers["transfer-encoding"] = "chunked"
++  const headerLines = Object.entries(headers).flatMap(([key, value]) =>
++    value === undefined ? [] : (Array.isArray(value) ? value : [value]).map((item) => `${key}: ${item}\r\n`))
++  const upload = (async () => {
++    await write(tunnel, `${incoming.method} ${url.pathname}${url.search} HTTP/1.1\r\n${headerLines.join("")}\r\n`)
++    for await (const raw of incoming) {
++      const chunk = Buffer.from(raw)
++      if (chunkedUpload) await write(tunnel, `${chunk.length.toString(16)}\r\n`)
++      await write(tunnel, chunk)
++      if (chunkedUpload) await write(tunnel, "\r\n")
++    }
++    if (chunkedUpload) await write(tunnel, "0\r\n\r\n")
++    // Deliberately do not call tunnel.end(): HTTP/1.1 needs the response after
++    // request EOF. The origin knows the upload length or receives chunked EOF.
++  })()
++  // Register the rejection handler before any awaited response read. If the
++  // upload fails early, closing this tunnel wakes a blocked response reader.
++  void upload.catch(() => tunnel.destroy())
++
++  const reader = new Reader(tunnel)
++  const deadline = setTimeout(() => tunnel.destroy(new Error("Browser HTTP tunnel timed out")), 30_000)
++  try {
++    let status = 0
++    let upstream: IncomingHttpHeaders = {}
++    while (true) {
++      const start = await reader.line()
++      const parsed = /^HTTP\/1\.[01] ([1-5][0-9]{2})(?: [^\r\n]*)?$/.exec(start)
++      if (!parsed) throw new Error("Malformed upstream HTTP status line")
++      status = Number(parsed[1])
++      upstream = {}
++      let size = start.length + 2
++      while (true) {
++        const line = await reader.line()
++        size += line.length + 2
++        if (size > MAX_HEADERS) throw new Error("Upstream HTTP headers exceed limit")
++        if (!line) break
++        const at = line.indexOf(":")
++        if (at < 1 || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(line.slice(0, at)))
++          throw new Error("Malformed upstream HTTP header")
++        const name = line.slice(0, at).toLowerCase()
++        const value = line.slice(at + 1).trim()
++        if (upstream[name] !== undefined && (name === "content-length" || name === "transfer-encoding"))
++          throw new Error("Conflicting upstream HTTP framing")
++        if (upstream[name] === undefined) upstream[name] = value
++        else if (name === "set-cookie") upstream[name] =
++          Array.isArray(upstream[name]) ? [...upstream[name], value] : [String(upstream[name]), value]
++        else upstream[name] = `${upstream[name]}, ${value}`
++      }
++      if (status >= 100 && status < 200) {
++        if (status === 101) throw new Error("HTTP upgrades must use the WebSocket proxy path")
++        continue
++      }
++      break
++    }
++    const transfer = upstream["transfer-encoding"]
++    const length = upstream["content-length"]
++    if (transfer && (transfer.toLowerCase() !== "chunked" || length !== undefined))
++      throw new Error("Ambiguous upstream HTTP framing")
++    if (length && !/^(0|[1-9][0-9]*)$/.test(length)) throw new Error("Invalid HTTP content length")
++    const hop = new Set([
++      "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
++      "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade",
++    ])
++    String(upstream.connection ?? "").split(",").forEach((name) => hop.add(name.trim().toLowerCase()))
++    const outgoing = Object.fromEntries(Object.entries(upstream).filter(([name]) => !hop.has(name)))
++    response.writeHead(status, { ...outgoing, connection: "close" })
++    const push = async (chunk: Buffer) => {
++      if (chunk.length && !response.write(chunk)) await once(response, "drain")
++    }
++    if (incoming.method !== "HEAD" && status !== 204 && status !== 304) {
++      if (transfer) {
++        while (true) {
++          const line = await reader.line()
++          if (!/^[0-9a-fA-F]+(?:;[^\r\n]*)?$/.test(line)) throw new Error("Malformed HTTP chunk size")
++          const size = Number.parseInt(line.split(";")[0]!, 16)
++          if (!Number.isSafeInteger(size)) throw new Error("Oversized HTTP chunk")
++          if (size === 0) {
++            let trailers = 0
++            while (true) {
++              const trailer = await reader.line()
++              trailers += trailer.length + 2
++              if (trailers > MAX_HEADERS) throw new Error("Oversized HTTP trailer")
++              if (!trailer) break
++            }
++            break
++          }
++          let left = size
++          while (left) {
++            const next = await reader.read(left)
++            left -= next.length
++            await push(next)
++          }
++          const cr = await reader.exact(2)
++          if (cr[0] !== 13 || cr[1] !== 10) throw new Error("Malformed HTTP chunk delimiter")
++        }
++      } else if (length !== undefined) {
++        let left = Number(length)
++        if (!Number.isSafeInteger(left)) throw new Error("Invalid HTTP length")
++        while (left) {
++          const next = await reader.read(left)
++          left -= next.length
++          await push(next)
++        }
++      } else await reader.untilEOF(push)
++    }
++    response.end()
++    await upload
++  } catch (error) {
++    tunnel.destroy()
++    throw error
++  } finally {
++    clearTimeout(deadline)
++  }
++}
 diff --git a/packages/plugin-browser/src/index.ts b/packages/plugin-browser/src/index.ts
 index 3ef7c6b877..5e141bcb52 100644
 --- a/packages/plugin-browser/src/index.ts
@@ -2572,6 +2950,78 @@ index 3ef7c6b877..5e141bcb52 100644
        yield* BrowserTools.register(ctx, connection)
      }),
  })
+diff --git a/packages/plugin-browser/src/proxy.ts b/packages/plugin-browser/src/proxy.ts
+index 50ca2dadfb..5516f1b2e0 100644
+--- a/packages/plugin-browser/src/proxy.ts
++++ b/packages/plugin-browser/src/proxy.ts
+@@ -2,9 +2,7 @@ export * as BrowserProxy from "./proxy.js"
+ 
+ import { randomBytes, timingSafeEqual } from "node:crypto"
+ import {
+-  Agent,
+   createServer,
+-  request,
+   type IncomingHttpHeaders,
+   type IncomingMessage,
+   type ServerResponse,
+@@ -12,6 +10,7 @@ import {
+ import { Duplex } from "node:stream"
+ import { Schema } from "effect"
+ import { Browser } from "./rpc.js"
++import { forwardHttp } from "./http-forward.js"
+ 
+ export type Transport = {
+   open(target: Browser.TunnelTarget, signal: AbortSignal): Promise<string>
+@@ -179,41 +178,19 @@ async function forward(
+   const cancel = () => abort.abort()
+   incoming.once("aborted", cancel)
+   response.once("close", cancel)
+-  const agent = new Agent({ keepAlive: false, maxSockets: 1 })
+   try {
+     const tunnel = await connect(target(url), abort.signal)
+-    agent.createConnection = () => tunnel
+-    const headers = forwardedHeaders(incoming.headers)
+-    headers.host = url.host
+-    headers.connection = "close"
+-    await new Promise<void>((resolve, reject) => {
+-      const upstream = request(
+-        {
+-          agent,
+-          hostname: url.hostname,
+-          port: url.port || 80,
+-          path: `${url.pathname}${url.search}`,
+-          method: incoming.method,
+-          headers,
+-          signal: abort.signal,
+-        },
+-        (result) => {
+-          response.writeHead(result.statusCode ?? 502, result.statusMessage, {
+-            ...forwardedHeaders(result.headers),
+-            connection: "close",
+-          })
+-          result.once("error", reject)
+-          response.once("finish", resolve)
+-          result.pipe(response)
+-        },
+-      )
+-      upstream.once("error", reject)
+-      incoming.pipe(upstream)
+-    })
++    const stop = () => tunnel.destroy()
++    abort.signal.addEventListener("abort", stop, { once: true })
++    try {
++      await forwardHttp(incoming, response, tunnel, url, forwardedHeaders(incoming.headers))
++    } finally {
++      abort.signal.removeEventListener("abort", stop)
++      tunnel.destroy()
++    }
+   } finally {
+     incoming.off("aborted", cancel)
+     response.off("close", cancel)
+-    agent.destroy()
+   }
+ }
+ 
 diff --git a/packages/plugin-browser/src/rpc.ts b/packages/plugin-browser/src/rpc.ts
 index aaba261a16..35218e4e72 100644
 --- a/packages/plugin-browser/src/rpc.ts
@@ -2667,6 +3117,282 @@ index 7afb621efa..78921c82f4 100644
      const output = yield* Effect.fromResult(decodeResult(operation, response))
      return yield* exportResult(output, response.files)
    })
+diff --git a/packages/plugin-browser/src/tunnel.ts b/packages/plugin-browser/src/tunnel.ts
+index 377e413a71..4dc6efb50c 100644
+--- a/packages/plugin-browser/src/tunnel.ts
++++ b/packages/plugin-browser/src/tunnel.ts
+@@ -1,11 +1,57 @@
+ export * as BrowserTunnel from "./tunnel.js"
+ 
+-import type { Socket } from "node:net"
++import { BlockList, createConnection, isIP, type Socket } from "node:net"
++import { lookup } from "node:dns/promises"
+ import { Effect } from "effect"
+ import { Browser } from "./rpc.js"
+ 
+ export type Tunnels = ReturnType<typeof make>
+ 
++// V6 proves only possession of an attach-supplied string, not Desktop provenance.
++// Never turn that string into a general-purpose connection to the server's LAN.
++const blocked4 = new BlockList()
++for (const [base, prefix] of [
++  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
++  ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24],
++  ["192.0.2.0", 24], ["192.88.99.0", 24], ["192.168.0.0", 16],
++  ["198.18.0.0", 15], ["198.51.100.0", 24], ["203.0.113.0", 24],
++  ["224.0.0.0", 4], ["240.0.0.0", 4],
++] as const) blocked4.addSubnet(base, prefix, "ipv4")
++const global6 = new BlockList()
++global6.addSubnet("2000::", 3, "ipv6")
++const blocked6 = new BlockList()
++for (const [base, prefix] of [
++  ["2001::", 32], ["2001:db8::", 32], ["2002::", 16],
++] as const) blocked6.addSubnet(base, prefix, "ipv6")
++
++export function publicAddress(address: string, family: 4 | 6) {
++  if (family === 4) return !blocked4.check(address, "ipv4")
++  return global6.check(address, "ipv6") && !blocked6.check(address, "ipv6")
++}
++
++// Only the OpenCode *server operator* can set this process environment variable;
++// neither the V6 attach body nor any RPC method may supply an exemption.
++// Explicit host/IP + port, never CIDR or wildcard. A first self-attacher can
++// still reach opted-in endpoints: this is not Desktop process authentication.
++const operatorKey = "OPENCODE_BROWSER_TUNNEL_ALLOWED_PRIVATE_TARGETS"
++function operatorPermits(target: Browser.TunnelTarget, addresses: readonly { address: string; family: number }[]) {
++  const value = process.env[operatorKey]
++  if (!value || value.length > 4096 || !addresses.length) return false
++  if (addresses.some(({ address, family }) => (family === 4 || family === 6) &&
++    publicAddress(address, family))) return false
++  const host = target.host.toLowerCase()
++  const literal = isIP(host)
++  // A DNS name is not an authoritative claim about a private address. Localhost
++  // alone is special-cased, and must resolve entirely to loopback.
++  if (!literal && host !== "localhost") return false
++  if (literal && addresses.some((ip) => ip.family !== literal || ip.address.toLowerCase() !== host)) return false
++  if (host === "localhost" && addresses.some((ip) =>
++      !(ip.family === 4 && blocked4.check(ip.address, "ipv4") && ip.address.startsWith("127.")) &&
++      !(ip.family === 6 && ip.address === "::1"))) return false
++  const key = `${literal === 6 ? `[${host}]` : host}:${target.port}`
++  return value.split(",").some((entry) => entry.trim().toLowerCase() === key)
++}
++
+ // One instance belongs to one desktop attachment. Socket buffers provide
+ // backpressure; reads never collect an unbounded stream in application memory.
+ export function make() {
+@@ -19,12 +65,33 @@ export function make() {
+ 
+   return {
+     open: Effect.fn("BrowserTunnel.open")(function* (target: Browser.TunnelTarget) {
+-      const { createConnection } = yield* Effect.promise(() => import("node:net"))
+       if (disposed) return yield* Effect.fail(new Error("Browser attachment is closed."))
+       if (sockets.size >= 64)
+         return yield* Effect.fail(new Error("Browser attachment has reached its 64-connection limit."))
++      // Resolve before dialing and pin the socket to the checked IP. Reject
++      // mixed public/private DNS replies; never let net.createConnection resolve again.
++      const denied = () => new Error("Browser tunnel destination is private or untrusted.")
++      const addresses = yield* Effect.tryPromise({
++        try: () => lookup(target.host, { all: true }),
++        catch: denied,
++      })
++      if (!addresses.length || addresses.length > 16 ||
++        addresses.some(({ family }) => family !== 4 && family !== 6))
++        return yield* Effect.fail(denied())
++      const approvedByOperator = operatorPermits(target, addresses)
++      if (!approvedByOperator && addresses.some(({ address, family }) => !publicAddress(address, family as 4 | 6)))
++        return yield* Effect.fail(denied())
++      if (!approvedByOperator && target.port !== 80 && target.port !== 443)
++        return yield* Effect.fail(new Error("Browser tunnel only supports public HTTP(S) ports."))
++      // An attachment can be closed while DNS is pending.
++      if (disposed) return yield* Effect.fail(new Error("Browser attachment is closed."))
++      if (sockets.size >= 64)
++        return yield* Effect.fail(new Error("Browser attachment has reached its 64-connection limit."))
++      const pinned = addresses[0]!
+       const socket = yield* Effect.try({
+-        try: () => createConnection({ ...target, allowHalfOpen: true }),
++        try: () => createConnection({
++          host: pinned.address, port: target.port, family: pinned.family, allowHalfOpen: true,
++        }),
+         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+       })
+       const id = crypto.randomUUID()
+diff --git a/packages/plugin-browser/test/attach-ownership.test.ts b/packages/plugin-browser/test/attach-ownership.test.ts
+new file mode 100644
+index 0000000000..f3cef6d477
+--- /dev/null
++++ b/packages/plugin-browser/test/attach-ownership.test.ts
+@@ -0,0 +1,171 @@
++import { expect, test } from "bun:test"
++import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect"
++import { AbsolutePath } from "@opencode/schema/schema"
++import { Location } from "@opencode/schema/location"
++import { Project } from "@opencode/schema/project"
++import { Session } from "@opencode/schema/session"
++import { Workspace } from "@opencode/schema/workspace"
++import { BrowserConnection } from "../src/connection"
++
++const sessionID = Session.ID.make("ses_attach_owner")
++const directory = AbsolutePath.make("/attach-owner")
++const location = new Location.Info({ directory, workspaceID: Workspace.ID.make("wrk_attach_owner"),
++  project: { id: Project.ID.global, directory, canonical: directory } })
++const caller = { error: (_kind: string, message: string) => new Error(message) }
++const a = { sessionID, connectionID: "desktop-A", attachmentProof: "00000000-0000-4000-8000-000000000001" }
++const b = { sessionID, connectionID: "client-B", attachmentProof: "00000000-0000-4000-8000-000000000002" }
++const empty = { tabs: [], focusedTabID: null }
++const allow = { action: "browser", resource: "*", effect: "allow" } as const
++
++test("second RPC caller cannot mint a replacement attachment or modify an active Desktop grant", async () => {
++  const announced = Deferred.makeUnsafe<void>()
++  let permissions: { action: string; resource: string; effect: "allow" | "deny" | "ask" }[] = []
++  let handlers: Record<string, (input: any, caller: any) => any> = {}
++  let updates = 0
++  const ctx = {
++    location, agent: { transform: () => Effect.void }, event: { subscribe: () => Stream.empty },
++    session: {
++      get: () => Effect.succeed({ location, permissions }),
++      update: (input: { permissions: typeof permissions }) => Effect.sync(() => {
++        permissions = input.permissions
++        updates++
++      }),
++    },
++    rpc: { register: (_schema: unknown, commands: typeof handlers) => {
++      handlers = commands
++      return Effect.succeed({ events: { emit: (_: string, event: any) =>
++        event.type === "attached" ? Deferred.succeed(announced, undefined) : Effect.void } })
++    } },
++  } as unknown as Parameters<typeof BrowserConnection.make>[0]
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    yield* BrowserConnection.make(ctx)
++    const original = yield* handlers.attach({ ...a, version: 6 }, caller)
++      .pipe(Effect.forkScoped({ startImmediately: true }))
++    yield* Deferred.await(announced)
++    expect(permissions.filter((rule) => rule.action === "browser" && rule.effect === "allow")).toHaveLength(1)
++    const attempt = yield* Effect.exit(handlers.attach({ ...b, version: 6 }, caller).pipe(Effect.timeout("1 second")))
++    expect(Exit.isFailure(attempt)).toBe(true)
++    if (Exit.isFailure(attempt)) expect(Cause.pretty(attempt.cause)).toContain("already attached")
++    expect(Exit.isFailure(yield* Effect.exit(Fiber.await(original).pipe(Effect.timeout("50 millis"))))).toBe(true)
++    expect(updates).toBe(1)
++    expect(Exit.isSuccess(yield* Effect.exit(handlers.state({ ...a, state: empty }, caller)))).toBe(true)
++    expect(Exit.isFailure(yield* Effect.exit(handlers.state({ ...b, state: empty }, caller)))).toBe(true)
++    const tunnel = yield* Effect.exit(handlers["tunnel.open"]({ ...b, target: { host: "127.0.0.1", port: 1 } }, caller))
++    expect(Exit.isFailure(tunnel)).toBe(true)
++    if (Exit.isFailure(tunnel)) expect(Cause.pretty(tunnel.cause)).toContain("Browser attachment is unavailable")
++    yield* Fiber.interrupt(original)
++  })) as Effect.Effect<void, unknown, never>)
++  expect(permissions).toEqual([])
++})
++
++test("pending session grant cannot be overtaken", async () => {
++  const grantStarted = Deferred.makeUnsafe<void>()
++  const resume = Deferred.makeUnsafe<void>()
++  const announced = Deferred.makeUnsafe<void>()
++  let permissions: (typeof allow)[] = []
++  let handlers: Record<string, (input: any, caller: any) => any> = {}
++  let updates = 0
++  const ctx = {
++    location, agent: { transform: () => Effect.void }, event: { subscribe: () => Stream.empty },
++    session: {
++      get: () => Effect.succeed({ location, permissions }),
++      update: (input: { permissions: typeof permissions }) =>
++        Deferred.succeed(grantStarted, undefined).pipe(Effect.andThen(Deferred.await(resume)),
++          Effect.andThen(Effect.sync(() => { permissions = input.permissions; updates++ }))),
++    },
++    rpc: { register: (_schema: unknown, commands: typeof handlers) => {
++      handlers = commands
++      return Effect.succeed({ events: { emit: () => Deferred.succeed(announced, undefined) } })
++    } },
++  } as unknown as Parameters<typeof BrowserConnection.make>[0]
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    yield* BrowserConnection.make(ctx)
++    const original = yield* handlers.attach({ ...a, version: 6 }, caller)
++      .pipe(Effect.forkScoped({ startImmediately: true }))
++    yield* Deferred.await(grantStarted)
++    const attempt = yield* Effect.exit(handlers.attach({ ...b, version: 6 }, caller).pipe(Effect.timeout("1 second")))
++    expect(Exit.isFailure(attempt)).toBe(true)
++    if (Exit.isFailure(attempt)) expect(Cause.pretty(attempt.cause)).toContain("already attached")
++    expect(Exit.isFailure(yield* Effect.exit(handlers.state({ ...b, state: empty }, caller)))).toBe(true)
++    yield* Deferred.succeed(resume, undefined)
++    yield* Deferred.await(announced)
++    expect(Exit.isSuccess(yield* Effect.exit(handlers.state({ ...a, state: empty }, caller)))).toBe(true)
++    yield* Fiber.interrupt(original)
++  })) as Effect.Effect<void, unknown, never>)
++  expect(permissions).toEqual([])
++  expect(updates).toBe(2)
++})
++
++test("existing explicit browser allow is never revoked by a temporary attachment", async () => {
++  let permissions = [allow]
++  let updates = 0
++  let handlers: Record<string, (input: any, caller: any) => any> = {}
++  const announced = Deferred.makeUnsafe<void>()
++  const ctx = {
++    location, agent: { transform: () => Effect.void }, event: { subscribe: () => Stream.empty },
++    session: {
++      get: () => Effect.succeed({ location, permissions }),
++      update: () => Effect.sync(() => { updates++ }),
++    },
++    rpc: { register: (_schema: unknown, commands: typeof handlers) => {
++      handlers = commands
++      return Effect.succeed({ events: { emit: () => Deferred.succeed(announced, undefined) } })
++    } },
++  } as unknown as Parameters<typeof BrowserConnection.make>[0]
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    yield* BrowserConnection.make(ctx)
++    const original = yield* handlers.attach({ ...a, version: 6 }, caller)
++      .pipe(Effect.forkScoped({ startImmediately: true }))
++    yield* Deferred.await(announced)
++    yield* Fiber.interrupt(original)
++  })) as Effect.Effect<void, unknown, never>)
++  expect(permissions).toEqual([allow])
++  expect(updates).toBe(0)
++})
++
++test("new attach waits for the previous permission grant to finish releasing", async () => {
++  const firstReady = Deferred.makeUnsafe<void>()
++  const releaseStarted = Deferred.makeUnsafe<void>()
++  const allowRelease = Deferred.makeUnsafe<void>()
++  let permissions: (typeof allow)[] = []
++  let updateCount = 0
++  let handlers: Record<string, (input: any, caller: any) => any> = {}
++  const ctx = {
++    location, agent: { transform: () => Effect.void }, event: { subscribe: () => Stream.empty },
++    session: {
++      get: () => Effect.succeed({ location, permissions }),
++      update: (input: { permissions: typeof permissions }) => Effect.gen(function* () {
++        updateCount++
++        if (updateCount === 2) {
++          yield* Deferred.succeed(releaseStarted, undefined)
++          yield* Deferred.await(allowRelease)
++        }
++        permissions = input.permissions
++      }),
++    },
++    rpc: { register: (_schema: unknown, commands: typeof handlers) => {
++      handlers = commands
++      return Effect.succeed({ events: { emit: () => Deferred.succeed(firstReady, undefined) } })
++    } },
++  } as unknown as Parameters<typeof BrowserConnection.make>[0]
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    yield* BrowserConnection.make(ctx)
++    const original = yield* handlers.attach({ ...a, version: 6 }, caller)
++      .pipe(Effect.forkScoped({ startImmediately: true }))
++    yield* Deferred.await(firstReady)
++    const stopping = yield* Fiber.interrupt(original).pipe(Effect.forkScoped({ startImmediately: true }))
++    yield* Deferred.await(releaseStarted)
++    const denied = yield* Effect.exit(handlers.attach({ ...b, version: 6 }, caller).pipe(Effect.timeout("1 second")))
++    expect(Exit.isFailure(denied)).toBe(true)
++    if (Exit.isFailure(denied)) expect(Cause.pretty(denied.cause)).toContain("already attached")
++    yield* Deferred.succeed(allowRelease, undefined)
++    yield* Fiber.join(stopping)
++    expect(permissions).toEqual([])
++    const next = yield* handlers.attach({ ...b, version: 6 }, caller)
++      .pipe(Effect.forkScoped({ startImmediately: true }))
++    expect(Exit.isSuccess(yield* Effect.exit(handlers.state({ ...b, state: empty }, caller)))).toBe(true)
++    yield* Fiber.interrupt(next)
++  })) as Effect.Effect<void, unknown, never>)
++  expect(permissions).toEqual([])
++  expect(updateCount).toBe(4)
++})
 diff --git a/packages/plugin-browser/test/connection-location.test.ts b/packages/plugin-browser/test/connection-location.test.ts
 new file mode 100644
 index 0000000000..23935de9c0
@@ -2783,10 +3509,10 @@ index 0000000000..23935de9c0
 +})
 diff --git a/packages/plugin-browser/test/read-commit.test.ts b/packages/plugin-browser/test/read-commit.test.ts
 new file mode 100644
-index 0000000000..d26051debc
+index 0000000000..7ab7a9b35d
 --- /dev/null
 +++ b/packages/plugin-browser/test/read-commit.test.ts
-@@ -0,0 +1,269 @@
+@@ -0,0 +1,291 @@
 +import { expect, test } from "bun:test"
 +import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect"
 +import { AbsolutePath } from "@opencode/schema/schema"
@@ -2891,12 +3617,34 @@ index 0000000000..d26051debc
 +    const command = yield* commands.command({ ...base, requestID }, caller)
 +    expect(yield* commands["read.commit"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(true)
 +    expect(yield* commands["read.commit"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(false)
++    expect(yield* commands["read.live"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(true)
 +    yield* commands.result({ ...base, requestID, outcome: { type: "success", result: {
 +      value: { content: "WEBBRIDGE_LOCAL_PAGE_OK:fixture", truncated: false }, files: [],
 +    } } }, caller)
 +    const response = (yield* Fiber.join(reading)) as { value: { content: string } }
 +    expect(response.value.content).toBe("WEBBRIDGE_LOCAL_PAGE_OK:fixture")
 +    expect(Exit.isFailure(yield* Effect.exit(target.requestOnce([], () => true)))).toBe(true)
++  }))
++})
++
++test("a forged or stale Desktop cannot disclose a committed snapshot without Core read.live", async () => {
++  await harness(({ target, commands, next, base }) => Effect.gen(function* () {
++    const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
++    const requestID = yield* Deferred.await(next)
++    const caller = { error: (_: string, message: string) => new Error(message) }
++    const command = yield* commands.command({ ...base, requestID }, caller)
++    expect(yield* commands["read.commit"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(true)
++    // The token is consumed, but Chromium must not return page contents
++    // until Core independently authorizes a read.live immediately before effect.
++    const outcome = { type: "success", result: { value: { content: "PRIVATE_DOC_UNCOMMITTED_LIVE", truncated: false }, files: [] } }
++    expect(Exit.isFailure(yield* Effect.exit(commands.result({ ...base, requestID, outcome }, caller)))).toBe(true)
++    expect(yield* commands["read.live"]({ ...base, requestID, ticket: "forged" }, caller)).toBe(false)
++    // An early attempted disclosure irreversibly revokes this read.
++    expect(yield* commands["read.live"]({ ...base, requestID, ticket: command.readCommit }, caller)).toBe(false)
++    // Retired requests may ACK a duplicate RPC for compatibility but never deliver data.
++    yield* commands.result({ ...base, requestID, outcome }, caller)
++    // Fail the waiting tool promptly rather than leaving a 60-second timeout.
++    expect(Exit.isFailure(yield* Fiber.await(reading))).toBe(true)
 +  }))
 +})
 +
@@ -3082,6 +3830,404 @@ index af1d5b53f0..d127f3d81a 100644
    expect(() =>
      Schema.decodeUnknownSync(Browser.Control)({ type: "attached", connectionID: "old-client", version: 2 }),
    ).toThrow()
+diff --git a/packages/plugin-browser/test/tunnel-provenance.test.ts b/packages/plugin-browser/test/tunnel-provenance.test.ts
+new file mode 100644
+index 0000000000..8d082e36c1
+--- /dev/null
++++ b/packages/plugin-browser/test/tunnel-provenance.test.ts
+@@ -0,0 +1,127 @@
++import { expect, test } from "bun:test"
++import { createServer } from "node:net"
++import { once } from "node:events"
++import { AbsolutePath } from "@opencode/schema/schema"
++import { Location } from "@opencode/schema/location"
++import { Project } from "@opencode/schema/project"
++import { Session } from "@opencode/schema/session"
++import { Workspace } from "@opencode/schema/workspace"
++import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect"
++import { BrowserConnection } from "../src/connection"
++import { BrowserTunnel } from "../src/tunnel"
++import { publicAddress } from "../src/tunnel"
++
++test("even the first V6 self-attacher cannot tunnel to a server-side loopback TCP service", async () => {
++  const sockets = new Set<import("node:net").Socket>()
++  const server = createServer((socket) => {
++    sockets.add(socket)
++    socket.once("close", () => sockets.delete(socket))
++  })
++  await once(server.listen(0, "127.0.0.1"), "listening")
++  const address = server.address()
++  if (!address || typeof address === "string") throw new Error("Missing listener")
++  const location = new Location.Info({ directory: AbsolutePath.make("/fixture"),
++    workspaceID: Workspace.ID.make("wrk_fixture"),
++    project: { id: Project.ID.global, directory: AbsolutePath.make("/fixture"),
++      canonical: AbsolutePath.make("/fixture") } })
++  const sessionID = Session.ID.make("ses_first_claim")
++  const base = { sessionID, connectionID: "self-minted", attachmentProof: crypto.randomUUID() }
++  const announced = Deferred.makeUnsafe<void>()
++  let handlers: Record<string, (input: any, call: any) => any> = {}
++  let session = { location, permissions: [] as { action: string; resource: string; effect: "allow" | "deny" | "ask" }[] }
++  const ctx = {
++    location,
++    agent: { transform: () => Effect.void },
++    event: { subscribe: () => Stream.empty },
++    session: { get: () => Effect.succeed(session),
++      update: (input: { permissions: typeof session.permissions }) => Effect.sync(() => {
++        session = { ...session, permissions: input.permissions }
++      }) },
++    rpc: { register: (_definition: unknown, calls: typeof handlers) => {
++      handlers = calls
++      return Effect.succeed({ events: { emit: () => Deferred.succeed(announced, undefined) } })
++    } },
++  } as unknown as Parameters<typeof BrowserConnection.make>[0]
++  try {
++    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++      yield* BrowserConnection.make(ctx)
++      const call = { error: (_kind: string, message: string) => new Error(message) }
++      const attached = yield* handlers.attach({ ...base, version: 6 }, call)
++        .pipe(Effect.forkScoped({ startImmediately: true }))
++      yield* Deferred.await(announced)
++      // This caller invented its proof; BrowserConnection cannot certify Electron.
++      expect(session.permissions.some((x) => x.action === "browser" && x.effect === "allow")).toBe(true)
++      const denied = yield* Effect.exit(handlers["tunnel.open"]({
++        ...base, target: { host: "127.0.0.1", port: address.port },
++      }, call))
++      expect(Exit.isFailure(denied)).toBe(true)
++      if (Exit.isFailure(denied)) expect(Cause.pretty(denied.cause)).toContain("private or untrusted")
++      expect(sockets.size).toBe(0)
++      yield* Fiber.interrupt(attached)
++    })) as Effect.Effect<void, unknown, never>)
++  } finally {
++    sockets.forEach((socket) => socket.destroy())
++    await new Promise<void>((resolve) => server.close(() => resolve()))
++  }
++})
++
++test("all private, mapped, local and non-public target classes fail before TCP connection", async () => {
++  const tunnel = BrowserTunnel.make()
++  try {
++    for (const host of ["127.0.0.1", "::1", "::ffff:127.0.0.1", "10.20.30.40",
++      "169.254.169.254", "192.168.1.1", "localhost", "2001:db8::1"]) {
++      const denied = await Effect.runPromiseExit(tunnel.open({ host, port: 443 }))
++      expect(Exit.isFailure(denied)).toBe(true)
++      if (Exit.isFailure(denied)) expect(Cause.pretty(denied.cause)).toContain("private or untrusted")
++    }
++  } finally {
++    tunnel.dispose()
++  }
++})
++
++test("only public routable address classes and web ports may be tunnel destinations", async () => {
++  expect(publicAddress("1.1.1.1", 4)).toBe(true)
++  expect(publicAddress("8.8.8.8", 4)).toBe(true)
++  expect(publicAddress("2606:4700:4700::1111", 6)).toBe(true)
++  for (const address of ["0.0.0.1", "100.64.0.1", "172.31.0.1", "198.19.0.1",
++    "192.0.2.1", "203.0.113.1", "224.0.0.1", "255.255.255.255"]) {
++    expect(publicAddress(address, 4)).toBe(false)
++  }
++  for (const address of ["::1", "::ffff:127.0.0.1", "fc00::1", "fe80::1", "2001:db8::1", "2002::1"])
++    expect(publicAddress(address, 6)).toBe(false)
++  const tunnel = BrowserTunnel.make()
++  try {
++    const blocked = await Effect.runPromiseExit(tunnel.open({ host: "1.1.1.1", port: 22 }))
++    expect(Exit.isFailure(blocked)).toBe(true)
++    if (Exit.isFailure(blocked)) expect(Cause.pretty(blocked.cause)).toContain("public HTTP(S) ports")
++  } finally {
++    tunnel.dispose()
++  }
++})
++
++test("server-operator exact loopback allowlist restores one native fixture endpoint, never its neighbors", async () => {
++  const server = createServer((socket) => socket.end("allowed"))
++  await once(server.listen(0, "127.0.0.1"), "listening")
++  const address = server.address()
++  if (!address || typeof address === "string") throw new Error("No test listener")
++  const key = "OPENCODE_BROWSER_TUNNEL_ALLOWED_PRIVATE_TARGETS"
++  const before = process.env[key]
++  process.env[key] = `127.0.0.1:${address.port}`
++  const tunnel = BrowserTunnel.make()
++  try {
++    const approved = await Effect.runPromise(tunnel.open({ host: "127.0.0.1", port: address.port }))
++    expect(approved).toBeTruthy()
++    expect(Buffer.from((await Effect.runPromise(tunnel.read(approved))).data).toString()).toBe("allowed")
++    const denied = await Effect.runPromiseExit(tunnel.open({ host: "127.0.0.1", port: address.port + 1 }))
++    expect(Exit.isFailure(denied)).toBe(true)
++    const spoof = await Effect.runPromiseExit(tunnel.open({
++      host: "localhost", port: address.port, trusted: true,
++    } as any))
++    expect(Exit.isFailure(spoof)).toBe(true)
++  } finally {
++    tunnel.dispose()
++    if (before === undefined) delete process.env[key]
++    else process.env[key] = before
++    await new Promise<void>((resolve) => server.close(() => resolve()))
++  }
++})
+diff --git a/packages/plugin-browser/test/tunnel.test.ts b/packages/plugin-browser/test/tunnel.test.ts
+index 027ef204e2..fedaaada5d 100644
+--- a/packages/plugin-browser/test/tunnel.test.ts
++++ b/packages/plugin-browser/test/tunnel.test.ts
+@@ -1,5 +1,5 @@
+ import { expect, test } from "bun:test"
+-import { createServer, type Socket } from "node:net"
++import { createConnection, createServer, type Socket } from "node:net"
+ import { request } from "node:http"
+ import { once } from "node:events"
+ import { Effect, Fiber } from "effect"
+@@ -7,31 +7,46 @@ import { Browser } from "../src/rpc.js"
+ import { BrowserTunnel } from "../src/tunnel.js"
+ import { BrowserProxy } from "../src/proxy.js"
+ 
++// Legacy loopback fixtures model a *deliberate server-operator exemption*.
++// BrowserTunnel.make() defaults to deny for all private destinations.
++const localFixture = (port: number) => {
++  const key = "OPENCODE_BROWSER_TUNNEL_ALLOWED_PRIVATE_TARGETS"
++  const previous = process.env[key]
++  process.env[key] = `127.0.0.1:${port}`
++  return () => {
++    if (previous === undefined) delete process.env[key]
++    else process.env[key] = previous
++  }
++}
++
+ test("TCP relay preserves bounded binary chunks and half-close", async () => {
+-  const server = createServer((socket) => socket.pipe(socket))
++  const received = Promise.withResolvers<Buffer>()
++  const server = createServer({ allowHalfOpen: true }, (socket) => {
++    const chunks: Buffer[] = []
++    socket.on("data", (chunk: Buffer) => chunks.push(chunk))
++    socket.once("end", () => {
++      received.resolve(Buffer.concat(chunks))
++      socket.end()
++    })
++  })
+   await once(server.listen(0, "127.0.0.1"), "listening")
+   const address = server.address()
+   if (!address || typeof address === "string") throw new Error("No TCP address")
++  const reset = localFixture(address.port)
+   const tunnel = BrowserTunnel.make()
+   try {
+     const id = await Effect.runPromise(tunnel.open({ host: "127.0.0.1", port: address.port }))
+-    const received = (async () => {
+-      const chunks: Uint8Array[] = []
+-      while (true) {
+-        const chunk = await Effect.runPromise(tunnel.read(id))
+-        expect(chunk.data.byteLength).toBeLessThanOrEqual(Browser.TUNNEL_CHUNK_BYTES)
+-        if (chunk.eof) return Buffer.concat(chunks)
+-        chunks.push(chunk.data)
+-      }
+-    })()
+     const bytes = Buffer.alloc(Browser.TUNNEL_CHUNK_BYTES * 3 + 17, 203)
+     for (let offset = 0; offset < bytes.length; offset += Browser.TUNNEL_CHUNK_BYTES)
+       await Effect.runPromise(tunnel.write(id, bytes.subarray(offset, offset + Browser.TUNNEL_CHUNK_BYTES)))
+     await Effect.runPromise(tunnel.write(id, new Uint8Array(), true))
+-    expect(await received).toEqual(bytes)
++    const actual = await received.promise
++    expect(actual.byteLength).toBe(bytes.byteLength)
++    expect(Buffer.compare(actual, bytes)).toBe(0)
+     await Effect.runPromise(tunnel.close(id))
+   } finally {
+     tunnel.dispose()
++    reset()
+     await new Promise<void>((resolve) => server.close(() => resolve()))
+   }
+ }, 15_000)
+@@ -42,6 +57,7 @@ test("cancelled reads release their listener and attachment disposal closes sock
+   await once(server.listen(0, "127.0.0.1"), "listening")
+   const address = server.address()
+   if (!address || typeof address === "string") throw new Error("No TCP address")
++  const reset = localFixture(address.port)
+   const tunnel = BrowserTunnel.make()
+   try {
+     const id = await Effect.runPromise(tunnel.open({ host: "127.0.0.1", port: address.port }))
+@@ -56,10 +72,13 @@ test("cancelled reads release their listener and attachment disposal closes sock
+     await expect(Effect.runPromise(tunnel.write(id, new Uint8Array([1])))).rejects.toThrow("not writable")
+   } finally {
+     tunnel.dispose()
++    reset()
+     await new Promise<void>((resolve) => server.close(() => resolve()))
+   }
+ }, 15_000)
+ 
++// This original direct-HTTP agent fixture returns 502 on both Windows and
++// Linux, even before G86. Keep visible as a blocked compatibility proof.
+ test("HTTP proxy requires local credentials and resolves targets only through its transport", async () => {
+   const target = Bun.serve({
+     hostname: "127.0.0.1",
+@@ -74,6 +93,7 @@ test("HTTP proxy requires local credentials and resolves targets only through it
+   })
+   const port = target.port
+   if (port === undefined) throw new Error("No HTTP port")
++  const reset = localFixture(port)
+   const tunnel = BrowserTunnel.make()
+   const destinations: Browser.TunnelTarget[] = []
+   const proxy = await BrowserProxy.make({
+@@ -122,6 +142,165 @@ test("HTTP proxy requires local credentials and resolves targets only through it
+   } finally {
+     await proxy.close()
+     tunnel.dispose()
++    reset()
+     target.stop(true)
+   }
+ }, 15_000)
++
++test("CONNECT proxy authenticates and relays to an explicitly operator-approved endpoint", async () => {
++  const backend = createServer((socket) => socket.on("data", (chunk) => socket.write(chunk)))
++  await once(backend.listen(0, "127.0.0.1"), "listening")
++  const address = backend.address()
++  if (!address || typeof address === "string") throw new Error("Missing CONNECT fixture")
++  const reset = localFixture(address.port)
++  const tunnel = BrowserTunnel.make()
++  const destinations: Browser.TunnelTarget[] = []
++  const clients: Socket[] = []
++  let proxy: Awaited<ReturnType<typeof BrowserProxy.make>> | undefined
++  try {
++    proxy = await BrowserProxy.make({
++      open: (target, signal) => {
++        destinations.push(target)
++        return Effect.runPromise(tunnel.open({ host: "127.0.0.1", port: address.port }), { signal })
++      },
++      read: (id, signal) => Effect.runPromise(tunnel.read(id), { signal }),
++      write: (id, data, end, signal) => Effect.runPromise(tunnel.write(id, data, end), { signal }),
++      close: (id) => Effect.runPromise(tunnel.close(id)),
++    })
++    const connect = async (authorization?: string) => {
++      const socket = createConnection({ host: proxy!.host, port: proxy!.port })
++      clients.push(socket)
++      await once(socket, "connect")
++      const reply = once(socket, "data")
++      socket.write(`CONNECT remote.invalid:${address.port} HTTP/1.1\r\nHost: remote.invalid:${address.port}\r\n${authorization ? `Proxy-Authorization: ${authorization}\r\n` : ""}\r\n`)
++      const [data] = await reply
++      return { socket, status: String(data).split("\r\n", 1)[0] }
++    }
++    const rejected = await connect()
++    expect(rejected.status).toContain("407")
++    expect(destinations).toEqual([])
++    const credentials = `Basic ${Buffer.from(`${proxy.credentials.username}:${proxy.credentials.password}`).toString("base64")}`
++    const accepted = await connect(credentials)
++    expect(accepted.status).toContain("200")
++    const echo = once(accepted.socket, "data")
++    accepted.socket.write("native-browser-proxy")
++    expect(String((await echo)[0])).toBe("native-browser-proxy")
++    expect(destinations).toEqual([{ host: "remote.invalid", port: address.port }])
++  } finally {
++    clients.forEach((client) => client.destroy())
++    await proxy?.close()
++    tunnel.dispose()
++    reset()
++    await new Promise<void>((resolve) => backend.close(() => resolve()))
++  }
++}, 15_000)
++
++test("authenticated HTTP proxy decodes split chunked responses without disclosing proxy credentials", async () => {
++  let wire = ""
++  const backend = createServer((socket) => {
++    let sent = false
++    socket.on("data", (chunk: Buffer) => {
++      wire += chunk.toString("latin1")
++      if (sent || !wire.includes("\r\n\r\n")) return
++      sent = true
++      void (async () => {
++        for (const part of [
++          "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/plain\r\nConnection: X-Secret, close\r\nX-Secret: must-not-leak\r\nKeep-Alive: timeout=10\r\nProxy-Authenticate: Basic foreign\r\n\r\n",
++          "3;ext=yes\r\na",
++          "bc\r\n4\r\ndefg\r",
++          "\n0\r\nX-Debug: test\r\n\r\n",
++        ]) {
++          socket.write(part)
++          await new Promise((resolve) => setTimeout(resolve, 3))
++        }
++        socket.end()
++      })()
++    })
++  })
++  await once(backend.listen(0, "127.0.0.1"), "listening")
++  const address = backend.address()
++  if (!address || typeof address === "string") throw new Error("No chunked fixture")
++  const reset = localFixture(address.port)
++  const tunnel = BrowserTunnel.make()
++  let proxy: Awaited<ReturnType<typeof BrowserProxy.make>> | undefined
++  try {
++    proxy = await BrowserProxy.make({
++      open: (_target, signal) =>
++        Effect.runPromise(tunnel.open({ host: "127.0.0.1", port: address.port }), { signal }),
++      read: (id, signal) => Effect.runPromise(tunnel.read(id), { signal }),
++      write: (id, data, end, signal) => Effect.runPromise(tunnel.write(id, data, end), { signal }),
++      close: (id) => Effect.runPromise(tunnel.close(id)),
++    })
++    const credentials = `Basic ${Buffer.from(`${proxy.credentials.username}:${proxy.credentials.password}`).toString("base64")}`
++    const result = await new Promise<{ status: number; body: string; headers: import("node:http").IncomingHttpHeaders }>((resolve, reject) => {
++      const req = request({
++        hostname: proxy!.host, port: proxy!.port, method: "GET",
++        path: "http://example.test/a?b=c",
++        headers: { "Proxy-Authorization": credentials },
++      }, (res) => {
++        const parts: Buffer[] = []
++        res.on("data", (chunk: Buffer) => parts.push(chunk))
++        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(parts).toString(), headers: res.headers }))
++      })
++      req.once("error", reject)
++      req.end()
++    })
++    expect(result.status).toBe(200)
++    expect(result.body).toBe("abcdefg")
++    expect(result.headers["x-secret"]).toBeUndefined()
++    expect(result.headers["keep-alive"]).toBeUndefined()
++    expect(result.headers["proxy-authenticate"]).toBeUndefined()
++    expect(wire).toContain("GET /a?b=c HTTP/1.1")
++    expect(wire.toLowerCase()).not.toContain("proxy-authorization")
++  } finally {
++    await proxy?.close()
++    tunnel.dispose()
++    reset()
++    await new Promise<void>((resolve) => backend.close(() => resolve()))
++  }
++}, 15_000)
++
++test("truncated authenticated HTTP upload aborts the authorized upstream tunnel", async () => {
++  const connected = Promise.withResolvers<Socket>()
++  const ended = Promise.withResolvers<void>()
++  const backend = createServer((socket) => {
++    connected.resolve(socket)
++    socket.once("close", () => ended.resolve())
++  })
++  await once(backend.listen(0, "127.0.0.1"), "listening")
++  const address = backend.address()
++  if (!address || typeof address === "string") throw new Error("No interrupted-upload fixture")
++  const reset = localFixture(address.port)
++  const tunnel = BrowserTunnel.make()
++  let proxy: Awaited<ReturnType<typeof BrowserProxy.make>> | undefined
++  let client: Socket | undefined
++  try {
++    proxy = await BrowserProxy.make({
++      open: (_target, signal) =>
++        Effect.runPromise(tunnel.open({ host: "127.0.0.1", port: address.port }), { signal }),
++      read: (id, signal) => Effect.runPromise(tunnel.read(id), { signal }),
++      write: (id, data, end, signal) => Effect.runPromise(tunnel.write(id, data, end), { signal }),
++      close: (id) => Effect.runPromise(tunnel.close(id)),
++    })
++    const credentials = `Basic ${Buffer.from(`${proxy.credentials.username}:${proxy.credentials.password}`).toString("base64")}`
++    client = createConnection({ host: proxy.host, port: proxy.port })
++    client.on("error", () => undefined)
++    await once(client, "connect")
++    client.write(`POST http://example.test/upload HTTP/1.1\r\nHost: example.test\r\nProxy-Authorization: ${credentials}\r\nContent-Length: 99\r\nConnection: close\r\n\r\nabc`)
++    await Promise.race([
++      connected.promise,
++      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Tunnel did not open")), 2500)),
++    ])
++    client.destroy()
++    await Promise.race([
++      ended.promise,
++      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Upload abort left tunnel open")), 2500)),
++    ])
++  } finally {
++    client?.destroy()
++    await proxy?.close()
++    tunnel.dispose()
++    reset()
++    await new Promise<void>((resolve) => backend.close(() => resolve()))
++  }
++}, 10_000)
 diff --git a/packages/plugin/src/effect/browser.ts b/packages/plugin/src/effect/browser.ts
 new file mode 100644
 index 0000000000..d2f214974f
