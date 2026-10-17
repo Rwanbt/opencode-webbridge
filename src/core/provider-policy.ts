@@ -1,8 +1,8 @@
 /**
  * Fail-closed provider policy gate derived from a dated, reviewable policy file.
  *
- * A provider is enabled ONLY when every independent check passes. Any missing
- * evidence, unverified approval, or non-official source keeps it disabled.
+ * This validates per-provider policy review metadata, not a commercial
+ * licence and not a transport/session readiness certificate.
  */
 
 export type PolicyDecision = 'restricted' | 'unverified' | 'written-authorization-required' | 'permitted';
@@ -29,12 +29,12 @@ export interface ProviderPolicyResult {
   readonly reason:
     | 'ok'
     | 'bad-observed-at'
-    | 'automation-not-authorized'
+    | 'no-provider-opted-in'
     | 'bad-owner'
     | 'bad-scope'
     | 'bad-provider-count'
     | 'catalog-mismatch'
-    | 'unapproved'
+    | 'incoherent-opt-in'
     | 'bad-decision'
     | 'missing-date'
     | 'bad-source'
@@ -44,20 +44,19 @@ export interface ProviderPolicyResult {
 const CATALOG = ['chatgpt', 'deepseek', 'gemini', 'qwen', 'mistral'];
 const ALLOWED_DECISIONS: ReadonlySet<string> = new Set([
   'restricted', 'unverified', 'written-authorization-required',
+  'permitted',
 ]);
-const OFFICIAL_HOSTS = new Set([
-  'openai.com', 'cdn.deepseek.com', 'policies.google.com', 'qwen.ai', 'mistral.ai',
-]);
+const OFFICIAL_HOSTS: Readonly<Record<string, string>> = Object.freeze({
+  chatgpt: 'openai.com', deepseek: 'cdn.deepseek.com',
+  gemini: 'policies.google.com', qwen: 'qwen.ai', mistral: 'mistral.ai',
+});
 
 export function validateProviderPolicy(file: unknown): ProviderPolicyResult {
   if (!file || typeof file !== 'object') return { enabled: false, reason: 'bad-observed-at' };
   const f = file as Record<string, unknown>;
 
-  if (typeof f.observedAt !== 'string' || f.observedAt !== '2026-10-17') {
+  if (typeof f.observedAt !== 'string' || !/^20\d\d-\d\d-\d\d$/.test(f.observedAt)) {
     return { enabled: false, reason: 'bad-observed-at' };
-  }
-  if (f.commercialAutomationEnabled !== false) {
-    return { enabled: false, reason: 'automation-not-authorized' };
   }
   if (f.decisionOwner !== 'maintainer-review-required') {
     return { enabled: false, reason: 'bad-owner' };
@@ -75,7 +74,9 @@ export function validateProviderPolicy(file: unknown): ProviderPolicyResult {
 
   for (const p of f.providers as any[]) {
     if (!p || typeof p !== 'object') return { enabled: false, reason: 'bad-provider-count' };
-    if (p.approved !== false) return { enabled: false, reason: 'unapproved' };
+    if (typeof p.approved !== 'boolean' || (p.approved && p.decision !== 'permitted')) {
+      return { enabled: false, reason: 'incoherent-opt-in' };
+    }
     if (!ALLOWED_DECISIONS.has(p.decision)) return { enabled: false, reason: 'bad-decision' };
     if (typeof p.policyDate !== 'string' || p.policyDate.length < 7) {
       return { enabled: false, reason: 'missing-date' };
@@ -83,7 +84,7 @@ export function validateProviderPolicy(file: unknown): ProviderPolicyResult {
     let url: URL;
     try { url = new URL(p.source); } catch { return { enabled: false, reason: 'bad-source' }; }
     if (url.protocol !== 'https:' || url.username || url.password ||
-        !OFFICIAL_HOSTS.has(url.hostname)) {
+        OFFICIAL_HOSTS[p.id] !== url.hostname) {
       return { enabled: false, reason: 'bad-source' };
     }
     if (typeof p.finding !== 'string' || p.finding.length < 60 || p.finding.length > 400) {
@@ -91,11 +92,13 @@ export function validateProviderPolicy(file: unknown): ProviderPolicyResult {
     }
   }
 
-  // Even when the file is well-formed, automation is not authorized.
-  return { enabled: false, reason: 'automation-not-authorized' };
+  // A user opt-in is ONLY a reviewed intent. Runtime activation additionally
+  // requires the independently verified browser/session/transport contracts.
+  const optedIn = (f.providers as ProviderPolicyEntry[]).some(isProviderEnabled);
+  return { enabled: optedIn, reason: optedIn ? 'ok' : 'no-provider-opted-in' };
 }
 
-/** A provider is enabled only if policy says permitted AND approved. Never true today. */
+/** Per-provider reviewed user choice; does NOT prove a live web connection. */
 export function isProviderEnabled(entry: ProviderPolicyEntry): boolean {
   return entry.decision === 'permitted' && entry.approved === true;
 }

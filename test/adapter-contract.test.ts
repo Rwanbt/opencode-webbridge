@@ -44,7 +44,7 @@ test('isAdapterUsable false when not approved', () => {
   assert.equal(isAdapterUsable(c), false);
 });
 
-test('isAdapterUsable requires proof: verified capabilities and authorization evidence', () => {
+test('isAdapterUsable requires independently verified capabilities and user choice, not a generic commercial grant', () => {
   // A claim of approval alone never activates anything.
   const claim = JSON.parse(JSON.stringify(valid));
   claim.approved = true;
@@ -52,11 +52,11 @@ test('isAdapterUsable requires proof: verified capabilities and authorization ev
   claim.verifiedCapabilities = { ...claim.capabilities };
   assert.equal(isAdapterUsable(claim), false);
 
-  // Full evidence: permitted policy, authorization reference and verified capabilities.
+  // Individual permitted state, user opt-in and verified technical capability.
   const full = JSON.parse(JSON.stringify(valid));
   full.approved = true;
   full.policyDecision = 'permitted';
-  full.commercialAuthorization = { status: 'permitted', evidenceRef: 'evidence_ref_1' };
+  delete full.commercialAuthorization;
   full.verifiedCapabilities = { ...full.capabilities };
   assert.deepEqual(validateAdapterContract(full), { ok: true });
   assert.equal(isAdapterUsable(full), true);

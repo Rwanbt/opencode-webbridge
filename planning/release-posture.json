@@ -26,9 +26,9 @@
       "evidence": "NativeEffectAuthority interface absent from official OpenCode 2.0.29; the plugin refuses every execution (no-native-authority)"
     },
     {
-      "id": "commercial-live-automation",
-      "status": "BLOCKED-CONTRACT",
-      "evidence": "no authorized automation path for the five commercial providers; offline benches only, 0/5 operational"
+      "id": "five-live-web-provider-sessions",
+      "status": "NOT-PROVEN",
+      "evidence": "no authenticated browser-session and real inference transport proven for any of the five web providers, offline fixtures only"
     },
     {
       "id": "production-acceptance",

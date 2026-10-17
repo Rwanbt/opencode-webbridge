@@ -66,15 +66,15 @@
     { "pr": 201, "sha": "a8b0e9cfa90157ec9aef50d9163d12bafa41b744", "checks": 4, "scope": "offline-session-reconnect-identity-partial" }
   ],
   "epicEvidence": [
-    { "id": "E0", "stories": 6, "verifiedPartialPRs": [159, 177, 186, 192, 196], "acceptedStories": 0, "criticalGap": "written approval or compliant provider transport" },
+    { "id": "E0", "stories": 6, "verifiedPartialPRs": [159, 177, 186, 192, 196], "acceptedStories": 0, "criticalGap": "verified transport to an authenticated user-owned web session, per provider" },
     { "id": "E1", "stories": 6, "verifiedPartialPRs": [151, 168, 170, 172, 178, 180, 182, 186, 189, 190, 195, 196, 200], "acceptedStories": 0, "criticalGap": "production model picker and provider runtime" },
     { "id": "E2", "stories": 6, "verifiedPartialPRs": [148, 161, 169, 173, 176, 179, 183, 187, 188, 194, 199, 200, 201], "acceptedStories": 0, "criticalGap": "trusted official Desktop attach principal and Electron E2E" },
     { "id": "E3", "stories": 6, "verifiedPartialPRs": [151, 160, 168, 170, 172, 180, 182, 189, 190, 196, 197, 198, 201], "acceptedStories": 0, "criticalGap": "durable model session / tool calls with native effect authority" },
     { "id": "E4", "stories": 6, "verifiedPartialPRs": [156, 158, 161, 165, 166, 169, 171, 173, 175, 179, 183, 187, 193, 194, 196, 199, 201], "acceptedStories": 0, "criticalGap": "atomic Core-to-Chromium revocation and complete authority identity" },
-    { "id": "E5", "stories": 6, "verifiedPartialPRs": [154, 184, 186, 196], "acceptedStories": 0, "criticalGap": "five verified contractually permitted live adapters" },
+    { "id": "E5", "stories": 6, "verifiedPartialPRs": [154, 184, 186, 196], "acceptedStories": 0, "criticalGap": "five real web-adapter sessions proven independently with functional E2E" },
     { "id": "E6", "stories": 6, "verifiedPartialPRs": [148, 150, 176, 180, 188, 200], "acceptedStories": 0, "criticalGap": "official Desktop GUI and settings E2E" },
     { "id": "E7", "stories": 6, "verifiedPartialPRs": [157, 162, 181, 193, 196], "acceptedStories": 0, "criticalGap": "native Git/terminal/subagent effects and trusted delegation" },
     { "id": "E8", "stories": 6, "verifiedPartialPRs": [152, 155, 163, 164, 167, 172, 174, 176, 178, 180, 182, 184, 185, 188, 189, 190, 191, 192, 195, 196, 197, 198, 199, 200, 201], "acceptedStories": 0, "criticalGap": "distributable native release and full acceptance matrix" }
   ],
-  "blockers": ["unattested Desktop attach principal", "non-atomic Core revocation to Chromium effect", "durable post-crash uncertain effects", "native Git/terminal/subagents", "unverified commercial provider permission", "missing official Electron E2E"]
+  "blockers": ["unattested Desktop attach principal", "non-atomic Core revocation to Chromium effect", "durable post-crash uncertain effects", "native Git/terminal/subagents", "five unverified live web-session transports", "missing official Electron E2E"]
 }

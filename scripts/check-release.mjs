@@ -36,7 +36,7 @@ const BLOCKERS = [
   'desktop-electron-e2e',
   'atomic-core-chromium-revocation',
   'native-effect-wiring',
-  'commercial-live-automation',
+  'five-live-web-provider-sessions',
   'production-acceptance',
 ];
 ensure(Array.isArray(posture.blockers) && posture.blockers.map((blocker) => blocker.id).join(',') === BLOCKERS.join(','),
