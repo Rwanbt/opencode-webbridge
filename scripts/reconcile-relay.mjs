@@ -1,16 +1,19 @@
 /** Offline-only administrative inspection/attestation. Never opens a browser. */
-import { existsSync, lstatSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { DurableRelayJournal } from '../dist/src/core/durable-relay-journal.js';
 
 const required = ['dir', 'session', 'provider', 'tab', 'account'];
-const resolution = ['turn', 'outcome', 'evidence-sha256', 'operator', 'ack'];
+const resolution = ['turn', 'outcome', 'evidence-sha256', 'evidence-file', 'operator', 'ack'];
+const optional = ['witness-dir'];
 
 function parse(args) {
   const [command, ...pairs] = args;
   if (command !== 'inspect' && command !== 'resolve') throw new Error('choose inspect or resolve');
   if (pairs.length % 2) throw new Error('every flag needs a value');
-  const allowed = command === 'inspect' ? required : [...required, ...resolution];
+  const must = command === 'inspect' ? required : [...required, ...resolution];
+  const allowed = [...must, ...optional];
   const options = {};
   for (let i = 0; i < pairs.length; i += 2) {
     const name = pairs[i]?.startsWith('--') ? pairs[i].slice(2) : '';
@@ -19,12 +22,36 @@ function parse(args) {
     }
     options[name] = pairs[i + 1];
   }
-  if (allowed.some((name) => !options[name])) throw new Error('missing required operator flag');
+  if (must.some((name) => !options[name])) throw new Error('missing required operator flag');
+  if (options['witness-dir'] && !isAbsolute(options['witness-dir'])) {
+    throw new Error('witness directory must be an absolute path');
+  }
   if (!isAbsolute(options.dir) || !existsSync(join(options.dir, 'journal.json')) ||
     !lstatSync(options.dir).isDirectory() || !lstatSync(join(options.dir, 'journal.json')).isFile()) {
     throw new Error('existing local journal directory required');
   }
   return { command, options };
+}
+
+/** Verify bytes, not only an operator-supplied checksum. Never print evidence contents. */
+function verifyEvidence(file, dir, claimedHash) {
+  if (!isAbsolute(file) || !/^[a-f0-9]{64}$/.test(claimedHash)) {
+    throw new Error('absolute evidence file and SHA256 required');
+  }
+  const rel = relative(resolve(dir), resolve(file));
+  if (!rel || (!rel.startsWith('..') && !isAbsolute(rel))) {
+    throw new Error('evidence must be external to the journal directory');
+  }
+  if (!lstatSync(file).isFile()) throw new Error('evidence must be a regular file');
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const stats = fstatSync(fd);
+    if (!stats.isFile() || stats.size < 1 || stats.size > 64_000) {
+      throw new Error('evidence file size or type invalid');
+    }
+    const hash = createHash('sha256').update(readFileSync(fd)).digest('hex');
+    if (hash !== claimedHash) throw new Error('evidence SHA256 does not match reviewed file');
+  } finally { closeSync(fd); }
 }
 
 let journal;
@@ -35,13 +62,14 @@ try {
   journal = DurableRelayJournal.open(options.dir, {
     sessionID: options.session, providerID: options.provider,
     tabID: options.tab, accountRef: options.account,
-  }, secret);
+  }, secret, options['witness-dir'] ? { witnessDir: options['witness-dir'] } : undefined);
   if (command === 'inspect') {
     console.log(JSON.stringify({ journal: 'validated', turns: journal.status() }, null, 2));
   } else {
     if (options.ack !== 'I-VERIFIED-REMOTE-OUTCOME') {
       throw new Error('missing explicit remote-outcome attestation');
     }
+    verifyEvidence(options['evidence-file'], options.dir, options['evidence-sha256']);
     journal.reconcile(options.turn, {
       outcome: options.outcome, evidenceHash: options['evidence-sha256'],
       operatorID: options.operator, acknowledged: true,

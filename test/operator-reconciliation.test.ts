@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { randomBytes, createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DurableRelayJournal } from '../src/core/durable-relay-journal.js';
@@ -72,7 +72,10 @@ test('reconciliation cannot close settled, cancelled, missing or forged journal 
 });
 
 test('operator CLI is read-only by default, requires explicit attestation, and never removes locks', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'webbridge-g7-cli-'));
+  const root = mkdtempSync(join(tmpdir(), 'webbridge-g7-cli-'));
+  const dir = join(root, 'journal'); mkdirSync(dir);
+  const evidenceFile = join(root, 'evidence.txt');
+  writeFileSync(evidenceFile, 'verified outside the program');
   const script = resolve('scripts/reconcile-relay.mjs');
   const flags = ['--dir', dir, '--session', 's1', '--provider', 'qwen', '--tab', 't1', '--account', 'a1'];
   const env = { ...process.env, WEBBRIDGE_RELAY_TOKEN: key };
@@ -92,12 +95,63 @@ test('operator CLI is read-only by default, requires explicit attestation, and n
     assert.match(whileOwned.stderr, /locked/);
     lock.close();
     const resolved = invoke('resolve', ...flags, '--turn', 'turn1', '--outcome', 'observed-not-applied',
-      '--evidence-sha256', evidenceHash, '--operator', 'op1', '--ack', 'I-VERIFIED-REMOTE-OUTCOME');
+      '--evidence-sha256', evidenceHash, '--evidence-file', evidenceFile,
+      '--operator', 'op1', '--ack', 'I-VERIFIED-REMOTE-OUTCOME');
     assert.equal(resolved.status, 0, resolved.stderr);
     assert.doesNotMatch(resolved.stdout + resolved.stderr, new RegExp(key));
     const after = invoke('inspect', ...flags);
     assert.match(after.stdout, /reconciled/);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('operator refuses arbitrary hashes and mismatched evidence instead of trusting self-assertion', () => {
+  const root = mkdtempSync(join(tmpdir(), 'webbridge-g21-cli-'));
+  const dir = join(root, 'journal'); mkdirSync(dir);
+  const evidenceFile = join(root, 'evidence.txt');
+  const script = resolve('scripts/reconcile-relay.mjs');
+  const flags = ['resolve', '--dir', dir, '--session', 's1', '--provider', 'qwen',
+    '--tab', 't1', '--account', 'a1', '--turn', 'turn1', '--outcome', 'observed-not-applied',
+    '--evidence-sha256', evidenceHash, '--operator', 'op1', '--ack', 'I-VERIFIED-REMOTE-OUTCOME'];
+  const invoke = (...rest: string[]) => spawnSync(process.execPath, [script, ...flags, ...rest],
+    { env: { ...process.env, WEBBRIDGE_RELAY_TOKEN: key }, encoding: 'utf8' });
+  try {
+    const first = DurableRelayJournal.open(dir, owner, key);
+    first.prepare('turn1'); first.close();
+    assert.notEqual(invoke().status, 0, 'hash alone cannot prove an external outcome');
+    writeFileSync(evidenceFile, 'changed and unverified');
+    const wrong = invoke('--evidence-file', evidenceFile);
+    assert.notEqual(wrong.status, 0);
+    assert.match(wrong.stderr, /evidence/i);
+    const check = DurableRelayJournal.open(dir, owner, key);
+    assert.deepEqual(check.status(), [{ turnID: 'turn1', phase: 'prepared' }]);
+    check.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('operator can inspect and reconcile a witnessed v2 journal only with its witness and evidence', () => {
+  const root = mkdtempSync(join(tmpdir(), 'webbridge-g21-witnessed-cli-'));
+  const dir = join(root, 'journal');
+  const witnessDir = join(root, 'witness');
+  const evidenceFile = join(root, 'evidence.txt');
+  const script = resolve('scripts/reconcile-relay.mjs');
+  const flags = ['--dir', dir, '--session', 's1', '--provider', 'qwen', '--tab', 't1', '--account', 'a1'];
+  const invoke = (...args: string[]) => spawnSync(process.execPath, [script, ...args], {
+    env: { ...process.env, WEBBRIDGE_RELAY_TOKEN: key }, encoding: 'utf8',
+  });
+  try {
+    writeFileSync(evidenceFile, 'verified outside the program');
+    const first = DurableRelayJournal.open(dir, owner, key, { witnessDir });
+    first.prepare('turn1'); first.close();
+    assert.notEqual(invoke('inspect', ...flags).status, 0);
+    assert.equal(invoke('inspect', ...flags, '--witness-dir', witnessDir).status, 0);
+    const resolved = invoke('resolve', ...flags, '--witness-dir', witnessDir, '--turn', 'turn1',
+      '--outcome', 'observed-not-applied', '--evidence-sha256', evidenceHash,
+      '--evidence-file', evidenceFile, '--operator', 'op1', '--ack', 'I-VERIFIED-REMOTE-OUTCOME');
+    assert.equal(resolved.status, 0, resolved.stderr);
+    const final = DurableRelayJournal.open(dir, owner, key, { witnessDir });
+    assert.deepEqual(final.status(), [{ turnID: 'turn1', phase: 'reconciled' }]);
+    final.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('reconciliation evidence cannot be altered on disk without invalidating HMAC', () => {
