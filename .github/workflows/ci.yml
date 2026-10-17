@@ -84,5 +84,5 @@ jobs:
           bun run --cwd packages/core typecheck
           bun run --cwd packages/gui-extensions typecheck
           (cd packages/core && bun test test/agent.test.ts test/permission.test.ts test/permission-browser-lease.test.ts test/plugin/browser-lease.test.ts test/plugin/browser-one-shot.test.ts test/plugin/browser-capability.test.ts test/plugin/promise-tool.test.ts test/plugin/supervisor.test.ts)
-          (cd packages/plugin-browser && bun test test/read-commit.test.ts test/connection-location.test.ts test/rpc.test.ts test/tools.test.ts)
+          (cd packages/plugin-browser && bun test test/attach-ownership.test.ts test/read-commit.test.ts test/connection-location.test.ts test/rpc.test.ts test/tools.test.ts)
           (cd packages/gui-extensions && bun test src/browser/read-commit-gate.test.ts)
