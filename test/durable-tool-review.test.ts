@@ -113,3 +113,19 @@ test('HMAC-valid tool review journal rollback is detected by independent witness
     assert.throws(() => DurableRelayJournal.open(dir, binding, key, witness), /witness|rollback/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('revocation inside synchronous durable reservation prevents any native consent prompt', async () => {
+  let epoch = 'rev_1';
+  let prompts = 0;
+  const review = new OfflineToolPermissionReview({
+    getScope: () => scope,
+    authorityEpoch: () => epoch,
+    permission: { assert: async () => { prompts++; } } as unknown as NativePermission,
+    tools: new Map([['safe_echo', {
+      action: 'safe_echo', validateArguments: () => true, resources: () => ['echo:hello'],
+    }]]),
+    reserveOperation: () => { epoch = 'rev_2'; },
+  });
+  await assert.rejects(review.review(proposal), /revoked/);
+  assert.equal(prompts, 0, 'no consent after a synchronous authority revision');
+});

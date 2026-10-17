@@ -138,6 +138,7 @@ export class OfflineToolPermissionReview {
       const saved: unknown = this.host.reserveOperation(proposal.operationID, scope);
       if (saved !== undefined) throw new Error('native tool durable reservation must complete synchronously');
     }
+    current(); // Journal callback is a synchronous but independently fallible policy boundary.
     await this.host.permission.assert({ ...input, resources: [...resources] });
     current();
     await this.host.permission.assert({ ...input, resources: [...resources] }); // re-evaluate after consent

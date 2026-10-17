@@ -28,10 +28,13 @@ que tout nouvel effet ambigu jusqu'à intervention de l'opérateur.
 
 Avant le hook : deux tests runtime échouaient (aucune entrée journal au lieu de
 `prepared` ; réservation échouée malgré laquelle les permissions étaient
-appelées). Après : quatre tests d'intégration passent (redémarrage/rejeu,
-échec de pré-réservation, callback asynchrone refusé et rollback d'un journal
-HMAC pourtant valide détecté par le témoin) ; les neuf tests G102 sont
-également verts. TypeScript et backlog 9 épics / 54 stories vérifiés.
+appelées). Un troisième contre-exemple RED constatait qu'une révocation
+**synchrone pendant la réservation** déclenchait encore un prompt natif ;
+une nouvelle vérification d'epoch après le hook l'interdit désormais.
+Après : cinq tests d'intégration passent (redémarrage/rejeu, échec de
+pré-réservation, callback asynchrone refusé, rollback d'un journal HMAC
+pourtant valide détecté par le témoin et révocation), ainsi que les neuf
+tests G102. TypeScript et backlog 9 épics / 54 stories vérifiés.
 
 ## Limites et NO-GO
 
