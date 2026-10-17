@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync,
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync,
   renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { assertOpaqueID, type TabClaim } from './browser-port.js';
@@ -72,6 +72,18 @@ export class DurableRelayJournal {
       mkdirSync(independent, { recursive: true, mode: 0o700 });
       if (!lstatSync(independent).isDirectory() || lstatSync(independent).isSymbolicLink())
         throw new Error('invalid independent witness directory');
+      // Lexical paths can appear disjoint while a parent symlink/junction
+      // aliases the witness back inside the journal. Compare physical paths.
+      const canonical = (path: string) => {
+        const real = realpathSync.native(path);
+        return process.platform === 'win32' ? real.toLowerCase() : real;
+      };
+      const actualBase = canonical(dir);
+      const actualWitness = canonical(independent);
+      if (actualBase === actualWitness || actualBase.startsWith(actualWitness + sep) ||
+          actualWitness.startsWith(actualBase + sep)) {
+        throw new Error('independent witness must be outside the real journal directory tree');
+      }
       witnessPath = join(independent, 'witness.json');
     }
     let lockFD: number;

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, symlinkSync, writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -56,5 +56,18 @@ test('clean witnessed crash restart continues with leased turn and no replay', (
       assert.throws(() => restored.prepare('leased-turn'), /already/);
       assert.throws(() => restored.prepare('new-turn'), /unresolved/);
     } finally { restored.close(); }
+  });
+});
+
+test('independent witness cannot alias beneath journal through a symlinked parent', () => {
+  isolated((dir, unusedWitness) => {
+    mkdirSync(dir);
+    const alias = join(unusedWitness, '..', 'journal-alias');
+    // Windows directory junctions work without enabling developer-mode symlinks.
+    symlinkSync(dir, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    assert.throws(() => {
+      const journal = DurableRelayJournal.open(dir, owner, key, join(alias, 'witness'));
+      journal.close();
+    }, /independent witness|directory tree/i);
   });
 });
