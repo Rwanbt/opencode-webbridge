@@ -39,3 +39,63 @@ test('fixture streams bounded SSE and rejects unsupported model/route', async ()
     assert.equal(server.requests(), 1);
   } finally { await server.close(); }
 });
+
+test('fixture sends a first browser delta while terminal content is still pending', async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const server = await openFixtureServer({ respond: async function* () {
+    yield 'first-';
+    await pending;
+    yield 'second';
+  } });
+  try {
+    const response = await fetch(`${server.baseURL}/chat/completions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: FIXTURE_MODEL, messages: [{ role: 'user', content: 'stream' }], stream: true }),
+    });
+    assert.equal(response.status, 200);
+    const reader = response.body?.getReader();
+    assert.ok(reader);
+    const first = await reader.read();
+    assert.match(new TextDecoder().decode(first.value), /first-/);
+    assert.doesNotMatch(new TextDecoder().decode(first.value), /\[DONE\]/);
+    assert.equal(server.streamFrames(), 1);
+    const next = reader.read();
+    let complete = false;
+    void next.then(() => { complete = true; });
+    await Promise.resolve();
+    assert.equal(complete, false);
+    release();
+    let remaining = new TextDecoder().decode((await next).value);
+    assert.equal(server.streamFrames(), 2);
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      remaining += new TextDecoder().decode(part.value);
+    }
+    assert.match(remaining, /second/);
+    assert.match(remaining, /\[DONE\]/);
+  } finally { release(); await server.close(); }
+});
+
+test('failed browser stream never issues a false SSE [DONE] after partial output', async () => {
+  const server = await openFixtureServer({ respond: async function* () {
+    yield 'partial-but-unconfirmed';
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    throw new Error('private browser failure must not be returned');
+  } });
+  try {
+    const response = await fetch(`${server.baseURL}/chat/completions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: FIXTURE_MODEL, messages: [{ role: 'user', content: 'test' }], stream: true }),
+    });
+    assert.equal(response.status, 200);
+    const reader = response.body?.getReader();
+    assert.ok(reader);
+    const first = await reader.read();
+    assert.match(new TextDecoder().decode(first.value), /partial-but-unconfirmed/);
+    assert.doesNotMatch(new TextDecoder().decode(first.value), /\[DONE\]|private browser failure/);
+    await assert.rejects(reader.read());
+    assert.equal(server.streamFrames(), 1);
+  } finally { await server.close(); }
+});

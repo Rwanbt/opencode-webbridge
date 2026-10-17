@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { exchangeBrowserTurn } from '../src/core/browser-exchange.js';
+import { exchangeBrowserTurn, streamBrowserTurn } from '../src/core/browser-exchange.js';
+import { RpcRelayPort } from '../src/core/rpc-relay-port.js';
+import { randomBytes } from 'node:crypto';
 import { FakeBrowserPort } from '../src/testing/fake-browser.js';
 import type { BrowserPort, TabClaim, TurnEvent } from '../src/core/browser-port.js';
 
@@ -12,6 +14,25 @@ test('browser exchange returns the settled content without retrying the send', a
   await port.claim(claim);
   assert.equal(await exchangeBrowserTurn(port, claim, turn), 'fixture:hello');
   await assert.rejects(exchangeBrowserTurn(port, claim, turn), /reconcile before retry/);
+  await port.release(claim);
+});
+
+test('stream generator yields actual progressive fragments before terminal without resending', async () => {
+  const secret = randomBytes(32).toString('hex');
+  const port = new RpcRelayPort(secret);
+  await port.claim(claim);
+  const stream = streamBrowserTurn(port, claim, { turnID: 'stream-1', prompt: 'hello' }, 16);
+  const first = stream.next();
+  await Promise.resolve();
+  assert.deepEqual(port.take(secret, claim), { turnID: 'stream-1', prompt: 'hello' });
+  port.progress(secret, claim, 'stream-1', 1, 'before ');
+  assert.deepEqual(await first, { value: 'before ', done: false });
+  const second = stream.next();
+  port.progress(secret, claim, 'stream-1', 2, 'terminal');
+  assert.deepEqual(await second, { value: 'terminal', done: false });
+  port.complete(secret, claim, 'stream-1', 'before terminal');
+  assert.deepEqual(await stream.next(), { value: undefined, done: true });
+  assert.equal(port.take(secret, claim), null);
   await port.release(claim);
 });
 

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openFixtureServer } from '../dist/src/testing/fixture-inference.js';
-import { browserFixtureResponder } from '../dist/src/testing/browser-fixture-relay.js';
+import { browserFixtureResponder, browserFixtureStreamResponder } from '../dist/src/testing/browser-fixture-relay.js';
 import { RpcBrowserFixturePort } from '../dist/src/testing/rpc-browser-port.js';
 import { openLocalChatPage } from '../dist/src/testing/local-chat-page.js';
 import { openLocalBrowserCompanion, submitLocalPageTurn } from '../dist/src/testing/local-browser-companion.js';
@@ -122,7 +122,9 @@ try {
 
   const portAdapter = new RpcBrowserFixturePort(binding, rpc);
   await portAdapter.claim(binding);
-  fake = await openFixtureServer({ token: modelToken, respond: browserFixtureResponder(portAdapter, binding) });
+  fake = await openFixtureServer({ token: modelToken,
+    respond: useRealPage ? browserFixtureStreamResponder(portAdapter, binding)
+      : browserFixtureResponder(portAdapter, binding) });
   env.WEBBRIDGE_FIXTURE_URL = fake.baseURL;
   const bin = executable();
   server = launch(bin, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], temp, env);
@@ -203,10 +205,11 @@ try {
   await companion;
   await portAdapter.release(binding);
   if (companionFailure) throw companionFailure;
-  if (result !== 0 || !output.includes(EXPECTED) || companionJobs < 1 || !sawPrompt || fake.requests() < 1) {
+  if (result !== 0 || !output.includes(EXPECTED) || companionJobs < 1 || !sawPrompt ||
+      fake.requests() < 1 || (useRealPage && fake.streamFrames() < 3)) {
     throw new Error(`native session or relay incomplete: exit=${result}; jobs=${companionJobs}; receivedPrompt=${sawPrompt}; HTTP=${fake.requests()}`);
   }
-  console.log(`G4 native model-to-RPC-to-${useRealPage ? 'real-local-browser' : 'fake-companion'} E2E PASS: HTTP=${fake.requests()}, companionJobs=${companionJobs}, RPC=${rpcCalls}, response=true`);
+  console.log(`G4 native model-to-RPC-to-${useRealPage ? 'real-local-browser' : 'fake-companion'} E2E PASS: HTTP=${fake.requests()}, companionJobs=${companionJobs}, RPC=${rpcCalls}, streamFrames=${fake.streamFrames()}, response=true`);
 } catch (error) {
   process.exitCode = 1;
   const safe = String(error).replaceAll(secret, '[REDACTED]').replaceAll(password, '[REDACTED]').replaceAll(modelToken, '[REDACTED]');
