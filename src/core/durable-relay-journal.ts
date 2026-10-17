@@ -45,7 +45,9 @@ export class DurableRelayJournal {
   private static verifyWitness(path: string, secret: string, journal: State): void {
     if (!existsSync(path) || !lstatSync(path).isFile() || lstatSync(path).size > 2048)
       throw new Error('independent witness missing or invalid: no rollback recovery');
-    const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    let raw: unknown;
+    try { raw = JSON.parse(readFileSync(path, 'utf8')); }
+    catch { throw new Error('invalid independent witness: torn write suspected'); }
     if (!raw || typeof raw !== 'object') throw new Error('invalid independent witness');
     const witness = raw as Witness;
     if (Object.keys(witness).sort().join(',') !== 'bindingHash,journalMac,mac,version' ||
