@@ -9,7 +9,7 @@ import { DurableRelayJournal } from '../src/core/durable-relay-journal.js';
 import type { TabClaim } from '../src/core/browser-port.js';
 
 const owner: TabClaim = { sessionID: 'sess-1', tabID: 'tab-1', providerID: 'qwen', accountRef: 'acct-1' };
-const scope = { ...owner, agentID: 'agent-1', worktreeRef: 'worktree-A' };
+const scope = { ...owner, agentID: 'agent-1', worktreeRef: 'worktree-A', turnID: 'turn-1' };
 const sample = { version: 1, kind: 'tool_proposal', sessionID: 'sess-1', agentID: 'agent-1',
   worktreeRef: 'worktree-A', turnID: 'turn-1', operationID: 'op-1',
   tool: { name: 'safe_echo', arguments: { text: 'check' } } };
@@ -27,6 +27,7 @@ test('web text is NEVER parsed as a tool call; JSON schema and session isolation
   assert.throws(() => parseToolProposal({ ...sample, sessionID: 'victim' }, scope), /binding/);
   assert.throws(() => parseToolProposal({ ...sample, agentID: 'victim' }, scope), /binding/);
   assert.throws(() => parseToolProposal({ ...sample, worktreeRef: 'victim' }, scope), /binding/);
+  assert.throws(() => parseToolProposal({ ...sample, turnID: 'previous-turn' }, scope), /binding/);
   assert.throws(() => parseToolProposal({ ...sample, tool: { name: 'bash', arguments: {} } }, scope,
     new Set(['safe_echo'])), /not registered/);
   assert.throws(() => parseToolProposal({ ...sample, secret: 'bearer' }, scope), /fields/);
