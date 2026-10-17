@@ -56,3 +56,34 @@ test('browser exchange rejects forged/duplicate/oversized/unfinished events', as
     assert.equal(sends, 1);
   }
 });
+
+test('pre-aborted browser request cannot dispatch and never attempts cancellation', async () => {
+  let sends = 0;
+  let cancels = 0;
+  const port = { submit: async () => { sends++; }, cancel: async () => { cancels++; return true; } } as unknown as BrowserPort;
+  const abort = new AbortController();
+  abort.abort();
+  await assert.rejects(exchangeBrowserTurn(port, claim, { turnID: 'pre-abort', prompt: 'do not send' }, 4,
+    abort.signal), /interrupted.*uncertain/);
+  assert.equal(sends, 0);
+  assert.equal(cancels, 0);
+});
+
+test('disconnect while submit ACK is pending returns uncertain without re-dispatch', async () => {
+  let sends = 0;
+  let cancels = 0;
+  const port = {
+    submit: async () => { sends++; return new Promise<never>(() => {}); },
+    cancel: async () => { cancels++; throw new Error('claimed turn cannot be reversed'); },
+  } as unknown as BrowserPort;
+  const abort = new AbortController();
+  const pending = exchangeBrowserTurn(port, claim, { turnID: 'ack-pending', prompt: 'hello' }, 4, abort.signal);
+  await Promise.resolve();
+  assert.equal(sends, 1);
+  abort.abort();
+  await assert.rejects(pending, /interrupted.*uncertain/);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(cancels, 1);
+  assert.equal(sends, 1);
+});
