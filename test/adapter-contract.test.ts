@@ -5,6 +5,8 @@ import { validateAdapterContract, isAdapterUsable } from '../src/core/adapter-co
 const valid = {
   identity: { providerID: 'qwen', displayName: 'Qwen', origin: 'https://chat.qwen.ai' },
   capabilities: { textInput: 'supported', textOutput: 'supported', streaming: 'supported', tools: 'unsupported', attachments: 'unknown', interruption: 'supported' },
+  verifiedCapabilities: null,
+  commercialAuthorization: { status: 'written-authorization-required', evidenceRef: null },
   policyDecision: 'restricted',
   approved: false,
 };
@@ -42,10 +44,25 @@ test('isAdapterUsable false when not approved', () => {
   assert.equal(isAdapterUsable(c), false);
 });
 
-test('isAdapterUsable true only when all core supported and approved', () => {
-  const c = JSON.parse(JSON.stringify(valid));
-  c.approved = true;
-  assert.equal(isAdapterUsable(c), true);
-  c.capabilities.streaming = 'unknown';
-  assert.equal(isAdapterUsable(c), false);
+test('isAdapterUsable requires proof: verified capabilities and authorization evidence', () => {
+  // A claim of approval alone never activates anything.
+  const claim = JSON.parse(JSON.stringify(valid));
+  claim.approved = true;
+  assert.equal(isAdapterUsable(claim), false);
+  claim.verifiedCapabilities = { ...claim.capabilities };
+  assert.equal(isAdapterUsable(claim), false);
+
+  // Full evidence: permitted policy, authorization reference and verified capabilities.
+  const full = JSON.parse(JSON.stringify(valid));
+  full.approved = true;
+  full.policyDecision = 'permitted';
+  full.commercialAuthorization = { status: 'permitted', evidenceRef: 'evidence_ref_1' };
+  full.verifiedCapabilities = { ...full.capabilities };
+  assert.deepEqual(validateAdapterContract(full), { ok: true });
+  assert.equal(isAdapterUsable(full), true);
+  full.capabilities.streaming = 'unknown';
+  assert.equal(isAdapterUsable(full), false);
+  full.capabilities.streaming = 'supported';
+  full.verifiedCapabilities.streaming = 'unknown';
+  assert.equal(isAdapterUsable(full), false);
 });
