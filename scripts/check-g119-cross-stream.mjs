@@ -7,17 +7,19 @@ import { dirname, join, resolve } from 'node:path';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const PIN = '4617210822bdbb31e5749751afbfb4584ccedac8';
 export const G106 = 'aaefcf8c0ef2776ba6bd62a587eafbe749f18b30';
+export const G126 = '30ead17b53b7f8f742fed3a69e98d64f28f2f477';
 export const G113 = 'e1a04479876fcb469309cbbb9526639964bf35e3';
 export const ARTIFACT = 'docs/patches/opencode-v2-4617210-browser-plugin-capability.patch';
 export const EXPECTED = Object.freeze({
-  [ARTIFACT]: 'fe5ae887ca3feb1c2a2e170a12b7a9c89e79684e80ee5ce656c7377604f753e8',
-  'scripts/smoke-combined-page.mjs': '8e4b3be8416f7e85445c9b3deeb75ba5418e60680485129c4dd5aabfdafda95d',
+  [ARTIFACT]: '1f6a0137f29fc074eaf67b09c85b50c9d544b809b98463a167c324189e2e1f27',
+  // G125 extends the same G113 executable local browser test with durable-session checks.
+  'scripts/smoke-combined-page.mjs': 'f2340ffb72f1fbf3174d806b12d337fb4f0ac389ad971fb9cf252272377ba431',
   'fixtures/g97-combined-preview.mjs': '474d653b41c54c840125b04488ceb975022935ef409eb911cfa7f5a6481c5468',
-  'scripts/offline-rpc-package.mjs': 'dd0c96a561ade756bd09739d14c596de4525a4bb4ff6e219251e93050447abc5',
+  'scripts/offline-rpc-package.mjs': '65f5852028e85f8e1ea007030df5a07cfe872b5e691a0a4c7eedea6fa4142e6a',
 });
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // Git for Windows may check out the pre-existing G113 *.mjs files in CRLF,
-// while hosted Linux checks out LF. Canonicalize ONLY fixture text. The G106
+// while hosted Linux checks out LF. Canonicalize ONLY fixture text. The G126
 // security patch is hashed as exact bytes, without altering its vetted SHA.
 const fixtureDigest = (bytes) => digest(Buffer.from(
   bytes.toString('utf8').replaceAll('\r\n', '\n'), 'utf8'));
@@ -27,7 +29,7 @@ export function inspect(files) {
     const body = files[path];
     if (!Buffer.isBuffer(body) ||
       (path === ARTIFACT ? digest(body) : fixtureDigest(body)) !== hash)
-      throw new Error('G119 exact G106 patch / G113 executable fixture mismatch: ' + path);
+      throw new Error('G129 exact G126 patch / G125 executable fixture mismatch: ' + path);
   }
   const patch = files[ARTIFACT].toString('utf8');
   if (!patch.includes('diff --git a/packages/core/') ||
@@ -35,8 +37,11 @@ export function inspect(files) {
     !patch.includes('browserPolicy?.()') ||
     !patch.includes('a saved-rule epoch change while browser.tabs.list permission awaits') ||
     !patch.includes('saved-rule revision during asynchronous Desktop tab inventory') ||
-    !patch.includes('real saved-rule mutation invalidates an already consumed native read')) {
-    throw new Error('G119 missing G106 executable native-policy revision regressions');
+    !patch.includes('real saved-rule mutation invalidates an already consumed native read') ||
+    !patch.includes('browser-rpc-provenance.test.ts') ||
+    !patch.includes('No verified Desktop transport for browser attach.') ||
+    !patch.includes('Built-in browser RPC registration requires trusted plugin provenance')) {
+    throw new Error('G129 missing G106 policy and G126 native first-attach/RPC provenance regressions');
   }
   const model = files['scripts/smoke-combined-page.mjs'].toString('utf8');
   if (!model.includes("scenario === 'browser-disconnect'") ||
@@ -50,7 +55,7 @@ export function inspect(files) {
     !plugin.includes('ctx.provider.transform') || !plugin.includes('ctx.rpc.register')) {
     throw new Error('G119 lost the installed combined RPC + model plugin contract');
   }
-  return { source: PIN, policyPatch: G106, localPage: G113, patchSha256: EXPECTED[ARTIFACT],
+  return { source: PIN, policyPatch: G126, precedingPolicyPatch: G106, localPage: G113, patchSha256: EXPECTED[ARTIFACT],
     installedPluginPreserved: true, desktopElectronProof: false, commercialProviders: 0,
     browserWritesEnabled: false };
 }

@@ -9,9 +9,10 @@ const entries = await Promise.all(Object.keys(proof.EXPECTED).map(async (path: s
   [path, await readFile(resolve(path))]));
 const files = Object.fromEntries(entries);
 
-test('G119 exact independently verified G106 security artifact AND G113 installed model/page fixture', () => {
+test('G129 exact G126 native provenance patch retains G106 policy and G125 CLI page fixture', () => {
   const observed = proof.inspect(files);
-  assert.equal(observed.policyPatch, 'aaefcf8c0ef2776ba6bd62a587eafbe749f18b30');
+  assert.equal(observed.policyPatch, '30ead17b53b7f8f742fed3a69e98d64f28f2f477');
+  assert.equal(observed.precedingPolicyPatch, 'aaefcf8c0ef2776ba6bd62a587eafbe749f18b30');
   assert.equal(observed.localPage, 'e1a04479876fcb469309cbbb9526639964bf35e3');
   assert.equal(observed.installedPluginPreserved, true);
   assert.equal(observed.desktopElectronProof, false);

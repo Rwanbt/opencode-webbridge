@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { descriptor } from './smoke-combined-package.mjs';
 import { exerciseRPCPackage } from './offline-rpc-package.mjs';
 import { runCLI } from './smoke-packaged-model.mjs';
+import { durableSession, listSessionIDs, verifyAfterRestart } from './g125-persisted-session.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist/src/testing');
@@ -19,7 +20,7 @@ const fresh = () => randomBytes(32).toString('hex');
 
 /** The two native CLI profile runs share ONE browser and local page server. */
 export async function runPageProof({ browser, localPage, nativeBin = cli,
-  adversarialScenario } = {}) {
+  adversarialScenario, persistSession = false } = {}) {
   if (!existsSync(nativeBin)) throw new Error('pinned local official CLI missing');
   const { openFixtureServer } = await import(pathToFileURL(join(dist, 'fixture-inference.js')).href);
   const { submitLocalPageTurn } = await import(pathToFileURL(join(dist, 'local-browser-companion.js')).href);
@@ -37,6 +38,7 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
       let interrupted = false;
       const cancellation = new AbortController();
       let turnStarted;
+      let sessionProof;
       const chunks = [];
       const turnID = randomBytes(16).toString('hex');
       const rpc = async (method, input = {}) => {
@@ -97,6 +99,7 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
           WEBBRIDGE_FIXTURE_URL: fake.baseURL },
         async verify({ url, headers, secret, executable, env, temp }) {
           connection = { url, headers, secret };
+          const prior = persistSession ? new Set(await listSessionIDs(url, headers)) : null;
           const inventory = await fetch(url + '/api/plugin', { headers, signal: AbortSignal.timeout(3000) });
           if (!inventory.ok) throw new Error('native inventory unavailable');
           const plugins = (await inventory.json()).data?.filter((entry) => entry.id?.includes('webbridge')) ?? [];
@@ -165,6 +168,18 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
             'webbridge-fixture/webbridge-native-fixture', '--format', 'json', PROMPT],
           env, temp, { signal: cancellation.signal, timeoutMs: interruptedScenario(scenario) ? 15_000 : 50_000 });
           await companion;
+          if (prior) {
+            const created = (await listSessionIDs(url, headers)).filter((id) => !prior.has(id));
+            if (created.length !== 1) throw new Error('G125 expected exactly one newly persisted native session');
+            const cliIDs = [...new Set(run.stdout.split(/\r?\n/).filter(Boolean).flatMap((line) => {
+              try { return [JSON.parse(line).sessionID].filter(Boolean); } catch { return []; }
+            }))];
+            if (cliIDs.length && (cliIDs.length !== 1 || cliIDs[0] !== created[0]))
+              throw new Error('G125 CLI output and durable session identity differ');
+            sessionProof = { sessionID: created[0],
+              expected: interruptedScenario(scenario) ? undefined : EXPECTED, prompt: PROMPT };
+            await durableSession(url, headers, sessionProof.sessionID, sessionProof);
+          }
           if (interruptedScenario(scenario)) {
             const events = (await rpc('poll', { turnID, afterSeq: 0 })).events;
             if (error || !interrupted || !run.aborted || accepted !== 1 || progress !== 1 ||
@@ -195,6 +210,10 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
             localHttp: fake.requests(), sseFrames: fake.streamFrames(), version };
         },
         async close() { active = false; await fake.close(); },
+        ...(persistSession ? { verifyRestart: (input) => {
+          if (!sessionProof) throw new Error('G125 no completed session proof for restart');
+          return verifyAfterRestart({ ...input, ...sessionProof });
+        } } : {}),
       };
     },
   };

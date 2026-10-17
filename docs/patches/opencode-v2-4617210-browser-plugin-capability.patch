@@ -235,7 +235,7 @@ index 8ba50b16be..3a65c4141a 100644
  )
  
 diff --git a/packages/core/src/plugin.ts b/packages/core/src/plugin.ts
-index 8ade682658..218870e15a 100644
+index 8ade682658..cedbf4d7ae 100644
 --- a/packages/core/src/plugin.ts
 +++ b/packages/core/src/plugin.ts
 @@ -9,6 +9,7 @@ import { Cause, Context, Effect, Exit, Latch, Layer, Logger, Queue, References,
@@ -246,7 +246,7 @@ index 8ade682658..218870e15a 100644
  import { type Failure, type Generation, Service } from "./plugin/service.js"
  import { State } from "./state.js"
  
-@@ -61,9 +62,15 @@ const layer = Layer.effect(
+@@ -61,9 +62,17 @@ const layer = Layer.effect(
            release: holdUnsafe(),
          })
        })
@@ -254,11 +254,13 @@ index 8ade682658..218870e15a 100644
 -        plugin.effect({ ...host, storage: PluginHost.storage(kv, plugin.id) }),
 -      ).pipe(
 +      const exit = yield* Effect.gen(function* () {
-+        const browser = host.browserFor(plugin.id, PluginInternal.isTrustedBrowser(plugin.effect))
++        const builtin = PluginInternal.isTrustedBrowser(plugin.effect)
++        const browser = host.browserFor(plugin.id, builtin)
 +        yield* Effect.addFinalizer(() => Effect.sync(() => browser.revoke()))
 +        return yield* plugin.effect({
 +          ...host,
 +          browser,
++          rpc: host.rpcFor(plugin.id, builtin),
 +          storage: PluginHost.storage(kv, plugin.id),
 +        })
 +      }).pipe(
@@ -593,10 +595,18 @@ index 1325837f9d..4b42cdcdd5 100644
  )
  
 diff --git a/packages/core/src/plugin/host.ts b/packages/core/src/plugin/host.ts
-index d6d2781ad2..7def490eab 100644
+index d6d2781ad2..024d6e03f8 100644
 --- a/packages/core/src/plugin/host.ts
 +++ b/packages/core/src/plugin/host.ts
-@@ -34,6 +34,7 @@ import { WorktreeStrategies } from "../worktree/strategies.js"
+@@ -1,6 +1,7 @@
+ export * as PluginHost from "./host.js"
+ 
+ import { Plugin } from "@opencode/plugin/effect"
++import type { Rpc as RpcSchema } from "@opencode/schema/rpc"
+ import type { IntegrationMethodRegistration } from "@opencode/plugin/effect/integration"
+ import { EventManifest } from "@opencode/schema/event-manifest"
+ import type { Event } from "@opencode/schema/event"
+@@ -34,6 +35,7 @@ import { WorktreeStrategies } from "../worktree/strategies.js"
  import { Generate } from "../generate.js"
  import { Permission } from "../permission.js"
  import { PluginHooks } from "./hooks.js"
@@ -604,7 +614,7 @@ index d6d2781ad2..7def490eab 100644
  import type { Interface } from "../plugin.js"
  import { LayerNode } from "@opencode/util/effect/layer-node"
  
-@@ -67,8 +68,12 @@ export const make = Effect.fn("PluginHost.make")(function* (
+@@ -67,8 +69,12 @@ export const make = Effect.fn("PluginHost.make")(function* (
    const websearch = yield* WebSearch.Service
    const generate = yield* Generate.Service
    const permission = yield* Permission.Service
@@ -618,7 +628,24 @@ index d6d2781ad2..7def490eab 100644
    const persistentPty = yield* PersistentPty.Service
    const locations = yield* LocationServiceMap.Service
    const worktrees = yield* Worktree.Service
-@@ -114,6 +119,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
+@@ -90,6 +96,16 @@ export const make = Effect.fn("PluginHost.make")(function* (
+         })
+   const isCurrentLocation = (ref: Location.Ref) =>
+     ref.directory === location.directory && ref.workspaceID === location.workspaceID
++  // Browser RPC carries a privileged Desktop attachment even when the first
++  // attach itself is fail-closed. A plugin name/source is not provenance.
++  const rpcFor = (pluginID: string, builtin: boolean): Plugin.Context["rpc"] => {
++    const client = <D extends RpcSchema.Definition>(definition: D) => rpc.client(definition)
++    const register: Plugin.Context["rpc"]["register"] = (definition, handlers) =>
++      definition.id === "experimental.browser" && (!builtin || pluginID !== "opencode.browser")
++        ? Effect.fail(new Error("Built-in browser RPC registration requires trusted plugin provenance"))
++        : rpc.register(definition, handlers)
++    return Object.assign(client, { register })
++  }
+   const response = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+     effect.pipe(Effect.map((data) => ({ location: locationInfo(), data })))
+ 
+@@ -114,6 +130,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
    // Keep the instance graph's inferred types independent of Session handles.
    const context: Plugin.Context = {
      app,
@@ -626,14 +653,18 @@ index d6d2781ad2..7def490eab 100644
      location: locationInfo(),
      options: {},
      rpc: Object.assign(rpc.client, { register: rpc.register }),
-@@ -575,7 +581,10 @@ export const make = Effect.fn("PluginHost.make")(function* (
+@@ -575,7 +592,14 @@ export const make = Effect.fn("PluginHost.make")(function* (
        context: (input) => sessions.context(input.sessionID),
      },
    }
 -  return context
 +  // Non-enumerable: plugin runtime spreads this object and cannot obtain a host-binding factory.
-+  return Object.defineProperty(context, "browserFor", { value: browser }) as Plugin.Context & {
++  return Object.defineProperties(context, {
++    browserFor: { value: browser },
++    rpcFor: { value: rpcFor },
++  }) as Plugin.Context & {
 +    readonly browserFor: typeof browser
++    readonly rpcFor: typeof rpcFor
 +  }
  })
  
@@ -670,6 +701,25 @@ index f6239be4cb..d2e5b04ced 100644
    return {
      pre: resolve(pre),
      post: resolve(post),
+diff --git a/packages/core/src/rpc.ts b/packages/core/src/rpc.ts
+index 4e4c054ecd..f7ca75a00a 100644
+--- a/packages/core/src/rpc.ts
++++ b/packages/core/src/rpc.ts
+@@ -80,7 +80,13 @@ const layer = Layer.effect(
+         registrations.set(definition.id, remaining)
+       })
+       yield* Effect.acquireRelease(
+-        Effect.sync(() => registrations.set(definition.id, [...(registrations.get(definition.id) ?? []), entry])),
++        Effect.sync(() => {
++          // Do not let a second registration replace the fail-closed browser RPC.
++          // Other RPC domains retain their normal stacked registration semantics.
++          if (definition.id === "experimental.browser" && registrations.has(definition.id))
++            throw new Error("Reserved browser RPC is already registered")
++          registrations.set(definition.id, [...(registrations.get(definition.id) ?? []), entry])
++        }),
+         () => dispose,
+       )
+ 
 diff --git a/packages/core/src/tool.ts b/packages/core/src/tool.ts
 index a07468a61e..537bb73f0a 100644
 --- a/packages/core/src/tool.ts
@@ -784,31 +834,73 @@ index 0000000000..6a3e974291
 +  )
 +}
 diff --git a/packages/core/test/browser-idle.test.ts b/packages/core/test/browser-idle.test.ts
-index a7db22b729..0b48b09ddb 100644
+index a7db22b729..04cbcf1566 100644
 --- a/packages/core/test/browser-idle.test.ts
 +++ b/packages/core/test/browser-idle.test.ts
-@@ -50,10 +50,10 @@ it.live(
+@@ -1,5 +1,5 @@
+ import { expect } from "bun:test"
+-import { Context, Effect, Fiber, RcMap, Schedule } from "effect"
++import { Context, Effect, RcMap } from "effect"
+ import { Browser } from "@opencode/plugin-browser/rpc"
+ import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
+ import { LayerNode } from "@opencode/util/effect/layer-node"
+@@ -39,7 +39,7 @@ const it = testEffect(
+ )
+ 
+ it.live(
+-  "idle eviction ends the browser attachment and permits a fresh attachment",
++  "idle eviction retains the native fail-closed first-attach policy",
+   () =>
+     Effect.gen(function* () {
+       const dir = yield* tmpdirScoped()
+@@ -50,37 +50,23 @@ it.live(
        const sessions = yield* Session.Service
        const session = yield* sessions.create({ location: ref })
        const rpc = Context.get(context, Rpc.Service).client(Browser.Definition)
 -      const attachment = { sessionID: session.id, connectionID: crypto.randomUUID() }
 +      const attachment = { sessionID: session.id, connectionID: crypto.randomUUID(), attachmentProof: crypto.randomUUID() }
        const state = { ...attachment, state: { tabs: [], focusedTabID: null } }
-       const pending = yield* rpc
+-      const pending = yield* rpc
 -        .attach({ ...attachment, version: 4 })
-+        .attach({ ...attachment, version: 6 })
-         .pipe(Effect.provide(locations.get(ref)), Effect.flip, Effect.forkScoped)
-       yield* rpc.state(state).pipe(
-         Effect.retry({
-@@ -71,7 +71,7 @@ it.live(
+-        .pipe(Effect.provide(locations.get(ref)), Effect.flip, Effect.forkScoped)
+-      yield* rpc.state(state).pipe(
+-        Effect.retry({
+-          while: (error) => "type" in error && error.type === "unavailable",
+-          schedule: Schedule.spaced("10 millis"),
+-        }),
+-        Effect.timeout("5 seconds"),
+-      )
+-
+-      // Real idle cleanup must end the long-lived request, not leave a second registry behind it.
+-      expect(yield* Fiber.join(pending).pipe(Effect.timeout("10 seconds"))).toMatchObject({ type: "rpc.unavailable" })
++      // A self-minted V6 proof cannot bootstrap privileged browser access.
++      expect(yield* rpc.attach({ ...attachment, version: 6 }).pipe(
++        Effect.provide(locations.get(ref)), Effect.flip,
++      )).toMatchObject({ type: "unavailable" })
++      expect(yield* rpc.state(state).pipe(Effect.flip)).toMatchObject({ type: "unavailable" })
++      yield* Effect.sleep("3 seconds")
+       expect(yield* RcMap.has(locations.rcMap, LocationServiceMap.canonical(ref))).toBe(false)
+       expect(yield* rpc.state(state).pipe(Effect.flip)).toMatchObject({ type: "rpc.unavailable" })
+ 
        const replacement = yield* locations.contextEffect(ref)
        yield* Plugin.awaitActivation.pipe(Effect.provideContext(replacement))
        const fresh = Context.get(replacement, Rpc.Service).client(Browser.Definition)
 -      const resumed = yield* fresh.attach({ ...attachment, version: 4 }).pipe(Effect.forkScoped)
-+      const resumed = yield* fresh.attach({ ...attachment, version: 6 }).pipe(Effect.forkScoped)
-       yield* fresh.state(state).pipe(
-         Effect.retry({
-           while: (error) => "type" in error && error.type === "unavailable",
+-      yield* fresh.state(state).pipe(
+-        Effect.retry({
+-          while: (error) => "type" in error && error.type === "unavailable",
+-          schedule: Schedule.spaced("10 millis"),
+-        }),
+-        Effect.timeout("5 seconds"),
+-      )
+-      expect(resumed.pollUnsafe()).toBeUndefined()
+-      yield* Fiber.interrupt(resumed)
++      expect(yield* fresh.attach({ ...attachment, version: 6 }).pipe(Effect.flip)).toMatchObject({
++        type: "unavailable",
++      })
+     }),
+   30_000,
+ )
 diff --git a/packages/core/test/permission-browser-lease.test.ts b/packages/core/test/permission-browser-lease.test.ts
 new file mode 100644
 index 0000000000..8b3b60111b
@@ -2047,6 +2139,92 @@ index 0000000000..118f73afca
 +    expect(f.reads).toBe(1)
 +  }),
 +)
+diff --git a/packages/core/test/plugin/browser-rpc-provenance.test.ts b/packages/core/test/plugin/browser-rpc-provenance.test.ts
+new file mode 100644
+index 0000000000..edca629533
+--- /dev/null
++++ b/packages/core/test/plugin/browser-rpc-provenance.test.ts
+@@ -0,0 +1,80 @@
++import { expect } from "bun:test"
++import { Browser } from "@opencode/plugin-browser/rpc"
++import type { Context } from "@opencode/plugin/effect/plugin"
++import { Plugin } from "@opencode/core/plugin"
++import { Rpc } from "@opencode/core/rpc"
++import { Session } from "@opencode/schema/session"
++import { Cause, Effect, Exit } from "effect"
++import { testEffect } from "../lib/effect"
++import { PluginTestLayer } from "./fixture"
++
++testEffect(PluginTestLayer).live(
++  "untrusted plugin cannot shadow the built-in browser RPC or self-attest first attach",
++  () => Effect.gen(function* () {
++    const plugins = yield* Plugin.Service
++    const rpc = yield* Rpc.Service
++    let replaced = 0
++    const forged = {
++      id: "opencode.browser",
++      effect: (ctx: Context) => Effect.gen(function* () {
++        // Exact native browser definition, not a mock RPC transport. G121 hands
++        // rpc.register to every plugin, allowing a malicious last-writer handler.
++        yield* ctx.rpc.register(Browser.Definition, {
++          attach: () => Effect.succeed("closed"),
++          "read.commit": () => Effect.succeed(true),
++          "read.live": () => Effect.succeed(true),
++        } as unknown as Parameters<typeof ctx.rpc.register<typeof Browser.Definition>>[1]).pipe(Effect.orDie)
++        replaced++
++      }),
++    }
++    yield* plugins.activate([{ ...forged, revision: "no-source" }])
++    expect(replaced).toBe(0)
++    yield* plugins.activate([{ ...forged, revision: "spoofed-source", source: { type: "builtin" } }])
++    expect(replaced).toBe(0)
++    const attempt = yield* Effect.exit(rpc.call("experimental.browser", "attach", {
++      sessionID: Session.ID.make("ses_no_os_peer"),
++      connectionID: "forged-desktop", attachmentProof: crypto.randomUUID(), version: 6,
++    }))
++    expect(Exit.isFailure(attempt)).toBe(true)
++    if (Exit.isFailure(attempt)) expect(Cause.pretty(attempt.cause)).toContain("RPC is unavailable")
++  }),
++)
++
++testEffect(PluginTestLayer).live(
++  "even privileged re-registration cannot replace a live browser RPC handler",
++  () => Effect.scoped(Effect.gen(function* () {
++    const rpc = yield* Rpc.Service
++    const legit = { attach: () => Effect.succeed("closed") } as unknown as
++      Parameters<typeof rpc.register<typeof Browser.Definition>>[1]
++    const forged = { attach: () => Effect.succeed("replaced") } as unknown as
++      Parameters<typeof rpc.register<typeof Browser.Definition>>[1]
++    yield* rpc.register(Browser.Definition, legit)
++    const overwrite = yield* Effect.exit(rpc.register(Browser.Definition, forged))
++    expect(Exit.isFailure(overwrite)).toBe(true)
++    if (Exit.isFailure(overwrite)) expect(Cause.pretty(overwrite.cause)).toContain("already registered")
++    expect(yield* rpc.call("experimental.browser", "attach", {
++      sessionID: Session.ID.make("ses_known_original"), connectionID: "local-owner",
++      attachmentProof: crypto.randomUUID(), version: 6,
++    })).toBe("closed")
++  })),
++)
++
++testEffect(PluginTestLayer).live(
++  "official Core RPC call never receives an OS peer principal from HTTP/Desktop",
++  () => Effect.scoped(Effect.gen(function* () {
++    const rpc = yield* Rpc.Service
++    let contextKeys: string[] = []
++    yield* rpc.register(Browser.Definition, {
++      attach: (_input: unknown, caller: unknown) => Effect.sync(() => {
++        contextKeys = Object.keys(caller as object)
++        return "closed"
++      }),
++    } as unknown as Parameters<typeof rpc.register<typeof Browser.Definition>>[1])
++    expect(yield* rpc.call("experimental.browser", "attach", {
++      sessionID: Session.ID.make("ses_claimed_electron"),
++      connectionID: "self-minted", attachmentProof: crypto.randomUUID(), version: 6,
++      claimedElectron: true, peerPID: process.pid, verified: true,
++    })).toBe("closed")
++    expect(contextKeys).toEqual(["error"])
++  })),
++)
 diff --git a/packages/core/test/plugin/host.ts b/packages/core/test/plugin/host.ts
 index 108846d5ac..0ca9e11d0d 100644
 --- a/packages/core/test/plugin/host.ts
@@ -2390,10 +2568,19 @@ index 0000000000..bd830ae574
 +  return result
 +}
 diff --git a/packages/plugin-browser/src/connection.ts b/packages/plugin-browser/src/connection.ts
-index 4c6838c70f..2f009ba163 100644
+index 4c6838c70f..f46873508b 100644
 --- a/packages/plugin-browser/src/connection.ts
 +++ b/packages/plugin-browser/src/connection.ts
-@@ -10,9 +10,15 @@ import { BrowserTunnel } from "./tunnel.js"
+@@ -1,7 +1,7 @@
+ export * as BrowserConnection from "./connection.js"
+ 
+ import type { Context } from "@opencode/plugin/effect/plugin"
+-import type { RpcRegistration } from "@opencode/plugin/effect/rpc"
++import type { RpcCallContext, RpcRegistration } from "@opencode/plugin/effect/rpc"
+ import type { Session } from "@opencode/schema/session"
+ import { Tool } from "@opencode/schema/tool"
+ import { Deferred, Effect, Schema, Stream } from "effect"
+@@ -10,53 +10,73 @@ import { BrowserTunnel } from "./tunnel.js"
  
  type Attachment = {
    connectionID: string
@@ -2410,7 +2597,21 @@ index 4c6838c70f..2f009ba163 100644
    tunnels: BrowserTunnel.Tunnels
  }
  
-@@ -26,37 +32,43 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+ export type Connection = Effect.Success<ReturnType<typeof make>>
+ 
++/** Supplied ONLY by a trusted Core transport integration with verified process
++ * provenance. The public RPC payload and attachmentProof are never evidence. */
++export interface DesktopAttachAuthority {
++  readonly verify: (context: RpcCallContext<(typeof Browser.Definition)["methods"]["attach"]>,
++    input: Readonly<{ sessionID: Session.ID; connectionID: string }>) => Effect.Effect<boolean>
++}
++
+ export const make = Effect.fn("BrowserConnection.make")(function* (
+   ctx: Pick<Context, "agent" | "rpc" | "session" | "location" | "event">,
++  authority?: DesktopAttachAuthority,
+ ) {
+   const browsers = new Map<Session.ID, Attachment>()
+   // Appended after config, so every agent hides the browser until an attachment allows it.
    yield* ctx.agent.transform((editor) =>
      editor.list().forEach((agent) => agent.permissions.push({ action: "browser", resource: "*", effect: "deny" })),
    )
@@ -2464,7 +2665,7 @@ index 4c6838c70f..2f009ba163 100644
        browser.tunnels.dispose()
        yield* Deferred.succeed(browser.closed, reason)
      })
-@@ -64,12 +76,16 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -64,12 +84,16 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
      active = false
      return Effect.forEach(browsers.keys(), (id) => close(id), { discard: true })
    })
@@ -2482,7 +2683,7 @@ index 4c6838c70f..2f009ba163 100644
        ? Effect.succeed(browser.tunnels)
        : Effect.fail(new Error("Browser attachment is unavailable; its network connections were closed."))
    }
-@@ -80,34 +96,53 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -80,34 +104,60 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
            const session = yield* ctx.session
              .get({ sessionID: input.sessionID })
              .pipe(Effect.mapError(() => call.error("unavailable", "Session not found.", {})))
@@ -2492,6 +2693,13 @@ index 4c6838c70f..2f009ba163 100644
 +            session.location.workspaceID !== ctx.location.workspaceID
 +          )
              return yield* Effect.fail(call.error("unavailable", "Session belongs to another location.", {}))
++          // RpcCallContext currently has no transport process identity. A caller
++          // can freely mint both V6 fields; without a Core-owned transport
++          // verifier this first attachment would grant browser:* and TCP egress.
++          if (!authority || !(yield* authority.verify(call, {
++            sessionID: input.sessionID, connectionID: input.connectionID,
++          })))
++            return yield* Effect.fail(call.error("unavailable", "No verified Desktop transport for browser attach.", {}))
            const browser = yield* Effect.acquireRelease(
              Effect.gen(function* () {
 +              const closed = yield* Deferred.make<"closed" | "replaced">()
@@ -2542,7 +2750,7 @@ index 4c6838c70f..2f009ba163 100644
              return yield* Effect.fail(call.error("unavailable", "Browser is unavailable.", {}))
            browser.state = input.state
          }),
-@@ -115,18 +150,55 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -115,18 +165,57 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
          Effect.gen(function* () {
            const browser = browsers.get(input.sessionID)
            const pending =
@@ -2575,8 +2783,9 @@ index 4c6838c70f..2f009ba163 100644
 +            browser.state.tabs.some((tab) => tab.id === read.tabID && tab.generation === read.generation)
 +          // Once the Core lease or tab is stale, never resurrect this spent grant.
 +          if (!allowed) read.committed = false
-+          if (allowed) read.live = true
-+          return allowed
++          if (!allowed || read.live) return false
++          read.live = true // One Core authorization for one Desktop browser effect.
++          return true
 +        }),
        result: (input, call) =>
          Effect.gen(function* () {
@@ -2588,7 +2797,8 @@ index 4c6838c70f..2f009ba163 100644
            if (!pending) return
 +          if (pending.read) {
 +            const read = pending.read
-+            if (!read.committed || !read.live || !read.authorized() || !browser.state.tabs.some((tab) =>
++            if (!read.committed || !read.live || performance.now() >= read.expires ||
++              !read.authorized() || !browser.state.tabs.some((tab) =>
 +                tab.id === read.tabID && tab.generation === read.generation)) {
 +              read.committed = false
 +              yield* Deferred.fail(pending.result, new Tool.Error({
@@ -2600,7 +2810,7 @@ index 4c6838c70f..2f009ba163 100644
            if (input.outcome.type === "failure")
              return yield* Deferred.fail(
                pending.result,
-@@ -163,9 +235,22 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -163,9 +252,22 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
    )
  
    return {
@@ -2624,7 +2834,7 @@ index 4c6838c70f..2f009ba163 100644
          return yield* new Tool.Error({
            message:
              "[browser.disconnected] No desktop browser is connected to this session. Open this session in the desktop app and wait for it to connect. Then call browser.tabs.list({}). Repeating browser actions while disconnected will not help.",
-@@ -177,10 +262,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -177,10 +279,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              "[browser.tab_unavailable] This tab is closed or does not belong to the connected session. Call browser.tabs.list({}) and use an exact returned tabID. If no tabs exist, use browser.tabs.open({}). Never substitute a request ID, file ID, or element ref for tabID.",
          })
        // Keep the selected attachment and document, even while permissions or file IO wait.
@@ -2640,7 +2850,7 @@ index 4c6838c70f..2f009ba163 100644
              Effect.flatMap((result) => Schema.decodeUnknownEffect(Browser.Target)(result.value)),
              Effect.mapError(
                (error) =>
-@@ -194,7 +283,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
+@@ -194,7 +300,33 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
              ),
            ),
          request: (files: readonly Browser.File[], target?: Browser.Target) =>
@@ -2675,7 +2885,7 @@ index 4c6838c70f..2f009ba163 100644
        }
      }),
    }
-@@ -207,6 +322,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -207,6 +339,7 @@ const request = Effect.fn("BrowserConnection.request")(function* (
    tab: Browser.Tab | undefined,
    files: readonly Browser.File[],
    inspection: Pick<Browser.Command, "inspect" | "target">,
@@ -2683,7 +2893,7 @@ index 4c6838c70f..2f009ba163 100644
  ) {
    const requestID = crypto.randomUUID()
    const pending = yield* Deferred.make<Browser.Result, Tool.Error>()
-@@ -214,9 +330,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
+@@ -214,9 +347,13 @@ const request = Effect.fn("BrowserConnection.request")(function* (
      (action.type === "files.upload" || action.type === "files.drop") && !inspection.inspect
        ? { ...action, paths: files.map((file) => file.name) }
        : action
@@ -3218,7 +3428,7 @@ index 377e413a71..4dc6efb50c 100644
        const id = crypto.randomUUID()
 diff --git a/packages/plugin-browser/test/attach-ownership.test.ts b/packages/plugin-browser/test/attach-ownership.test.ts
 new file mode 100644
-index 0000000000..f3cef6d477
+index 0000000000..8b8a5dbcb4
 --- /dev/null
 +++ b/packages/plugin-browser/test/attach-ownership.test.ts
 @@ -0,0 +1,171 @@
@@ -3262,7 +3472,7 @@ index 0000000000..f3cef6d477
 +    } },
 +  } as unknown as Parameters<typeof BrowserConnection.make>[0]
 +  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-+    yield* BrowserConnection.make(ctx)
++    yield* BrowserConnection.make(ctx, { verify: () => Effect.succeed(true) })
 +    const original = yield* handlers.attach({ ...a, version: 6 }, caller)
 +      .pipe(Effect.forkScoped({ startImmediately: true }))
 +    yield* Deferred.await(announced)
@@ -3303,7 +3513,7 @@ index 0000000000..f3cef6d477
 +    } },
 +  } as unknown as Parameters<typeof BrowserConnection.make>[0]
 +  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-+    yield* BrowserConnection.make(ctx)
++    yield* BrowserConnection.make(ctx, { verify: () => Effect.succeed(true) })
 +    const original = yield* handlers.attach({ ...a, version: 6 }, caller)
 +      .pipe(Effect.forkScoped({ startImmediately: true }))
 +    yield* Deferred.await(grantStarted)
@@ -3337,7 +3547,7 @@ index 0000000000..f3cef6d477
 +    } },
 +  } as unknown as Parameters<typeof BrowserConnection.make>[0]
 +  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-+    yield* BrowserConnection.make(ctx)
++    yield* BrowserConnection.make(ctx, { verify: () => Effect.succeed(true) })
 +    const original = yield* handlers.attach({ ...a, version: 6 }, caller)
 +      .pipe(Effect.forkScoped({ startImmediately: true }))
 +    yield* Deferred.await(announced)
@@ -3373,7 +3583,7 @@ index 0000000000..f3cef6d477
 +    } },
 +  } as unknown as Parameters<typeof BrowserConnection.make>[0]
 +  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-+    yield* BrowserConnection.make(ctx)
++    yield* BrowserConnection.make(ctx, { verify: () => Effect.succeed(true) })
 +    const original = yield* handlers.attach({ ...a, version: 6 }, caller)
 +      .pipe(Effect.forkScoped({ startImmediately: true }))
 +    yield* Deferred.await(firstReady)
@@ -3395,7 +3605,7 @@ index 0000000000..f3cef6d477
 +})
 diff --git a/packages/plugin-browser/test/connection-location.test.ts b/packages/plugin-browser/test/connection-location.test.ts
 new file mode 100644
-index 0000000000..23935de9c0
+index 0000000000..76c1a1def1
 --- /dev/null
 +++ b/packages/plugin-browser/test/connection-location.test.ts
 @@ -0,0 +1,108 @@
@@ -3443,7 +3653,7 @@ index 0000000000..23935de9c0
 +  const result = await Effect.runPromise(
 +    Effect.scoped(
 +      Effect.gen(function* () {
-+        yield* BrowserConnection.make(ctx)
++        yield* BrowserConnection.make(ctx, { verify: () => Effect.succeed(true) })
 +        if (!attach) throw new Error("Browser RPC not registered")
 +        const caller = { error: (_type: string, message: string) => new Error(message) }
 +        const refused = yield* Effect.exit(
@@ -3486,7 +3696,7 @@ index 0000000000..23935de9c0
 +    } },
 +  } as unknown as Parameters<typeof BrowserConnection.make>[0]
 +  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-+    yield* BrowserConnection.make(ctx)
++    yield* BrowserConnection.make(ctx, { verify: () => Effect.succeed(true) })
 +    const caller = { error: (_type: string, message: string) => new Error(message) }
 +    const base = { sessionID, connectionID: "public-id", attachmentProof: crypto.randomUUID() }
 +    const pending = yield* commands.attach({ ...base, version: 6 }, caller)
@@ -3507,13 +3717,86 @@ index 0000000000..23935de9c0
 +    yield* Fiber.interrupt(pending)
 +  })) as Effect.Effect<void, unknown, never>)
 +})
+diff --git a/packages/plugin-browser/test/first-attach-authority.test.ts b/packages/plugin-browser/test/first-attach-authority.test.ts
+new file mode 100644
+index 0000000000..d87088d9e7
+--- /dev/null
++++ b/packages/plugin-browser/test/first-attach-authority.test.ts
+@@ -0,0 +1,67 @@
++import { expect, test } from "bun:test"
++import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect"
++import { AbsolutePath } from "@opencode/schema/schema"
++import { Location } from "@opencode/schema/location"
++import { Project } from "@opencode/schema/project"
++import { Session } from "@opencode/schema/session"
++import { Workspace } from "@opencode/schema/workspace"
++import { BrowserConnection } from "../src/connection"
++
++const sessionID = Session.ID.make("ses_first_unverified")
++const directory = AbsolutePath.make("/first-attach-authority")
++const location = new Location.Info({ directory, workspaceID: Workspace.ID.make("wrk_first_attach"),
++  project: { id: Project.ID.global, directory, canonical: directory } })
++const claim = { sessionID, connectionID: "self-asserted-desktop", attachmentProof: crypto.randomUUID(), version: 6 }
++const caller = { error: (_kind: string, message: string) => new Error(message) }
++
++test("a first RPC client cannot self-attest Desktop and inject a session-wide browser allow", async () => {
++  let updates = 0
++  let announcements = 0
++  let handlers: Record<string, (input: any, call: any) => any> = {}
++  const ctx = {
++    location, agent: { transform: () => Effect.void }, event: { subscribe: () => Stream.empty },
++    session: { get: () => Effect.succeed({ location, permissions: [] }),
++      update: () => Effect.sync(() => { updates++ }) },
++    rpc: { register: (_: unknown, commands: typeof handlers) => {
++      handlers = commands
++      return Effect.succeed({ events: { emit: () => Effect.sync(() => { announcements++ }) } })
++    } },
++  } as unknown as Parameters<typeof BrowserConnection.make>[0]
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    const scope = yield* BrowserConnection.make(ctx)
++    const first = yield* Effect.exit(handlers.attach({ ...claim, claimedElectron: true }, caller)
++      .pipe(Effect.timeout("250 millis")))
++    // Previous native code auto-inserted browser:* allow for this unverified first caller.
++    expect(updates).toBe(0)
++    expect(announcements).toBe(0)
++    expect(Exit.isFailure(first)).toBe(true)
++    if (Exit.isFailure(first)) expect(Cause.pretty(first.cause)).toContain("verified Desktop")
++    expect(Exit.isFailure(yield* Effect.exit(scope.tabs(sessionID)))).toBe(true)
++    const tunnel = yield* Effect.exit(handlers["tunnel.open"]({
++      ...claim, target: { host: "127.0.0.1", port: 443 },
++    }, caller))
++    expect(Exit.isFailure(tunnel)).toBe(true)
++    if (Exit.isFailure(tunnel)) expect(Cause.pretty(tunnel.cause)).toContain("Browser attachment is unavailable")
++  })) as unknown as Effect.Effect<void, unknown, never>)
++})
++
++test("Core-supplied trusted transport authority preserves the tabs metadata mirror", async () => {
++  let handlers: Record<string, (input: any, call: any) => any> = {}
++  const attached = Deferred.makeUnsafe<void>()
++  const ctx = {
++    location, agent: { transform: () => Effect.void }, event: { subscribe: () => Stream.empty },
++    session: { get: () => Effect.succeed({ location, permissions: [] }), update: () => Effect.void },
++    rpc: { register: (_: unknown, commands: typeof handlers) => {
++      handlers = commands
++      return Effect.succeed({ events: { emit: () => Deferred.succeed(attached, undefined) } })
++    } },
++  } as unknown as Parameters<typeof BrowserConnection.make>[0]
++  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
++    const scope = yield* BrowserConnection.make(ctx, { verify: () => Effect.succeed(true) })
++    const live = yield* handlers.attach(claim, caller).pipe(Effect.forkScoped({ startImmediately: true }))
++    yield* Deferred.await(attached)
++    yield* handlers.state({ ...claim, state: { tabs: [], focusedTabID: null } }, caller)
++    expect(yield* scope.tabs(sessionID)).toEqual({ tabs: [], focusedTabID: null })
++    yield* Fiber.interrupt(live)
++  })) as unknown as Effect.Effect<void, unknown, never>)
++})
 diff --git a/packages/plugin-browser/test/read-commit.test.ts b/packages/plugin-browser/test/read-commit.test.ts
 new file mode 100644
-index 0000000000..7ab7a9b35d
+index 0000000000..845c13f269
 --- /dev/null
 +++ b/packages/plugin-browser/test/read-commit.test.ts
-@@ -0,0 +1,291 @@
-+import { expect, test } from "bun:test"
+@@ -0,0 +1,334 @@
++import { expect, spyOn, test } from "bun:test"
 +import { Cause, Deferred, Effect, Exit, Fiber, Stream } from "effect"
 +import { AbsolutePath } from "@opencode/schema/schema"
 +import { Location } from "@opencode/schema/location"
@@ -3560,7 +3843,7 @@ index 0000000000..7ab7a9b35d
 +  } as unknown as Parameters<typeof BrowserConnection.make>[0]
 +  const caller = { error: (_: string, msg: string) => new Error(msg) }
 +  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-+    const scope = yield* BrowserConnection.make(ctx)
++    const scope = yield* BrowserConnection.make(ctx, { verify: () => Effect.succeed(true) })
 +    const attachedFiber = yield* commands.attach({ sessionID, connectionID, attachmentProof, version: 6 }, caller)
 +      .pipe(Effect.forkScoped({ startImmediately: true }))
 +    yield* Deferred.await(attached)
@@ -3625,6 +3908,49 @@ index 0000000000..7ab7a9b35d
 +    expect(response.value.content).toBe("WEBBRIDGE_LOCAL_PAGE_OK:fixture")
 +    expect(Exit.isFailure(yield* Effect.exit(target.requestOnce([], () => true)))).toBe(true)
 +  }))
++})
++
++test("Core read.live receipt is one-use even with the exact ticket and attachment proof", async () => {
++  await harness(({ target, commands, next, base }) => Effect.gen(function* () {
++    const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
++    const requestID = yield* Deferred.await(next)
++    const caller = { error: (_: string, message: string) => new Error(message) }
++    const command = yield* commands.command({ ...base, requestID }, caller)
++    const input = { ...base, requestID, ticket: command.readCommit }
++    expect(yield* commands["read.commit"](input, caller)).toBe(true)
++    expect(yield* commands["read.live"](input, caller)).toBe(true)
++    expect(yield* commands["read.live"](input, caller)).toBe(false)
++    yield* commands.result({ ...base, requestID, outcome: { type: "success", result: {
++      value: { content: "single authorized read", truncated: false }, files: [],
++    } } }, caller)
++    const response = (yield* Fiber.join(reading)) as { value: { content: string } }
++    expect(response.value.content).toBe("single authorized read")
++  }))
++})
++
++test("Core denies page content arriving after the authorized read deadline", async () => {
++  let now = 1000
++  const clock = spyOn(performance, "now").mockImplementation(() => now)
++  try {
++    await harness(({ target, commands, next, base }) => Effect.gen(function* () {
++      const reading = yield* target.requestOnce([], () => true).pipe(Effect.forkScoped({ startImmediately: true }))
++      const requestID = yield* Deferred.await(next)
++      const caller = { error: (_: string, message: string) => new Error(message) }
++      const command = yield* commands.command({ ...base, requestID }, caller)
++      const input = { ...base, requestID, ticket: command.readCommit }
++      expect(yield* commands["read.commit"](input, caller)).toBe(true)
++      expect(yield* commands["read.live"](input, caller)).toBe(true)
++      now = 6001 // 5000ms from dispatch elapsed while the browser was pending.
++      expect(Exit.isFailure(yield* Effect.exit(commands.result({ ...base, requestID,
++        outcome: { type: "success", result: {
++          value: { content: "late private page", truncated: false }, files: [],
++        } },
++      }, caller)))).toBe(true)
++      expect(Exit.isFailure(yield* Fiber.await(reading))).toBe(true)
++    }))
++  } finally {
++    clock.mockRestore()
++  }
 +})
 +
 +test("a forged or stale Desktop cannot disclose a committed snapshot without Core read.live", async () => {
@@ -3832,7 +4158,7 @@ index af1d5b53f0..d127f3d81a 100644
    ).toThrow()
 diff --git a/packages/plugin-browser/test/tunnel-provenance.test.ts b/packages/plugin-browser/test/tunnel-provenance.test.ts
 new file mode 100644
-index 0000000000..8d082e36c1
+index 0000000000..fc74559d97
 --- /dev/null
 +++ b/packages/plugin-browser/test/tunnel-provenance.test.ts
 @@ -0,0 +1,127 @@
@@ -3882,7 +4208,7 @@ index 0000000000..8d082e36c1
 +  } as unknown as Parameters<typeof BrowserConnection.make>[0]
 +  try {
 +    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-+      yield* BrowserConnection.make(ctx)
++      yield* BrowserConnection.make(ctx, { verify: () => Effect.succeed(true) })
 +      const call = { error: (_kind: string, message: string) => new Error(message) }
 +      const attached = yield* handlers.attach({ ...base, version: 6 }, call)
 +        .pipe(Effect.forkScoped({ startImmediately: true }))

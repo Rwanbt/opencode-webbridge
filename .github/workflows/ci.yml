@@ -24,6 +24,8 @@ jobs:
       - run: npm run check:release
       - name: G119 prove exact G106 full patch and G113 standalone browser fixture on one SHA
         run: npm run check:g119
+      - name: D01/D02 execute pinned official Desktop 2.0.32 packaged IPC refusal
+        run: npm run check:d01d02
       - run: npm test
       - name: Deterministic offline package, upgrade, rollback and uninstall
         run: npm run preview:package
@@ -83,6 +85,39 @@ jobs:
         run: npm run smoke:dom-rpc
       - run: npm run smoke:page
 
+  official-v2-032-cli-plugin:
+    name: D01 official OpenCode 2.0.32 CLI packaged plugin model/RPC (no Electron)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install public official CLI exact 2.0.32 into isolated CI dependency tree
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - name: D01 native combined plugin model and RPC through official 2.0.32 CLI
+        run: npm run smoke:g97-native
+
+  g125-official-v2032-full-page-session:
+    name: G125 official CLI 2.0.32 installed model→Chromium→RPC→SSE→persistent session
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install exact official CLI 2.0.32, never replace system Desktop
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - name: Install ephemeral Linux Chromium shell
+        run: npx playwright install --with-deps --only-shell chromium
+      - name: G125 full native single-tarball positive and both adversarial persisted sessions
+        run: npm run smoke:g125-native
+
   windows-progressive-relay:
     name: Windows bounded RPC progress (no Chromium)
     runs-on: windows-latest
@@ -96,7 +131,7 @@ jobs:
       - run: npm run build
       - name: Native protocol and fail-closed deltas, no browser or account
         run: node --test dist/test/browser-exchange.test.js dist/test/rpc-relay-port.test.js dist/test/rpc-browser-port.test.js dist/test/fixture-inference.test.js
-      - name: Encrypted durable read ACK, crash and rollback fixtures (no Chromium)
+      - name: G127/G128 encrypted read sink and immutable frame regression (no Chromium)
         run: node --test dist/test/durable-read-ack-sink.test.js dist/test/checkpointed-read-observer.test.js
 
   upstream-v2-browser-patch:
@@ -120,13 +155,13 @@ jobs:
       - name: Install upstream dependencies
         run: bun install --frozen-lockfile
         working-directory: ${{ runner.temp }}/opencode-v2
-      - name: G106 focused live Core saved-policy revision and BrowserLease/GUI gate tests
+      - name: G129 native G126 first-attach and RPC registration RED→GREEN plus G106 policy regressions
         working-directory: ${{ runner.temp }}/opencode-v2
         run: |
           bun run --cwd packages/plugin typecheck
           bun run --cwd packages/plugin-browser typecheck
           bun run --cwd packages/core typecheck
           bun run --cwd packages/gui-extensions typecheck
-          (cd packages/core && bun test test/permission.test.ts test/permission-browser-lease.test.ts test/plugin/browser-lease.test.ts test/plugin/browser-capability.test.ts)
-          (cd packages/plugin-browser && bun test test/read-commit.test.ts test/connection-location.test.ts)
+          (cd packages/core && bun test test/permission.test.ts test/permission-browser-lease.test.ts test/plugin/browser-lease.test.ts test/plugin/browser-capability.test.ts test/plugin/browser-rpc-provenance.test.ts)
+          (cd packages/plugin-browser && bun test test/read-commit.test.ts test/first-attach-authority.test.ts test/connection-location.test.ts)
           (cd packages/gui-extensions && bun test src/browser/read-commit-gate.test.ts)
