@@ -37,3 +37,32 @@ jobs:
       - name: Install isolated headless Chromium
         run: npx playwright install --with-deps --only-shell chromium
       - run: npm run smoke:page
+
+  upstream-v2-browser-patch:
+    name: Upstream V2 browser capability patch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fetch exact official V2 source and verify patch
+        shell: bash
+        run: |
+          git init "$RUNNER_TEMP/opencode-v2"
+          git -C "$RUNNER_TEMP/opencode-v2" fetch --depth=1 https://github.com/anomalyco/opencode.git 4617210822bdbb31e5749751afbfb4584ccedac8
+          git -C "$RUNNER_TEMP/opencode-v2" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/opencode-v2" rev-parse HEAD)" = 4617210822bdbb31e5749751afbfb4584ccedac8
+          git -C "$RUNNER_TEMP/opencode-v2" apply --check "$GITHUB_WORKSPACE/docs/patches/opencode-v2-4617210-browser-plugin-capability.patch"
+          git -C "$RUNNER_TEMP/opencode-v2" apply "$GITHUB_WORKSPACE/docs/patches/opencode-v2-4617210-browser-plugin-capability.patch"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+      - name: Install upstream dependencies
+        run: bun install --frozen-lockfile
+        working-directory: ${{ runner.temp }}/opencode-v2
+      - name: Typecheck upstream packages and test capability
+        working-directory: ${{ runner.temp }}/opencode-v2
+        run: |
+          bun run --cwd packages/plugin typecheck
+          bun run --cwd packages/plugin-browser typecheck
+          bun run --cwd packages/core typecheck
+          (cd packages/core && bun test test/plugin/browser-capability.test.ts)
+          (cd packages/plugin-browser && bun test test/rpc.test.ts test/tools.test.ts)

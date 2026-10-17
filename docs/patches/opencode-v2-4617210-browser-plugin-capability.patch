@@ -1,0 +1,413 @@
+diff --git a/packages/core/src/plugin.ts b/packages/core/src/plugin.ts
+index 8ade682658..5e0bd04a21 100644
+--- a/packages/core/src/plugin.ts
++++ b/packages/core/src/plugin.ts
+@@ -62,7 +62,11 @@ const layer = Layer.effect(
+         })
+       })
+       const exit = yield* Effect.suspend(() =>
+-        plugin.effect({ ...host, storage: PluginHost.storage(kv, plugin.id) }),
++        plugin.effect({
++          ...host,
++          browser: host.browserFor(plugin.id, plugin.source?.type === undefined || plugin.source.type === "builtin"),
++          storage: PluginHost.storage(kv, plugin.id),
++        }),
+       ).pipe(
+         grouped,
+         inherit,
+diff --git a/packages/core/src/plugin/browser.ts b/packages/core/src/plugin/browser.ts
+new file mode 100644
+index 0000000000..1c6921d87a
+--- /dev/null
++++ b/packages/core/src/plugin/browser.ts
+@@ -0,0 +1,59 @@
++export * as PluginBrowser from "./browser.js"
++
++import type { BrowserDomain, BrowserDriver } from "@opencode/plugin/effect/browser"
++import type { Permission } from "../permission.js"
++import { Effect } from "effect"
++
++/** Location-local broker. The registered driver never leaves the trusted host. */
++export function make(permission: Pick<Permission.Interface, "assert">) {
++  let driver: { readonly host: BrowserDriver } | undefined
++  return (pluginID: string, builtin = false): BrowserDomain => {
++    const authorize = (sessionID: Parameters<BrowserDomain["tabs"]>[0]["sessionID"], operation: string) =>
++      Effect.gen(function* () {
++        yield* permission.assert({ sessionID, action: "browser", resources: ["*"] })
++        yield* permission.assert({
++          sessionID,
++          action: "browser_plugin",
++          resources: [`${pluginID}:${operation}`],
++        })
++        // The plugin grant may have waited for a user while browser permission changed.
++        yield* permission.assert({ sessionID, action: "browser", resources: ["*"] })
++      })
++    return {
++      tabs: (input) =>
++        Effect.gen(function* () {
++          const owner = driver
++          if (!owner) return yield* Effect.fail(new Error("Desktop browser not connected"))
++          yield* authorize(input.sessionID, "tabs.list")
++          if (driver !== owner) return yield* Effect.fail(new Error("Browser host changed during authorization"))
++          return yield* owner.host.tabs(input)
++        }),
++      snapshot: (input) =>
++        Effect.gen(function* () {
++          const owner = driver
++          if (!owner) return yield* Effect.fail(new Error("Desktop browser not connected"))
++          yield* authorize(input.sessionID, "snapshot")
++          if (driver !== owner) return yield* Effect.fail(new Error("Browser host changed during authorization"))
++          return yield* owner.host.snapshot(input)
++        }),
++      register: (host) => {
++        const entry = { host }
++        return Effect.acquireRelease(
++          Effect.try({
++            try: () => {
++              if (!builtin || pluginID !== "opencode.browser")
++                throw new Error("Browser host registration is reserved for the built-in browser")
++              if (driver) throw new Error("Browser host already registered")
++              driver = entry
++            },
++            catch: (error) => (error instanceof Error ? error : new Error(String(error))),
++          }),
++          () =>
++            Effect.sync(() => {
++              if (driver === entry) driver = undefined
++            }),
++        )
++      },
++    }
++  }
++}
+diff --git a/packages/core/src/plugin/host.ts b/packages/core/src/plugin/host.ts
+index d6d2781ad2..b6851f2dff 100644
+--- a/packages/core/src/plugin/host.ts
++++ b/packages/core/src/plugin/host.ts
+@@ -34,6 +34,7 @@ import { WorktreeStrategies } from "../worktree/strategies.js"
+ import { Generate } from "../generate.js"
+ import { Permission } from "../permission.js"
+ import { PluginHooks } from "./hooks.js"
++import { PluginBrowser } from "./browser.js"
+ import type { Interface } from "../plugin.js"
+ import { LayerNode } from "@opencode/util/effect/layer-node"
+ 
+@@ -67,6 +68,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
+   const websearch = yield* WebSearch.Service
+   const generate = yield* Generate.Service
+   const permission = yield* Permission.Service
++  const browser = PluginBrowser.make(permission)
+   const hooks = yield* PluginHooks.Service
+   const sessions = yield* Session.Service
+   const persistentPty = yield* PersistentPty.Service
+@@ -114,6 +116,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
+   // Keep the instance graph's inferred types independent of Session handles.
+   const context: Plugin.Context = {
+     app,
++    browser: browser(pluginID),
+     location: locationInfo(),
+     options: {},
+     rpc: Object.assign(rpc.client, { register: rpc.register }),
+@@ -575,7 +578,10 @@ export const make = Effect.fn("PluginHost.make")(function* (
+       context: (input) => sessions.context(input.sessionID),
+     },
+   }
+-  return context
++  // Non-enumerable: plugin runtime spreads this object and cannot obtain a host-binding factory.
++  return Object.defineProperty(context, "browserFor", { value: browser }) as Plugin.Context & {
++    readonly browserFor: typeof browser
++  }
+ })
+ 
+ export const requirements = LayerNode.group([
+diff --git a/packages/core/test/plugin/browser-capability.test.ts b/packages/core/test/plugin/browser-capability.test.ts
+new file mode 100644
+index 0000000000..01018dc065
+--- /dev/null
++++ b/packages/core/test/plugin/browser-capability.test.ts
+@@ -0,0 +1,126 @@
++import { expect, test } from "bun:test"
++import { PluginBrowser } from "@opencode/core/plugin/browser"
++import { Permission } from "@opencode/core/permission"
++import { Session } from "@opencode/schema/session"
++import { Deferred, Effect, Exit, Scope } from "effect"
++
++const sessionID = Session.ID.make("ses_browser_capability")
++
++function fixture(deny?: string) {
++  const calls: string[] = []
++  const actions: string[] = []
++  const broker = PluginBrowser.make({
++    assert: (input) => {
++      actions.push(`${input.action}:${input.resources.join(",")}`)
++      return input.action === deny
++        ? Effect.fail(
++            new Permission.BlockedError({
++              permission: input.action,
++              resources: [...input.resources],
++              rules: [],
++            }),
++          )
++        : Effect.void
++    },
++  })
++  const firstParty = broker("opencode.browser", true)
++  const other = broker("demo-plugin")
++  const driver = {
++    tabs: () =>
++      Effect.sync(() => {
++        calls.push("tabs")
++        return [{ id: "tab_one", url: "https://example.com", title: "Example" }]
++      }),
++    snapshot: () =>
++      Effect.sync(() => {
++        calls.push("snapshot")
++        return { content: "fixture page", truncated: false }
++      }),
++  }
++  return { firstParty, other, driver, calls, actions }
++}
++
++test("unregistered host and unauthorized host registration fail without running browser", async () => {
++  const item = fixture()
++  const absent = await Effect.runPromiseExit(item.other.tabs({ sessionID }))
++  expect(Exit.isFailure(absent)).toBe(true)
++  const forbidden = await Effect.runPromiseExit(Effect.scoped(item.other.register(item.driver)))
++  expect(Exit.isFailure(forbidden)).toBe(true)
++  const spoof = PluginBrowser.make({ assert: () => Effect.void })("opencode.browser", false)
++  expect(Exit.isFailure(await Effect.runPromiseExit(Effect.scoped(spoof.register(item.driver))))).toBe(true)
++  expect(item.calls).toEqual([])
++  expect(item.actions).toEqual([])
++})
++
++test("read-only access requires browser AND plugin-specific grant", async () => {
++  for (const denied of ["browser", "browser_plugin"]) {
++    const item = fixture(denied)
++    await Effect.runPromise(
++      Effect.scoped(
++        Effect.gen(function* () {
++          yield* item.firstParty.register(item.driver)
++          expect(Exit.isFailure(yield* Effect.exit(item.other.tabs({ sessionID })))).toBe(true)
++          expect(Exit.isFailure(yield* Effect.exit(item.other.snapshot({ sessionID, tabID: "tab_one" })))).toBe(true)
++        }),
++      ),
++    )
++    expect(item.calls).toEqual([])
++  }
++  const granted = fixture()
++  await Effect.runPromise(
++    Effect.scoped(
++      Effect.gen(function* () {
++        yield* granted.firstParty.register(granted.driver)
++        expect(yield* granted.other.tabs({ sessionID })).toHaveLength(1)
++        expect(yield* granted.other.snapshot({ sessionID, tabID: "tab_one" })).toEqual({
++          content: "fixture page",
++          truncated: false,
++        })
++      }),
++    ),
++  )
++  expect(granted.calls).toEqual(["tabs", "snapshot"])
++  expect(granted.actions).toEqual([
++    "browser:*",
++    "browser_plugin:demo-plugin:tabs.list",
++    "browser:*",
++    "browser:*",
++    "browser_plugin:demo-plugin:snapshot",
++    "browser:*",
++  ])
++  expect(Exit.isFailure(await Effect.runPromiseExit(granted.other.tabs({ sessionID })))).toBe(true)
++})
++
++test("host unload during a pending grant never executes an old browser host", async () => {
++  const started = Deferred.makeUnsafe<void>()
++  const release = Deferred.makeUnsafe<void>()
++  const calls: string[] = []
++  const broker = PluginBrowser.make({
++    assert: (input) =>
++      input.action === "browser_plugin"
++        ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))
++        : Effect.void,
++  })
++  const host = broker("opencode.browser", true)
++  const other = broker("demo-plugin")
++  const scope = await Effect.runPromise(Scope.make())
++  await Effect.runPromise(
++    host
++      .register({
++        tabs: () =>
++          Effect.sync(() => {
++            calls.push("tabs")
++            return []
++          }),
++        snapshot: () => Effect.succeed({ content: "", truncated: false }),
++      })
++      .pipe(Effect.provideService(Scope.Scope, scope)),
++  )
++  const ready = Effect.runPromiseExit(other.tabs({ sessionID }))
++  await Effect.runPromise(Deferred.await(started))
++  await Effect.runPromise(Scope.close(scope, Exit.void))
++  await Effect.runPromise(Deferred.succeed(release, undefined))
++  const result = await ready
++  expect(Exit.isFailure(result)).toBe(true)
++  expect(calls).toEqual([])
++})
+diff --git a/packages/core/test/plugin/host.ts b/packages/core/test/plugin/host.ts
+index 108846d5ac..89a0c4cdd0 100644
+--- a/packages/core/test/plugin/host.ts
++++ b/packages/core/test/plugin/host.ts
+@@ -28,6 +28,11 @@ export function host(overrides: Overrides = {}): Plugin.Context {
+         },
+       }),
+     options: {},
++    browser: overrides.browser ?? {
++      tabs: () => Effect.die("unused browser.tabs"),
++      snapshot: () => Effect.die("unused browser.snapshot"),
++      register: () => Effect.die("unused browser.register"),
++    },
+     rpc:
+       overrides.rpc ??
+       Object.assign(
+diff --git a/packages/plugin-browser/src/index.ts b/packages/plugin-browser/src/index.ts
+index 3ef7c6b877..20c89895e5 100644
+--- a/packages/plugin-browser/src/index.ts
++++ b/packages/plugin-browser/src/index.ts
+@@ -1,13 +1,34 @@
+ import { Plugin } from "@opencode/plugin/effect"
+-import { Effect } from "effect"
++import { Effect, Schema } from "effect"
+ import { BrowserConnection } from "./connection.js"
+ import { BrowserTools } from "./tools.js"
++import { Browser } from "./rpc.js"
++
++const Snapshot = Schema.Struct({ content: Schema.String, truncated: Schema.Boolean })
+ 
+ export default Plugin.define({
+   id: "opencode.browser",
+   effect: (ctx) =>
+     Effect.gen(function* () {
+       const connection = yield* BrowserConnection.make(ctx)
++      yield* ctx.browser
++        .register({
++          tabs: (input) =>
++            Effect.gen(function* () {
++              const target = yield* connection.target(input.sessionID, { type: "tabs.list" })
++              const result = yield* target.request([])
++              const state = yield* Schema.decodeUnknownEffect(Browser.State)(result.value)
++              return state.tabs.map((tab) => ({ id: tab.id, url: tab.url, title: tab.title }))
++            }),
++          snapshot: (input) =>
++            Effect.gen(function* () {
++              const tabID = yield* Schema.decodeUnknownEffect(Browser.TabID)(input.tabID)
++              const target = yield* connection.target(input.sessionID, { type: "snapshot", tabID })
++              const result = yield* target.request([])
++              return yield* Schema.decodeUnknownEffect(Snapshot)(result.value)
++            }),
++        })
++        .pipe(Effect.orDie)
+       yield* BrowserTools.register(ctx, connection)
+     }),
+ })
+diff --git a/packages/plugin/src/effect/browser.ts b/packages/plugin/src/effect/browser.ts
+new file mode 100644
+index 0000000000..25c160ac63
+--- /dev/null
++++ b/packages/plugin/src/effect/browser.ts
+@@ -0,0 +1,29 @@
++import type { Effect, Scope } from "effect"
++import type { Session } from "@opencode/schema/session"
++
++/** Read-only desktop browser capability. Every call asks for a plugin-specific grant. */
++export interface BrowserDomain {
++  readonly tabs: (input: { readonly sessionID: Session.ID }) => Effect.Effect<ReadonlyArray<BrowserTab>, Error>
++  readonly snapshot: (input: {
++    readonly sessionID: Session.ID
++    readonly tabID: string
++  }) => Effect.Effect<BrowserSnapshot, Error>
++  /** Only the built-in opencode.browser plugin may register the Desktop host. */
++  readonly register: (driver: BrowserDriver) => Effect.Effect<void, Error, Scope.Scope>
++}
++
++export interface BrowserDriver {
++  readonly tabs: BrowserDomain["tabs"]
++  readonly snapshot: BrowserDomain["snapshot"]
++}
++
++export interface BrowserTab {
++  readonly id: string
++  readonly url: string
++  readonly title: string
++}
++
++export interface BrowserSnapshot {
++  readonly content: string
++  readonly truncated: boolean
++}
+diff --git a/packages/plugin/src/effect/plugin.ts b/packages/plugin/src/effect/plugin.ts
+index b19fac7e57..c7c356321a 100644
+--- a/packages/plugin/src/effect/plugin.ts
++++ b/packages/plugin/src/effect/plugin.ts
+@@ -5,6 +5,7 @@ import type { PluginOptions } from "../options.js"
+ import type { App } from "../app.js"
+ import type { AgentDomain } from "./agent.js"
+ import type { AISDKDomain } from "./aisdk.js"
++import type { BrowserDomain } from "./browser.js"
+ import type { CommandDomain } from "./command.js"
+ import type { EventDomain } from "./event.js"
+ import type { IntegrationDomain } from "./integration.js"
+@@ -25,6 +26,7 @@ import type { WorktreeDomain } from "./worktree.js"
+ 
+ export interface Context {
+   readonly app: App
++  readonly browser: BrowserDomain
+   readonly location: Location.Info
+   readonly options: PluginOptions
+   readonly agent: AgentDomain
+diff --git a/packages/plugin/src/promise/adapter.ts b/packages/plugin/src/promise/adapter.ts
+index ff5efd107e..6770f37d4d 100644
+--- a/packages/plugin/src/promise/adapter.ts
++++ b/packages/plugin/src/promise/adapter.ts
+@@ -290,6 +290,10 @@ export function fromPromise(plugin: Plugin) {
+ 
+         const context2: PromiseContext = {
+           app: host.app,
++          browser: {
++            tabs: (input) => run(host.browser.tabs(input)),
++            snapshot: (input) => run(host.browser.snapshot(input)),
++          },
+           location: host.location,
+           options: host.options,
+           agent: {
+diff --git a/packages/plugin/src/promise/browser.ts b/packages/plugin/src/promise/browser.ts
+new file mode 100644
+index 0000000000..dc34547eb2
+--- /dev/null
++++ b/packages/plugin/src/promise/browser.ts
+@@ -0,0 +1,7 @@
++import type { Session } from "@opencode/schema/session"
++import type { BrowserTab, BrowserSnapshot } from "../effect/browser.js"
++
++export interface BrowserDomain {
++  readonly tabs: (input: { readonly sessionID: Session.ID }) => Promise<ReadonlyArray<BrowserTab>>
++  readonly snapshot: (input: { readonly sessionID: Session.ID; readonly tabID: string }) => Promise<BrowserSnapshot>
++}
+diff --git a/packages/plugin/src/promise/plugin.ts b/packages/plugin/src/promise/plugin.ts
+index ed94b09302..ea317fa062 100644
+--- a/packages/plugin/src/promise/plugin.ts
++++ b/packages/plugin/src/promise/plugin.ts
+@@ -5,6 +5,7 @@ import type { PluginOptions } from "../options.js"
+ import type { App } from "../app.js"
+ import type { AgentDomain } from "./agent.js"
+ import type { AISDKDomain } from "./aisdk.js"
++import type { BrowserDomain } from "./browser.js"
+ import type { CommandDomain } from "./command.js"
+ import type { EventDomain } from "./event.js"
+ import type { IntegrationDomain } from "./integration.js"
+@@ -25,6 +26,7 @@ import type { WorktreeDomain } from "./worktree.js"
+ 
+ export interface Context {
+   readonly app: App
++  readonly browser: BrowserDomain
+   readonly location: Location.Info
+   readonly options: PluginOptions
+   readonly agent: AgentDomain
