@@ -110,7 +110,9 @@ export class RpcRelayPort implements BrowserPort {
     if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new Error('invalid relay cursor');
     const job = this.jobs.get(turnID);
     if (!job) throw new Error('relay unknown turn');
-    if (!job.events.length) await this.wait();
+    // A started stream is not finished. Wait for a NEW sequence, not merely
+    // for the first ever event; otherwise fast empty polls exhaust the budget.
+    if (!job.done && !job.events.some((event) => event.seq > afterSeq)) await this.wait();
     this.owned(binding);
     return (this.jobs.get(turnID)?.events ?? []).filter((event) => event.seq > afterSeq);
   }

@@ -7,19 +7,39 @@ const HTML = `<!doctype html>
 <h1>WebBridge browser test page</h1>
 <form id="chat"><label for="prompt">Prompt</label>
 <textarea id="prompt" aria-label="Prompt" maxlength="16000" required></textarea>
-<button type="submit">Send</button></form>
-<output id="response" role="status" data-state="idle"></output>
+<button type="submit">Send</button><button id="stop" type="button">Stop</button></form>
+<output id="response" role="status" data-state="idle" data-seq="0"></output>
 <script>
+let generation = 0;
+document.getElementById('stop').addEventListener('click', () => {
+  const response = document.getElementById('response');
+  if (response.dataset.state !== 'streaming' && response.dataset.state !== 'pending') return;
+  generation++;
+  response.dataset.state = 'stopped';
+});
 document.getElementById('chat').addEventListener('submit', (event) => {
   event.preventDefault();
   const prompt = document.getElementById('prompt').value;
   const response = document.getElementById('response');
+  const current = ++generation;
   response.dataset.state = 'pending';
+  response.dataset.turn = crypto.randomUUID();
+  response.dataset.seq = '0';
   response.textContent = '';
-  setTimeout(() => {
-    response.textContent = 'WEBBRIDGE_LOCAL_PAGE_OK:' + prompt;
-    response.dataset.state = 'finished';
-  }, 15);
+  const result = 'WEBBRIDGE_LOCAL_PAGE_OK:' + prompt;
+  const step = Math.ceil(result.length / 3);
+  const chunks = [result.slice(0, step), result.slice(step, 2 * step), result.slice(2 * step)];
+  const emit = (index) => {
+    if (current !== generation) return;
+    const span = document.createElement('span');
+    span.dataset.seq = String(index + 1);
+    span.textContent = chunks[index];
+    response.appendChild(span);
+    response.dataset.seq = String(index + 1);
+    response.dataset.state = index === chunks.length - 1 ? 'finished' : 'streaming';
+    if (index + 1 < chunks.length) setTimeout(() => emit(index + 1), 200);
+  };
+  setTimeout(() => emit(0), 35);
 });
 </script>
 </body></html>`;

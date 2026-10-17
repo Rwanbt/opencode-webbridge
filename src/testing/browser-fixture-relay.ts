@@ -16,6 +16,8 @@ export function browserFixtureResponder(port: BrowserPort, binding: TabClaim) {
     if (!prompt || prompt.length > MAX_PROMPT) throw new Error('no bounded user prompt');
     // Identity is local to each new request. We do not retry failed/uncertain sends.
     const turnID = randomUUID().replaceAll('-', '');
-    return exchangeBrowserTurn(port, binding, { turnID, prompt });
+    // A real DOM stream may deliver several partial frames plus an initially
+    // empty poll. Keep the fixture's bounded poll budget above its event count.
+    return exchangeBrowserTurn(port, binding, { turnID, prompt }, 16);
   };
 }

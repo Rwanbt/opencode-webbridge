@@ -74,6 +74,8 @@ let companionJobs = 0;
 let sawPrompt = false;
 let rpcCalls = 0;
 let companionFailure;
+let failCompanion;
+const companionFailed = new Promise((_, reject) => { failCompanion = reject; });
 
 async function rpc(method, payload) {
   rpcCalls++;
@@ -157,23 +159,30 @@ try {
       companionJobs++;
       if (typeof next.prompt !== 'string') throw new Error('companion got invalid prompt');
       if (next.prompt.includes('WEBBRIDGE_G4_QUESTION')) sawPrompt = true;
+      let fragments = 0;
+      const publish = async (value, seq) => {
+        if (seq !== ++fragments) throw new Error('non-monotonic browser DOM progress');
+        const ack = await rpc('progress', { turnID: next.turnID, seq, value });
+        if (ack.accepted !== true) throw new Error('DOM progress chunk rejected');
+      };
       const answer = useRealPage
-        ? await submitLocalPageTurn(browserCompanion.page, localPage.url, next.prompt)
+        ? await submitLocalPageTurn(browserCompanion.page, localPage.url, next.prompt, publish)
         : EXPECTED;
       if (useRealPage && !answer.includes('WEBBRIDGE_G4_QUESTION')) {
         throw new Error('browser page did not echo the submitted prompt');
       }
       // Deterministic progressive companion: no resend and no guessed terminal.
       // A real commercial site is never opened; only local fake pages are used.
-      const midpoint = Math.floor(answer.length / 2);
-      const first = await rpc('progress', { turnID: next.turnID, seq: 1, value: answer.slice(0, midpoint) });
-      if (first.accepted !== true) throw new Error('progress chunk rejected');
-      const second = await rpc('progress', { turnID: next.turnID, seq: 2, value: answer.slice(midpoint) });
-      if (second.accepted !== true) throw new Error('second progress chunk rejected');
+      if (!useRealPage) {
+        const midpoint = Math.floor(answer.length / 2);
+        await publish(answer.slice(0, midpoint), 1);
+        await publish(answer.slice(midpoint), 2);
+      }
+      if (useRealPage && fragments !== 3) throw new Error('local DOM did not stream three progressive fragments');
       const done = await rpc('complete', { turnID: next.turnID, response: answer });
       if (done.accepted !== true) throw new Error('companion completion rejected');
     }
-  })().catch((error) => { companionFailure = error; active = false; });
+  })().catch((error) => { companionFailure = error; active = false; failCompanion(error); });
   let output = '';
   const runnerResult = new Promise((resolvePromise, reject) => {
     runner = launch(bin, ['run', '--server', serverURL, '--model',
@@ -187,6 +196,7 @@ try {
   let timeout;
   const result = await Promise.race([
     runnerResult,
+    companionFailed,
     new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('native run timed out')), 45_000); }),
   ]).finally(() => clearTimeout(timeout));
   active = false;
@@ -200,7 +210,7 @@ try {
 } catch (error) {
   process.exitCode = 1;
   const safe = String(error).replaceAll(secret, '[REDACTED]').replaceAll(password, '[REDACTED]').replaceAll(modelToken, '[REDACTED]');
-  console.error(`G4 native E2E FAILED: ${safe}; diagnostic=${serverError.slice(-550).replaceAll(secret, '[REDACTED]')}`);
+  console.error(`G4 native E2E FAILED: ${safe}; stage=jobs:${companionJobs},prompt:${sawPrompt},rpc:${rpcCalls},fixtureHTTP:${fake?.requests() ?? 0}; diagnostic=${serverError.slice(-550).replaceAll(secret, '[REDACTED]')}`);
 } finally {
   active = false;
   await stop(runner);

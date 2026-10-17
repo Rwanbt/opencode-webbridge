@@ -48,6 +48,22 @@ test('offline RPC relays bounded progressive chunks with stable cursors and one 
   await relay.release(binding);
 });
 
+test('poll after the current stream cursor waits for the next fragment instead of busy-spinning', async () => {
+  const relay = new RpcRelayPort(secret);
+  await relay.claim(binding);
+  await relay.submit(binding, { turnID: 'cursor-wait', prompt: 'hello' });
+  relay.take(secret, binding);
+  relay.progress(secret, binding, 'cursor-wait', 1, 'first');
+  let returned = false;
+  const next = relay.events(binding, 'cursor-wait', 1).then((events) => { returned = true; return events; });
+  await Promise.resolve();
+  assert.equal(returned, false);
+  relay.progress(secret, binding, 'cursor-wait', 2, 'second');
+  assert.deepEqual(await next, [{ seq: 2, kind: 'text', turnID: 'cursor-wait', value: 'second' }]);
+  relay.complete(secret, binding, 'cursor-wait', 'firstsecond');
+  await relay.release(binding);
+});
+
 test('progress with forged ownership or invalid sizes never mutates a leased turn', async () => {
   const relay = new RpcRelayPort(secret);
   await relay.claim(binding);
