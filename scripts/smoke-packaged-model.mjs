@@ -19,7 +19,7 @@ export function receiptText(secret, nonce) {
   }
   return marker + '_' + createHmac('sha256', secret).update(nonce).digest('hex').slice(0, 24) + '_OK';
 }
-function runCLI(executable, args, env, cwd) {
+export function runCLI(executable, args, env, cwd) {
   return new Promise((resolveRun, reject) => {
     const child = spawn(executable, args, { cwd, env, windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],

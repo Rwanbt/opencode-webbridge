@@ -16,10 +16,10 @@ test('G97 one standalone artifact registers BOTH native provider and scoped RPC,
   let handler!: (input: Record<string, unknown>) => Promise<{ receipt: string }>;
   let registration!: Record<string, unknown>;
   const context = {
-    rpc: { register: async (contract: { id: string }, methods: { challenge: typeof handler }) => {
+      rpc: { register: async (contract: { id: string }, methods: { challenge: typeof handler }) => {
       rpcCount++;
-      assert.equal(contract.id, 'webbridge-g81-package');
-      handler = methods.challenge;
+        assert.ok(['webbridge-g81-package', 'webbridge-g99-page'].includes(contract.id));
+        if (contract.id === 'webbridge-g81-package') handler = methods.challenge;
       return { dispose: () => { disposed++; } };
     } },
     provider: { transform: async (edit: (editor: { add: (item: Record<string, unknown>) => void }) => void) => {
@@ -42,7 +42,7 @@ test('G97 one standalone artifact registers BOTH native provider and scoped RPC,
     assert.equal(rpcCount, 0);
     process.env.WEBBRIDGE_FIXTURE_URL = 'http://127.0.0.1:23112/v1';
     const cleanup = await plugin.setup(context);
-    assert.equal(rpcCount, 1);
+    assert.equal(rpcCount, 2);
     assert.equal(providerCount, 1);
     assert.deepEqual((registration.models as { id: string }[]).map((model) => model.id),
       ['webbridge-native-fixture']);
@@ -56,7 +56,7 @@ test('G97 one standalone artifact registers BOTH native provider and scoped RPC,
       { receipt: createHmac('sha256', secret).update(valid.nonce).digest('hex') });
     await assert.rejects(handler(valid), /replay denied/);
     await cleanup?.();
-    assert.equal(disposed, 2);
+    assert.equal(disposed, 3);
     const source = await readFile(resolve('fixtures/g97-combined-preview.mjs'), 'utf8');
     assert.doesNotMatch(source, /from ['"](@opencode|\.\/|\.\.\/)/);
     assert.doesNotMatch(source, /https?:\/\/(?!127\.0\.0\.1)/);
