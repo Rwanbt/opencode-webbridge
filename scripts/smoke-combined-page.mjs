@@ -13,6 +13,7 @@ const dist = join(root, 'dist/src/testing');
 const cli = join(root, 'node_modules/.bin', process.platform === 'win32' ? 'opencode.cmd' : 'opencode');
 export const PROMPT = 'G99_LOCAL_PAGE_QUESTION: answer using the local DOM, no tools.';
 export const EXPECTED = 'WEBBRIDGE_LOCAL_PAGE_OK:' + PROMPT;
+const interruptedScenario = (scenario) => scenario === 'tab-change' || scenario === 'browser-disconnect';
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 const fresh = () => randomBytes(32).toString('hex');
 
@@ -65,7 +66,7 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
                 if (chunks.length !== 3 || chunks.join('') !== EXPECTED)
                   throw new Error('G99 browser response incomplete');
                 return;
-              } else if (event.kind === 'cancelled' && scenario === 'tab-change' &&
+              } else if (event.kind === 'cancelled' && interruptedScenario(scenario) &&
                 chunks.length === 1) {
                 cancelled = true;
                 return;
@@ -112,16 +113,22 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
                   const acknowledgment = await rpc('progress', { turnID, value, seq });
                   if (acknowledgment.accepted !== true) throw new Error('G99 RPC progress rejected');
                   progress++;
-                  if (scenario === 'tab-change' && seq === 1) {
+                  if (interruptedScenario(scenario) && seq === 1) {
                     // Confirm the *real* initial SSE fragment has left the
                     // loopback model before intentionally losing the tab.
                     for (let i = 0; i < 35 && fake.streamFrames() < 1; i++) await delay(40);
                     if (fake.streamFrames() < 1) throw new Error('G100 pre-fault SSE was never emitted');
-                    // Genuine Chromium tab navigation after ONE accepted DOM fragment.
-                    await browser.page.goto('about:blank', { waitUntil: 'load', timeout: 3000 });
-                    if (browser.page.url() !== 'about:blank')
-                      throw new Error('G100 tab never changed');
-                    const uncertain = await rpc('uncertain', { turnID, reason: 'tab-changed' });
+                    // Real Chromium page disposal or tab navigation AFTER one accepted DOM fragment.
+                    if (scenario === 'browser-disconnect') {
+                      await browser.page.close();
+                      if (!browser.page.isClosed()) throw new Error('G113 page remains live');
+                    } else {
+                      await browser.page.goto('about:blank', { waitUntil: 'load', timeout: 3000 });
+                      if (browser.page.url() !== 'about:blank')
+                        throw new Error('G100 tab never changed');
+                    }
+                    const reason = scenario === 'browser-disconnect' ? 'browser-disconnected' : 'tab-changed';
+                    const uncertain = await rpc('uncertain', { turnID, reason });
                     if (uncertain.accepted !== true) throw new Error('G100 native uncertainty not committed');
                     interrupted = true;
                     // The installed RPC MUST reject late writes and forged success.
@@ -129,7 +136,7 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
                       ['progress', { turnID, seq: 2, value: 'forged' }],
                       ['complete', { turnID, response: EXPECTED }],
                       ['submit', { turnID: randomBytes(16).toString('hex'), prompt: PROMPT }],
-                      ['uncertain', { turnID, reason: 'tab-changed' }],
+                      ['uncertain', { turnID, reason }],
                     ]) {
                       let denied = false;
                       try { await rpc(method, input); } catch { denied = true; }
@@ -137,10 +144,10 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
                     }
                     // Cancel CLI deliberately: never wait for a 50s natural hang.
                     cancellation.abort();
-                    throw new Error('G100 injected tab-change uncertainty');
+                    throw new Error('G100 injected browser uncertainty');
                   }
                 });
-              if (scenario === 'tab-change') throw new Error('G100 page unexpectedly completed after tab switch');
+              if (interruptedScenario(scenario)) throw new Error('G113 page unexpectedly completed after browser interruption');
               if (answer !== EXPECTED) throw new Error('G99 real DOM answer mismatch');
               const done = await rpc('complete', { turnID, response: answer });
               if (done.accepted !== true) throw new Error('G99 RPC complete rejected');
@@ -149,16 +156,16 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
             }
             throw new Error('G99 native turn never reached browser');
           })().catch((cause) => {
-            if (scenario === 'tab-change' && interrupted &&
-              String(cause).includes('G100 injected tab-change uncertainty')) return;
+            if (interruptedScenario(scenario) && interrupted &&
+              String(cause).includes('G100 injected browser uncertainty')) return;
             error = cause;
             cancellation.abort();
           });
           const run = await runCLI(executable, ['run', '--server', url, '--model',
             'webbridge-fixture/webbridge-native-fixture', '--format', 'json', PROMPT],
-          env, temp, { signal: cancellation.signal, timeoutMs: scenario === 'tab-change' ? 15_000 : 50_000 });
+          env, temp, { signal: cancellation.signal, timeoutMs: interruptedScenario(scenario) ? 15_000 : 50_000 });
           await companion;
-          if (scenario === 'tab-change') {
+          if (interruptedScenario(scenario)) {
             const events = (await rpc('poll', { turnID, afterSeq: 0 })).events;
             if (error || !interrupted || !run.aborted || accepted !== 1 || progress !== 1 ||
               finished !== 0 || fake.requests() < 1 || fake.streamFrames() < 1 ||
@@ -171,7 +178,8 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
                 ', SSEfinished=' + fake.completedStreams() + ', events=' +
                 JSON.stringify(events.map((item) => item.kind)));
             }
-            return { nativeTabChange: true, uncertain: true, noForgedTerminal: true,
+            return { nativeTabChange: scenario === 'tab-change', nativePageClosed: scenario === 'browser-disconnect',
+              uncertain: true, noForgedTerminal: true,
               cliCancelled: true, browserDOMProgress: progress, partialSSE: fake.streamFrames(),
               sseDone: fake.completedStreams(), version };
           }
@@ -209,10 +217,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     await assert.rejects(submitLocalPageTurn(browser.page, new URL('/admin', page.url).href, PROMPT),
       /only explicit local test page URLs/);
     const result = await runPageProof({ browser, localPage: page,
-      adversarialScenario: 'tab-change' });
+      adversarialScenario: process.env.WEBBRIDGE_G113_PAGE_CLOSE === '1' ? 'browser-disconnect' : 'tab-change' });
     assert.equal(result.nativeChecks.length, 2);
     assert.ok(result.nativeChecks.every((item) => item.model?.pageDOM && item.model?.rpcProgress === 3));
-    assert.equal(result.adversarial?.nativeTabChange, true);
+    assert.equal(process.env.WEBBRIDGE_G113_PAGE_CLOSE === '1'
+      ? result.adversarial?.nativePageClosed : result.adversarial?.nativeTabChange, true);
     assert.equal(result.adversarial?.noForgedTerminal, true);
     assert.equal(result.adversarial?.sseDone, 0);
     console.log('G100 combined native Chromium tab-change uncertainty PASS', JSON.stringify(result));

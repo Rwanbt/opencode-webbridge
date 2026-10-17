@@ -54,6 +54,10 @@ jobs:
         run: npx playwright install --with-deps --only-shell chromium
       - name: G99/G100 installed plugin local Chromium DOM and fail-closed tab-change
         run: npm run smoke:g99-page
+      - name: G113 installed plugin local Chromium actual page close is terminal uncertain
+        run: npm run smoke:g99-page
+        env:
+          WEBBRIDGE_G113_PAGE_CLOSE: '1'
       - run: npm run smoke:local-read
       - name: Offline DOM progressive relay and uncertain interruption
         run: npm run smoke:dom-rpc
