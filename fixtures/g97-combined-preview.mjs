@@ -75,7 +75,7 @@ export default {
           complete: spec({ turnID: { type: 'string' }, response: { type: 'string' } },
             ['turnID', 'response'], { accepted: { type: 'boolean' } }),
           uncertain: spec({ turnID: { type: 'string' }, reason: { type: 'string',
-            enum: ['tab-changed'] } }, ['turnID', 'reason'], { accepted: { type: 'boolean' } }),
+            enum: ['tab-changed', 'browser-disconnected'] } }, ['turnID', 'reason'], { accepted: { type: 'boolean' } }),
           poll: spec({ turnID: { type: 'string' }, afterSeq: { type: 'integer' } },
             ['turnID', 'afterSeq'], { events: { type: 'array', items: {
               type: 'object', properties: { seq: { type: 'integer' }, turnID: { type: 'string' },
@@ -121,7 +121,8 @@ export default {
         uncertain: async (raw) => {
           const input = authorized(raw);
           if (!turn?.taken || turn.finished || turn.uncertain || turn.id !== input.turnID ||
-            input.reason !== 'tab-changed') throw new Error('G100 uncertainty transition denied');
+            !['tab-changed', 'browser-disconnected'].includes(input.reason))
+            throw new Error('G100 uncertainty transition denied');
           turn.uncertain = true;
           turn.events.push({ seq: turn.seq + 1, turnID: turn.id, kind: 'cancelled' });
           return { accepted: true };
