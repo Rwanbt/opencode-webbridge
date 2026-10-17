@@ -71,6 +71,9 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
             const events = (await rpc('poll', { turnID, afterSeq })).events;
             for (const event of events) {
               if (event.turnID !== turnID || event.seq !== afterSeq + 1) throw new Error('G99 RPC event sequence mismatch');
+              // G149 fixture-only: the host must complete its durable read-only
+              // operation before the first real native DOM frame can reach SSE.
+              if (event.seq === 1) await receipt?.runReadonlyTool?.();
               await receipt?.acknowledge(event); // fsync encrypted host receipt before ANY SSE forwarding.
               afterSeq++;
               if (event.kind === 'text') chunks.push(event.value);

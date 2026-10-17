@@ -32,6 +32,7 @@
     "smoke:g97-native": "npm run build && node scripts/smoke-combined-package.mjs --native",
     "smoke:g125-native": "npm run build && node scripts/smoke-g125-v2032.mjs",
     "smoke:g130-native": "npm run build && node scripts/smoke-g130-v2032.mjs",
+    "smoke:g149-vertical": "npm run build && node scripts/smoke-g149-vertical.mjs",
     "smoke:actual-package": "npm run build && node scripts/smoke-distributed-entrypoint.mjs",
     "smoke:actual-package-native": "npm run build && node scripts/smoke-distributed-entrypoint.mjs --native",
     "smoke:g99-page": "npm run build && node scripts/smoke-combined-page.mjs",

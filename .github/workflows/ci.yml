@@ -145,6 +145,24 @@ jobs:
       - name: Real installed CLI single-tarball DOM/RPC/SSE and durable receipts after restart
         run: npm run smoke:g130-native
 
+  g149-official-v2032-integrated-readonly-turn:
+    name: G149 actual CLI 2.0.32 model session to Chromium/RPC/SSE and host read-only tool before ACK
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: npx playwright install --with-deps --only-shell chromium
+      - name: Denied host permission and forged official session fail before file reads
+        run: npm run build && node --test scripts/test-g149-vertical-host.mjs
+      - name: Actual official same-turn model Chromium DOM RPC host fsync tool and SSE
+        run: npm run smoke:g149-vertical
+
   windows-progressive-relay:
     name: Windows bounded RPC progress (no Chromium)
     runs-on: windows-latest
