@@ -186,6 +186,8 @@ jobs:
         run: node --test dist/test/durable-operation-fence.test.js
       - name: G145 serialized read-only fixture refuses non-Linux file execution
         run: node --test dist/test/offline-tool-turn-orchestrator.test.js
+      - name: G152 independent personal provider opt-in, verified capabilities, source isolation
+        run: node --test dist/test/personal-provider-activation.test.js dist/test/provider-policy.test.js dist/test/adapter-contract.test.js
       - name: G141 G135 Windows file-read closed + untrusted proposals (no Windows Git sandbox claim)
         run: node --test '--test-name-pattern=file.read opens real regular Linux inode|malformed provenance/unknown or mutable actions' dist/test/offline-readonly-tool-executor.test.js
       - name: G141 G138 bounded JSON hostile input and G139 authority snapshots

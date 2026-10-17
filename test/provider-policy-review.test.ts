@@ -16,18 +16,17 @@ function run(change?: (policy: any) => void) {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
-test('all five official sources remain marked disabled pending verified authorization', () => {
+test('all five reviewed sources remain individually disabled pending a usable transport', () => {
   const result = run();
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /0\/5 permitted/);
+  assert.match(result.stdout, /0\/5 user-enabled/);
 });
 
-test('a changed terms status cannot implicitly activate commercial web automation', () => {
+test('an individual user opt-in cannot bypass source integrity or provider restrictions', () => {
   for (const change of [
-    (p: any) => { p.commercialAutomationEnabled = true; },
     (p: any) => { p.providers[0].approved = true; },
-    (p: any) => { p.providers[1].decision = 'permitted'; },
     (p: any) => { p.providers[2].source = 'https://example.org/fake-terms'; },
+    (p: any) => { p.providers[2].source = p.providers[0].source; },
     (p: any) => { p.providers[3].source = 'https://user:pass@qwen.ai/termsservice'; },
     (p: any) => { p.providers.pop(); },
     (p: any) => { p.providers[0].finding = ''; },
@@ -36,4 +35,13 @@ test('a changed terms status cannot implicitly activate commercial web automatio
     assert.notEqual(result.status, 0, 'unreviewed commercial access must fail closed');
     assert.match(result.stderr, /Provider policy gate/);
   }
+});
+
+test('individually reviewed opt-in is a valid policy file, not a live provider claim', () => {
+  const result = run((p) => {
+    p.providers[2].decision = 'permitted';
+    p.providers[2].approved = true;
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /1\/5 user-enabled \(not evidence/);
 });

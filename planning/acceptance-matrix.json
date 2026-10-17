@@ -5,7 +5,7 @@
     "L0": "absent: no implementation or verifiable artifact",
     "L1": "implemented: offline tests and/or verifiable repository artifacts; no installed-surface proof",
     "L2": "verified on the real installed surface in CI at an exact SHA (installed OpenCode CLI 2.0.29, real headless Chromium, package lifecycle)",
-    "L3": "production-accepted: a real authorized external interaction only (commercial provider live or official Desktop Electron E2E); never inferred from lower levels"
+    "L3": "production-accepted: a real user-initiated web-provider session with verified responses or official Desktop Electron E2E; never inferred from offline fixtures or lower levels"
   },
   "stories": [
     { "id": "US-E0-01", "level": "L1", "evidence": "docs/ADR 0001-0068 decision log + docs/ARCHITECTURE.md; no automated link-validation test" },
@@ -64,5 +64,5 @@
     { "id": "US-E8-06", "level": "L1", "evidence": "check:compat refuses unknown versions/products; upstream fixture-break simulation absent" }
   ],
   "accepted": [],
-  "gate": "L3 production acceptance requires a real authorized external interaction proven at the exact level (commercial provider live or official Desktop Electron E2E); never inferred from lower-level evidence. Enforced at 0/54."
+  "gate": "L3 acceptance requires verified real user-initiated web-provider conversations or official Desktop Electron E2E at the exact level; no fixture or lower-level evidence may count. Enforced at 0/54."
 }

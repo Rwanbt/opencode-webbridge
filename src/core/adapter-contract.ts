@@ -3,9 +3,9 @@
  *
  * An adapter must declare capabilities explicitly, but a declaration is only a
  * claim. Activation additionally requires independently verified capabilities
- * and an explicit commercial authorization decision backed by an opaque
- * evidence reference. Unknown or unverified capabilities are treated as
- * unsupported (fail-closed).
+ * and explicit user opt-in. Provider-specific policy status is considered
+ * separately; a global business/commercial approval is not an activation
+ * prerequisite. Unknown or unverified capabilities fail closed.
  *
  * Every input is read through own-property descriptors only: getters, proxies,
  * toJSON hooks and unexpected prototypes are rejected WITHOUT being executed.
@@ -54,7 +54,7 @@ export interface AdapterContract {
   readonly approved: boolean;
   /** Missing or null: structurally valid, but the adapter is never usable. */
   readonly verifiedCapabilities?: VerifiedCapabilities | null;
-  /** Missing: no commercial automation proof, so the adapter is never usable. */
+  /** Legacy review metadata only; not a blanket activation prerequisite. */
   readonly commercialAuthorization?: CommercialAuthorization;
 }
 
@@ -241,8 +241,7 @@ function parseContract(contract: unknown): ParseResult {
     authorizationEvidence = evidenceRef as string | null;
   }
 
-  if (approved && (policyDecision !== 'permitted' ||
-    authorizationStatus !== 'permitted' || authorizationEvidence === null)) {
+  if (approved && policyDecision !== 'permitted') {
     return { ok: false, reason: 'incoherent-approval' };
   }
 
@@ -259,18 +258,16 @@ export function validateAdapterContract(c: unknown): ContractResult {
 
 /**
  * An adapter is usable only with declared AND verified core capabilities, an
- * approved and permitted policy, and an explicit commercial authorization
- * backed by an opaque evidence reference. Any missing proof — or any hostile
- * input — fails closed without being executed.
+ * user-enabled and permitted individual policy state. No unrelated commercial
+ * approval field can substitute for verified technical capability. Any missing
+ * proof or hostile input fails closed without execution.
  */
 export function isAdapterUsable(c: AdapterContract): boolean {
   const parsed = parseContract(c);
   if (!parsed.ok) return false;
-  const { declared, verified, policyDecision, approved, authorizationStatus, authorizationEvidence } = parsed.value;
+  const { declared, verified, policyDecision, approved } = parsed.value;
   return approved === true &&
     policyDecision === 'permitted' &&
-    authorizationStatus === 'permitted' &&
-    authorizationEvidence !== null &&
     verified !== null &&
     CORE_CAPABILITY_FIELDS.every((field) =>
       declared.get(field) === 'supported' && verified.get(field) === 'supported');

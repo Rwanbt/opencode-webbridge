@@ -70,7 +70,7 @@ test('g134: provider/origin cross mismatch and unknown providers are refused', (
   reject('unknown-provider', fixture('not-a-provider', 'https://chatgpt.com'));
 });
 
-test('g134: an approval without authorization or a permitted policy is incoherent', () => {
+test('g134: an opt-in without a permitted individual policy is incoherent', () => {
   const noAuthorization = fixture('chatgpt', 'https://chatgpt.com');
   noAuthorization.approved = true;
   reject('incoherent-approval', noAuthorization);
@@ -229,7 +229,7 @@ test('g134: declared, verified and commercial authorization stay distinct', () =
   reject('unexpected-field:token', tokenSmuggle);
 });
 
-test('g134: usable only with declared+verified capabilities, approval and authorization evidence', () => {
+test('g134: usable only with declared+verified capabilities, opt-in and individual policy status', () => {
   const full = fixture('qwen', 'https://chat.qwen.ai');
   full.approved = true;
   full.policyDecision = 'permitted';
@@ -247,10 +247,12 @@ test('g134: usable only with declared+verified capabilities, approval and author
 
   const noAuthorization = { ...full };
   delete (noAuthorization as AnyRecord).commercialAuthorization;
-  assert.equal(isAdapterUsable(noAuthorization as never), false);
+  assert.equal(isAdapterUsable(noAuthorization as never), true,
+    'a separate generic commercial grant is not an adapter prerequisite');
 
   const notPermitted = { ...full, commercialAuthorization: { status: 'unverified', evidenceRef: null } };
-  assert.equal(isAdapterUsable(notPermitted as never), false);
+  assert.equal(isAdapterUsable(notPermitted as never), true,
+    'legacy review metadata must not override a distinct permitted individual policy');
 
   const notApproved = { ...full, approved: false };
   assert.equal(isAdapterUsable(notApproved as never), false);
