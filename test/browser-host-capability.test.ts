@@ -77,7 +77,8 @@ test('host consent and both OpenCode permission actions are required before clai
 test('host registration cannot change while bound; revocation blocks data, still permits cleanup', async () => {
   const host = fixture();
   await host.gate.claim(binding);
-  assert.deepEqual(host.calls, ['browser:*', 'webbridge_browser:qwen:tab_one']);
+  assert.deepEqual(host.calls, ['browser:*', 'webbridge_browser:qwen:tab_one',
+    'browser:*', 'webbridge_browser:qwen:tab_one']);
   assert.throws(() => host.gate.register({ binding, port: new FakeBrowserPort(), consented: async () => true }), /already registered/);
   assert.throws(host.unregister, /release browser binding/);
   await host.gate.submit(binding, { turnID: 'turn_one', prompt: 'hello' });
@@ -86,7 +87,7 @@ test('host registration cannot change while bound; revocation blocks data, still
     { seq: 2, kind: 'finished', turnID: 'turn_one' },
   ]);
   // Submit and result each recheck both native permission actions after await.
-  assert.equal(host.calls.length, 10);
+  assert.equal(host.calls.length, 12);
   host.revoke();
   await assert.rejects(host.gate.events(binding, 'turn_one', 0), /consent absent/);
   await assert.rejects(host.gate.submit(binding, { turnID: 'turn_two', prompt: 'no' }), /consent absent/);
@@ -114,6 +115,31 @@ test('revocation during permission prompt prevents claim without invoking driver
   resume();
   await assert.rejects(claiming, /consent absent/);
   await assert.rejects(port.submit(binding, { turnID: 'turn_one', prompt: 'blocked' }), /not owned/);
+  unregister();
+});
+
+test('revocation during awaited host claim cannot leave a live unauthorized browser binding', async () => {
+  let entered!: () => void;
+  let releaseClaim!: () => void;
+  const enteredDriver = new Promise<void>((resolve) => { entered = resolve; });
+  const pending = new Promise<void>((resolve) => { releaseClaim = resolve; });
+  const real = new FakeBrowserPort();
+  let consent = true;
+  const gate = new BrowserHostCapability({ assert: async () => {} });
+  const unregister = gate.register({ binding, consented: async () => consent, port: {
+    claim: async (id) => { await real.claim(id); entered(); await pending; },
+    submit: (id, request) => real.submit(id, request),
+    events: (id, turnID, cursor) => real.events(id, turnID, cursor),
+    cancel: (id, turnID) => real.cancel(id, turnID),
+    release: (id) => real.release(id),
+  } });
+  const operation = gate.claim(binding);
+  await enteredDriver;
+  consent = false;
+  releaseClaim();
+  await assert.rejects(operation, /consent absent|revoked/);
+  await assert.rejects(real.submit(binding, { turnID: 'stolen', prompt: 'forbidden' }), /not owned/);
+  await assert.rejects(gate.submit(binding, { turnID: 'blocked', prompt: 'forbidden' }), /unavailable/);
   unregister();
 });
 

@@ -18,6 +18,7 @@ export class BrowserHostCapability implements BrowserPort {
   private host?: BrowserHostRegistration;
   private pending = false;
   private active = false;
+  private quarantined = false;
   // Local tombstone: a dispatched turn is never automatically sent twice,
   // including when its acknowledgement becomes uncertain. Not durable.
   private readonly dispatched = new Set<string>();
@@ -32,7 +33,7 @@ export class BrowserHostCapability implements BrowserPort {
     const entry = Object.freeze({ ...host, binding: Object.freeze({ ...host.binding }) });
     this.host = entry;
     return () => {
-      if (this.pending || this.active) throw new Error('release browser binding before unregister');
+      if (this.pending || this.active || this.quarantined) throw new Error('release browser binding before unregister');
       if (this.host !== entry) throw new Error('browser host changed');
       this.host = undefined;
     };
@@ -40,7 +41,7 @@ export class BrowserHostCapability implements BrowserPort {
 
   private owned(binding: TabClaim, active: boolean): BrowserHostRegistration {
     const host = this.host;
-    if (!host || (active && !this.active) || Object.keys(host.binding).some((key) =>
+    if (!host || this.quarantined || (active && !this.active) || Object.keys(host.binding).some((key) =>
       host.binding[key as keyof TabClaim] !== binding[key as keyof TabClaim])) {
       throw new Error('browser host unavailable or owner mismatch');
     }
@@ -59,13 +60,28 @@ export class BrowserHostCapability implements BrowserPort {
   }
 
   async claim(binding: TabClaim): Promise<void> {
-    if (this.pending || this.active) throw new Error('browser host claim already pending or active');
+    if (this.pending || this.active || this.quarantined) throw new Error('browser host claim already pending or active');
     const host = this.owned(binding, false);
     this.pending = true;
     try {
       await this.authorize(host);
       await host.port.claim(binding);
-      this.active = true;
+      // The driver can acquire ownership while permission/consent changes.
+      // Release the now-unauthorized binding instead of exposing a live host.
+      try {
+        await this.authorize(host);
+        this.owned(binding, false);
+        this.active = true;
+      } catch (error) {
+        this.quarantined = true;
+        try {
+          await host.port.release(binding);
+          this.quarantined = false;
+        } catch {
+          throw new Error('browser host claim cleanup uncertain: operator recovery required');
+        }
+        throw error;
+      }
     } finally {
       this.pending = false;
     }
