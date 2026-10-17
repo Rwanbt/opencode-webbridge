@@ -193,11 +193,18 @@ test('the next sequential fragment is admitted on resume', () => {
     { admit: true });
 });
 
+test('the first zero-index fragment is admitted when a fresh read has no checkpoint', () => {
+  assert.deepEqual(admitFragment({ streamPhase: 'streaming', lastConfirmedFragment: -1, seq: 0 }),
+    { admit: true });
+  assert.deepEqual(admitFragment({ streamPhase: 'streaming', lastConfirmedFragment: 0, seq: 0 }),
+    { admit: false, reason: 'duplicate' });
+});
+
 test('a gap in resumed fragments fails closed', () => {
   assert.deepEqual(admitFragment({ streamPhase: 'streaming', lastConfirmedFragment: 5, seq: 8 }),
     { admit: false, reason: 'gap' });
   assert.deepEqual(admitFragment({ streamPhase: 'streaming', lastConfirmedFragment: 5, seq: 0 }),
-    { admit: false, reason: 'invalid' });
+    { admit: false, reason: 'duplicate' });
   assert.deepEqual(admitFragment({ streamPhase: 'streaming', lastConfirmedFragment: 5, seq: 1.5 }),
     { admit: false, reason: 'invalid' });
 });

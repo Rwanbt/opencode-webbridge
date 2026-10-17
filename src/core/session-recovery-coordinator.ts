@@ -174,7 +174,7 @@ export function admitFragment(input: {
   readonly seq: number;
 }): FragmentAdmission {
   const { streamPhase, lastConfirmedFragment, seq } = input;
-  if (!Number.isSafeInteger(seq) || seq < 1 ||
+  if (!Number.isSafeInteger(seq) || seq < 0 ||
     !Number.isSafeInteger(lastConfirmedFragment) || lastConfirmedFragment < -1) {
     return { admit: false, reason: 'invalid' };
   }
