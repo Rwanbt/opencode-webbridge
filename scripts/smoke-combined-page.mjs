@@ -192,6 +192,9 @@ export async function runPageProof({ browser, localPage, nativeBin = cli,
           }
           if (interruptedScenario(scenario)) {
             const events = (await rpc('poll', { turnID, afterSeq: 0 })).events;
+            // Native CLI cancellation can race the model polling loop. Capture
+            // the actual installed RPC terminal even if SSE consumer stopped.
+            for (const event of events) await receipt?.acknowledge(event);
             if (error || !interrupted || !run.aborted || accepted !== 1 || progress !== 1 ||
               finished !== 0 || fake.requests() < 1 || fake.streamFrames() < 1 ||
               fake.completedStreams() !== 0 || run.stdout.includes(EXPECTED) ||

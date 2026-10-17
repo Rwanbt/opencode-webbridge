@@ -13,7 +13,7 @@ export const ARTIFACT = 'docs/patches/opencode-v2-4617210-browser-plugin-capabil
 export const EXPECTED = Object.freeze({
   [ARTIFACT]: '1f6a0137f29fc074eaf67b09c85b50c9d544b809b98463a167c324189e2e1f27',
   // G130 extends G125's exact G113 browser fixture with a G127 encrypted ACK sink.
-  'scripts/smoke-combined-page.mjs': '73f2877c5013b95e0b7cce01d2c0875f38d6570fcdf2665ab943e2696a94dc29',
+  'scripts/smoke-combined-page.mjs': 'c7b2b6e2e90e1fe6b8a344e850ed4abe756d0f133697841346afac5920c66e67',
   'fixtures/g97-combined-preview.mjs': '474d653b41c54c840125b04488ceb975022935ef409eb911cfa7f5a6481c5468',
   'scripts/offline-rpc-package.mjs': '65f5852028e85f8e1ea007030df5a07cfe872b5e691a0a4c7eedea6fa4142e6a',
 });
