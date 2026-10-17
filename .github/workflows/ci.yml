@@ -24,6 +24,8 @@ jobs:
       - run: npm run check:release
       - name: G119 prove exact G106 full patch and G113 standalone browser fixture on one SHA
         run: npm run check:g119
+      - name: D01/D02 execute pinned official Desktop 2.0.32 packaged IPC refusal
+        run: npm run check:d01d02
       - run: npm test
       - name: Deterministic offline package, upgrade, rollback and uninstall
         run: npm run preview:package
@@ -82,6 +84,21 @@ jobs:
       - name: Offline DOM progressive relay and uncertain interruption
         run: npm run smoke:dom-rpc
       - run: npm run smoke:page
+
+  official-v2-032-cli-plugin:
+    name: D01 official OpenCode 2.0.32 CLI packaged plugin model/RPC (no Electron)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install public official CLI exact 2.0.32 into isolated CI dependency tree
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - name: D01 native combined plugin model and RPC through official 2.0.32 CLI
+        run: npm run smoke:g97-native
 
   windows-progressive-relay:
     name: Windows bounded RPC progress (no Chromium)
