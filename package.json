@@ -17,6 +17,8 @@
     "check:backlog": "node scripts/check-backlog.mjs",
     "check:progress": "node scripts/check-progress.mjs",
     "check:policy": "node scripts/check-provider-policy.mjs",
+    "preview:package": "node scripts/offline-package-preview.mjs",
+    "smoke:package-native": "node scripts/offline-package-preview.mjs --native",
     "smoke:native": "npm run build && node scripts/smoke-native-provider.mjs",
     "smoke:browser": "npm run build && node scripts/smoke-native-provider.mjs --browser-fixture",
     "smoke:rpc": "npm run build && node scripts/smoke-rpc-relay.mjs",
