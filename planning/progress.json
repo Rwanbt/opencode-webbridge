@@ -35,18 +35,29 @@
     { "pr": 170, "sha": "e9a950f09a63a5da2aa48a7f76cb9c82c124f89e", "checks": 4, "scope": "offline-abort-partial" },
     { "pr": 171, "sha": "1b994503902d3ea05eedba50b4445a3740b47b0f", "checks": 4, "scope": "offline-witness-partial" },
     { "pr": 172, "sha": "eb0f09c9661c0a3598b098ef145605f58b2ba17e", "checks": 4, "scope": "native-cli-model-rpc-package-partial" },
-    { "pr": 173, "sha": "2d58e83fd72ba4fd415c2bd126fd99dd64557256", "checks": 4, "scope": "native-tunnel-operator-partial" }
+    { "pr": 173, "sha": "2d58e83fd72ba4fd415c2bd126fd99dd64557256", "checks": 4, "scope": "native-tunnel-operator-partial" },
+    { "pr": 174, "sha": "b4e312052e7eab9b6c8c31a72d43860278142b62", "checks": 4, "scope": "governance-partial" },
+    { "pr": 175, "sha": "2d2597f56a670996aa0a61a1d6c43342d3d453a8", "checks": 4, "scope": "offline-host-release-partial" },
+    { "pr": 176, "sha": "5af254a0c09dad55113848275fb6e03892478d02", "checks": 4, "scope": "desktop-preflight-partial" },
+    { "pr": 177, "sha": "e9d0389eba9aeb4e633b02e5e2f874b4854ffaaa", "checks": 4, "scope": "compliance-partial" },
+    { "pr": 178, "sha": "98bd8001fc71fbd5263af54d1c982b05b97d7606", "checks": 4, "scope": "native-cli-combined-package-partial" },
+    { "pr": 179, "sha": "65dd9ddae854866aa8a634a57b361aed7eb3f793", "checks": 4, "scope": "native-http-tunnel-partial" },
+    { "pr": 180, "sha": "5bee54e833e0733c2ca4ceafc29a8e9641e21fe6", "checks": 4, "scope": "native-cli-local-page-partial" },
+    { "pr": 181, "sha": "ca39c9f9a2a251f834043a67b540d14b8a4e272c", "checks": 4, "scope": "offline-tool-review-partial" },
+    { "pr": 182, "sha": "5929211bffb1c533eb7a789ca8cdb3ee20effb8d", "checks": 4, "scope": "native-cli-tab-uncertainty-partial" },
+    { "pr": 183, "sha": "7826fb37d872754d1d244c6edc4a885b15b64db6", "checks": 4, "scope": "native-read-live-partial" },
+    { "pr": 184, "sha": "b0e3257081a7b37f49aa826bc9f1f26246403c38", "checks": 4, "scope": "offline-provider-descriptors-partial" }
   ],
   "epicEvidence": [
-    { "id": "E0", "stories": 6, "verifiedPartialPRs": [159], "acceptedStories": 0, "criticalGap": "written approval or compliant provider transport" },
-    { "id": "E1", "stories": 6, "verifiedPartialPRs": [151, 168, 170, 172], "acceptedStories": 0, "criticalGap": "production model picker and provider runtime" },
-    { "id": "E2", "stories": 6, "verifiedPartialPRs": [148, 161, 169, 173], "acceptedStories": 0, "criticalGap": "trusted official Desktop attach principal and Electron E2E" },
-    { "id": "E3", "stories": 6, "verifiedPartialPRs": [151, 160, 168, 170, 172], "acceptedStories": 0, "criticalGap": "durable model session / tool calls with native effect authority" },
-    { "id": "E4", "stories": 6, "verifiedPartialPRs": [156, 158, 161, 165, 166, 169, 171, 173], "acceptedStories": 0, "criticalGap": "atomic Core-to-Chromium revocation and complete authority identity" },
-    { "id": "E5", "stories": 6, "verifiedPartialPRs": [154], "acceptedStories": 0, "criticalGap": "five verified contractually permitted live adapters" },
-    { "id": "E6", "stories": 6, "verifiedPartialPRs": [148, 150], "acceptedStories": 0, "criticalGap": "official Desktop GUI and settings E2E" },
-    { "id": "E7", "stories": 6, "verifiedPartialPRs": [157, 162], "acceptedStories": 0, "criticalGap": "native Git/terminal/subagent effects and trusted delegation" },
-    { "id": "E8", "stories": 6, "verifiedPartialPRs": [152, 155, 163, 164, 167, 172], "acceptedStories": 0, "criticalGap": "distributable native release and full acceptance matrix" }
+    { "id": "E0", "stories": 6, "verifiedPartialPRs": [159, 177], "acceptedStories": 0, "criticalGap": "written approval or compliant provider transport" },
+    { "id": "E1", "stories": 6, "verifiedPartialPRs": [151, 168, 170, 172, 178, 180, 182], "acceptedStories": 0, "criticalGap": "production model picker and provider runtime" },
+    { "id": "E2", "stories": 6, "verifiedPartialPRs": [148, 161, 169, 173, 176, 179, 183], "acceptedStories": 0, "criticalGap": "trusted official Desktop attach principal and Electron E2E" },
+    { "id": "E3", "stories": 6, "verifiedPartialPRs": [151, 160, 168, 170, 172, 180, 182], "acceptedStories": 0, "criticalGap": "durable model session / tool calls with native effect authority" },
+    { "id": "E4", "stories": 6, "verifiedPartialPRs": [156, 158, 161, 165, 166, 169, 171, 173, 175, 179, 183], "acceptedStories": 0, "criticalGap": "atomic Core-to-Chromium revocation and complete authority identity" },
+    { "id": "E5", "stories": 6, "verifiedPartialPRs": [154, 184], "acceptedStories": 0, "criticalGap": "five verified contractually permitted live adapters" },
+    { "id": "E6", "stories": 6, "verifiedPartialPRs": [148, 150, 176, 180], "acceptedStories": 0, "criticalGap": "official Desktop GUI and settings E2E" },
+    { "id": "E7", "stories": 6, "verifiedPartialPRs": [157, 162, 181], "acceptedStories": 0, "criticalGap": "native Git/terminal/subagent effects and trusted delegation" },
+    { "id": "E8", "stories": 6, "verifiedPartialPRs": [152, 155, 163, 164, 167, 172, 174, 176, 178, 180, 182, 184], "acceptedStories": 0, "criticalGap": "distributable native release and full acceptance matrix" }
   ],
   "blockers": ["unattested Desktop attach principal", "non-atomic Core revocation to Chromium effect", "durable post-crash uncertain effects", "native Git/terminal/subagents", "unverified commercial provider permission", "missing official Electron E2E"]
 }

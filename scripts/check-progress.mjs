@@ -25,7 +25,22 @@ ensure(Array.isArray(a.commercialProvidersOperational) && a.commercialProvidersO
 for (const name of ['nativeDesktopElectronE2E', 'atomicCoreChromiumRevocation', 'commercialAutomationAuthorized', 'webbridgeWritesEnabled'])
   ensure(a[name] === false, `unsafe production gate ${name}`);
 const firstPR = 142;
-const lastVerifiedPR = 173;
+const lastVerifiedPR = 184;
+// Independently transcribed from successful exact-SHA GitHub CI runs on 2026-10-17.
+// This static lock prevents local evidence substitution; it does not query GitHub.
+const lockedRecentHeads = new Map([
+  [174, 'b4e312052e7eab9b6c8c31a72d43860278142b62'],
+  [175, '2d2597f56a670996aa0a61a1d6c43342d3d453a8'],
+  [176, '5af254a0c09dad55113848275fb6e03892478d02'],
+  [177, 'e9d0389eba9aeb4e633b02e5e2f874b4854ffaaa'],
+  [178, '98bd8001fc71fbd5263af54d1c982b05b97d7606'],
+  [179, '65dd9ddae854866aa8a634a57b361aed7eb3f793'],
+  [180, '5bee54e833e0733c2ca4ceafc29a8e9641e21fe6'],
+  [181, 'ca39c9f9a2a251f834043a67b540d14b8a4e272c'],
+  [182, '5929211bffb1c533eb7a789ca8cdb3ee20effb8d'],
+  [183, '7826fb37d872754d1d244c6edc4a885b15b64db6'],
+  [184, 'b0e3257081a7b37f49aa826bc9f1f26246403c38'],
+]);
 ensure(Array.isArray(progress.evidence) && progress.evidence.length === lastVerifiedPR - firstPR + 1,
   'unsupported evidence count');
 const ids = new Set();
@@ -33,6 +48,7 @@ for (const e of progress.evidence) {
   ensure(Number.isInteger(e.pr) && e.pr >= firstPR && e.pr <= lastVerifiedPR && !ids.has(e.pr), 'duplicate/unknown PR');
   ids.add(e.pr);
   ensure(/^[a-f\d]{40}$/.test(e.sha), 'invalid commit SHA');
+  if (lockedRecentHeads.has(e.pr)) ensure(lockedRecentHeads.get(e.pr) === e.sha, 'recent exact-SHA evidence mismatch');
   ensure(e.checks === (e.pr <= 151 ? 6 : e.pr <= 167 ? 8 : 4), 'inexact check count');
   ensure(typeof e.scope === 'string' && e.scope.endsWith('-partial'), 'CI is not production acceptance');
 }
