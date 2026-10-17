@@ -1,6 +1,7 @@
 import { Plugin } from '@opencode/plugin';
 import type { TabClaim } from '../core/browser-port.js';
 import { RpcRelayPort } from '../core/rpc-relay-port.js';
+import { DurableRelayJournal } from '../core/durable-relay-journal.js';
 import { BrowserRelayRPC } from './relay-rpc-contract.js';
 
 type Input = { readonly secret: string; readonly sessionID: string; readonly tabID: string;
@@ -20,7 +21,10 @@ export default Plugin.define({
     if (!secret) throw new Error('missing local test relay capability');
     const binding = { sessionID: 'fixture-session', tabID: 'fixture-tab',
       providerID: 'qwen' as const, accountRef: 'fixture-account' };
-    const relay = new RpcRelayPort(secret);
+    const journalPath = process.env.WEBBRIDGE_RELAY_JOURNAL_DIR;
+    if (!journalPath) throw new Error('test relay requires an isolated journal directory');
+    const journal = DurableRelayJournal.open(journalPath, binding, secret);
+    const relay = new RpcRelayPort(secret, journal);
     await relay.claim(binding);
 
     // All four methods are test-only. Each checks the entire binding and secret.
@@ -29,7 +33,8 @@ export default Plugin.define({
       relay.check(input.secret, asClaim(input));
       return input;
     };
-    const registration = await ctx.rpc.register(BrowserRelayRPC, {
+    let registration;
+    try { registration = await ctx.rpc.register(BrowserRelayRPC, {
       submit: async (raw) => {
         const input = authorized(raw);
         await relay.submit(asClaim(input), { turnID: input.turnID!, prompt: input.prompt! });
@@ -51,7 +56,7 @@ export default Plugin.define({
         const text = events.find((event) => event.kind === 'text');
         return text?.kind === 'text' ? { finished: true, response: text.value } : { finished: false };
       },
-    });
-    return async () => { await registration.dispose(); await relay.release(binding); };
+    }); } catch (error) { journal.close(); throw error; }
+    return async () => { await registration.dispose(); await relay.release(binding); journal.close(); };
   },
 });

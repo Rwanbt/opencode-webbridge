@@ -51,6 +51,7 @@ function stop(child) {
 }
 
 const temp = await mkdtemp(join(tmpdir(), 'webbridge-g4-e2e-'));
+const journalDir = await mkdtemp(join(tmpdir(), 'webbridge-g6-journal-'));
 const port = await freePort();
 const serverURL = `http://127.0.0.1:${port}`;
 const headers = { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`,
@@ -106,6 +107,7 @@ try {
     OPENCODE_CONFIG_DIR: configDir, OPENCODE_DISABLE_PROJECT_CONFIG: 'true',
     OPENCODE_CONFIG_CONTENT: config, OPENCODE_SERVER_PASSWORD: password,
     WEBBRIDGE_RELAY_ENABLE: '1', WEBBRIDGE_RELAY_TOKEN: secret,
+    WEBBRIDGE_RELAY_JOURNAL_DIR: journalDir,
     WEBBRIDGE_FIXTURE_ENABLE: '1', WEBBRIDGE_FIXTURE_TOKEN: modelToken,
   });
 
@@ -193,4 +195,5 @@ try {
   if (browserCompanion) await browserCompanion.close();
   if (localPage) await localPage.close();
   await rm(temp, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
+  await rm(journalDir, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
 }

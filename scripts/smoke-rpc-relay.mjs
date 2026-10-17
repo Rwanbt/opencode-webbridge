@@ -1,7 +1,7 @@
 /** Smoke the actual OpenCode v2 plugin RPC endpoint with synthetic data only. */
 import { randomBytes } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -25,12 +25,15 @@ async function freePort() {
 }
 
 const tmp = await mkdtemp(join(tmpdir(), 'webbridge-rpc-fixture-'));
+// Never persist the journal inside the OpenCode workspace watched for reloads.
+const journalDir = await mkdtemp(join(tmpdir(), 'webbridge-rpc-journal-'));
 const secret = randomBytes(32).toString('hex');
 const password = randomBytes(32).toString('hex');
 const binding = { sessionID: 'fixture-session', tabID: 'fixture-tab', providerID: 'qwen', accountRef: 'fixture-account' };
 const port = await freePort();
 let server;
 let stderr = '';
+let stdout = '';
 try {
   const configDir = join(tmp, 'config');
   const pluginDir = join(tmp, 'plugin');
@@ -50,15 +53,16 @@ try {
     XDG_CACHE_HOME: join(tmp, 'xdg-cache'), XDG_STATE_HOME: join(tmp, 'xdg-state'),
     OPENCODE_CONFIG_DIR: configDir, OPENCODE_DISABLE_PROJECT_CONFIG: 'true',
     OPENCODE_CONFIG_CONTENT: config, WEBBRIDGE_RELAY_ENABLE: '1', WEBBRIDGE_RELAY_TOKEN: secret,
+    WEBBRIDGE_RELAY_JOURNAL_DIR: journalDir,
     OPENCODE_SERVER_PASSWORD: password,
   });
   const exe = binary();
-  server = spawn(exe, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], {
+  server = spawn(exe, ['serve', '--print-logs', '--log-level', 'debug', '--hostname', '127.0.0.1', '--port', String(port)], {
     cwd: tmp, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     shell: process.platform === 'win32' && /\.cmd$/i.test(exe),
   });
   server.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString('utf8')).slice(-6000); });
-  server.stdout.on('data', () => {});
+  server.stdout.on('data', (chunk) => { stdout = (stdout + chunk.toString('utf8')).slice(-12000); });
 
   const url = `http://127.0.0.1:${port}`;
   const auth = `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`;
@@ -77,8 +81,8 @@ try {
   async function rpc(method, input) {
     const response = await fetch(`${url}/api/rpc/webbridge-browser-fixture/${method}`, {
       method: 'POST', headers, body: JSON.stringify({ input: { ...binding, secret, ...input } }),
-      signal: AbortSignal.timeout(2500),
-    });
+      signal: AbortSignal.timeout(5_000),
+    }).catch((error) => { throw new Error(`RPC ${method}: ${String(error)}`); });
     const raw = await response.text();
     if (!response.ok) throw new Error(`RPC ${method} status ${response.status}: ${raw.slice(0,250)}`);
     return JSON.parse(raw).output;
@@ -101,9 +105,16 @@ try {
       result.finished !== true || result.response !== 'RPC_BROWSER_FIXTURE_OK') {
     throw new Error('native RPC relay returned incorrect state');
   }
+  const persisted = await readFile(join(journalDir, 'journal.json'), 'utf8');
+  if (!persisted.includes('"phase":"settled"') || persisted.includes('offline-only fixture prompt') ||
+      persisted.includes('RPC_BROWSER_FIXTURE_OK') || persisted.includes(secret)) {
+    throw new Error('native RPC relay journal absent, leaked data or not settled');
+  }
   console.log('G3 native OpenCode RPC relay: PASS (submit -> take once -> complete -> result)');
 } catch (error) {
-  console.error(`G3 native RPC relay: FAIL — ${String(error).replaceAll(secret, '[REDACTED]')}\n${stderr.slice(-900).replaceAll(secret, '[REDACTED]')}`);
+  const diag = `${stderr}\n${stdout}`.split(/\r?\n/)
+    .filter((line) => /error|warn|journal|plugin|rpc|fail|lock/i.test(line)).slice(-14).join('\n');
+  console.error(`G3 native RPC relay: FAIL — ${String(error).replaceAll(secret, '[REDACTED]')}\n${diag.slice(-2500).replaceAll(secret, '[REDACTED]').replaceAll(password, '[REDACTED]')}`);
   process.exitCode = 1;
 } finally {
   if (server) {
@@ -112,4 +123,5 @@ try {
     } else server.kill();
   }
   await rm(tmp, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
+  await rm(journalDir, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
 }
