@@ -71,6 +71,14 @@ export interface ProviderAdapter {
   abort(context: AdapterContext, turnID: string): Promise<'confirmed' | 'uncertain'>;
 }
 
+/** Snapshot a request before passing it across an adapter/plugin callback. */
+export function snapshotAdapterTurn(request: unknown): Readonly<TurnRequest> {
+  assertTextOnlyTurn(request);
+  const id = Object.getOwnPropertyDescriptor(request, 'turnID')!.value as string;
+  const prompt = Object.getOwnPropertyDescriptor(request, 'prompt')!.value as string;
+  return Object.freeze({ turnID: id, prompt });
+}
+
 /** Static policy cannot be overridden by a forged runtime gate or consent. */
 export function assessAdapter(context: AdapterContext, turnID: string): AdapterHealthCode {
   const { binding, gate, consent } = context;
@@ -103,12 +111,12 @@ export async function* authorizedAdapterEvents(
 ): AsyncIterable<AdapterProgress> {
   // Reject unsupported inputs before interpreting user-supplied fields or ever
   // reaching an adapter. A future policy approval must not bypass this gate.
-  assertTextOnlyTurn(request);
-  const health = assessAdapter(context, request.turnID);
+  const fixed = snapshotAdapterTurn(request);
+  const health = assessAdapter(context, fixed.turnID);
   if (adapter.id !== context.binding.providerID || health !== 'ready') {
     throw new Error(`adapter blocked: ${adapter.id !== context.binding.providerID ? 'account-mismatch' : health}`);
   }
-  yield* validatedAdapterProgress(adapter.execute(context, request), request.turnID);
+  yield* validatedAdapterProgress(adapter.execute(context, fixed), fixed.turnID);
 }
 
 /** A terminal result must not be exposed before the producer closes cleanly. */

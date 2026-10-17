@@ -71,6 +71,34 @@ test('authorized adapter wrapper never calls a provider on an unresolved policy'
   assert.equal(called, 0);
 });
 
+test('adapter request is detached and immutable before it reaches provider execution', async () => {
+  const request = { turnID: 'turn1', prompt: 'original input' };
+  let adapterCalls = 0;
+  const fake = {
+    id: 'qwen' as const,
+    async inspect() { return 'ready' as const; },
+    async *execute(_ctx: AdapterContext, input: typeof request) {
+      adapterCalls++;
+      assert.notStrictEqual(input, request);
+      assert.equal(Object.isFrozen(input), true);
+      request.prompt = 'substituted private prompt';
+      request.turnID = 'other-turn';
+      assert.equal(input.prompt, 'original input');
+      assert.equal(input.turnID, 'turn1');
+      yield event('complete', 1, 'safe');
+    },
+    async abort() { return 'uncertain' as const; },
+  };
+  // The provider policy itself remains blocked. This exercises the reusable
+  // detached-request preflight independently of commercial policy approval.
+  const { snapshotAdapterTurn } = await import('../src/core/provider-adapter-contract.js');
+  const safe = snapshotAdapterTurn(request);
+  const outputs: AdapterProgress[] = [];
+  for await (const item of fake.execute(context, safe)) outputs.push(item);
+  assert.equal(adapterCalls, 1);
+  assert.equal(outputs.length, 1);
+});
+
 test('an unknown media field or accessor is rejected before reaching even a blocked adapter', async () => {
   let executions = 0;
   const adapter = {
