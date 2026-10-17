@@ -11,6 +11,8 @@ export interface FixtureServer {
   readonly requests: () => number;
   /** Number of body deltas emitted on the fixture SSE wire. */
   readonly streamFrames: () => number;
+  /** Counts normal wire-level [DONE] terminators; destroyed partial SSE is not success. */
+  readonly completedStreams: () => number;
   readonly close: () => Promise<void>;
 }
 
@@ -28,6 +30,7 @@ export async function openFixtureServer(options: FixtureServerOptions = {}): Pro
   }
   let requests = 0;
   let streamFrames = 0;
+  let completedStreams = 0;
   const server: Server = createServer((req, res) => {
     if (options.token !== undefined) {
       const provided = req.headers.authorization ?? '';
@@ -116,6 +119,7 @@ export async function openFixtureServer(options: FixtureServerOptions = {}): Pro
         send({ id, object: 'chat.completion.chunk', created: 0, model: FIXTURE_MODEL,
           choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
         res.end('data: [DONE]\n\n');
+        completedStreams++;
       } catch {
         // Once an SSE body started, reporting 200 + [DONE] would lie about an
         // uncertain browser stream. Terminate without success or content leak.
@@ -135,6 +139,7 @@ export async function openFixtureServer(options: FixtureServerOptions = {}): Pro
     baseURL: `http://127.0.0.1:${address.port}/v1`,
     requests: () => requests,
     streamFrames: () => streamFrames,
+    completedStreams: () => completedStreams,
     close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
 }

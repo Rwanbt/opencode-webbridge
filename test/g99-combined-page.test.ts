@@ -23,7 +23,7 @@ test('G99 installed plugin one-turn page RPC denies forged scope, replay, cursor
         registered.set(contract.id, handlers);
         assert.deepEqual(Object.keys(contract.methods),
           contract.id === 'webbridge-g99-page'
-            ? ['submit', 'take', 'progress', 'complete', 'poll'] : ['challenge']);
+            ? ['submit', 'take', 'progress', 'complete', 'uncertain', 'poll'] : ['challenge']);
         return { dispose: () => { disposed++; } };
       } },
       provider: { transform: async (edit: (editor: { add(value: unknown): void }) => void) => {

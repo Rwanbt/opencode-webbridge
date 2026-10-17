@@ -19,7 +19,7 @@ export function receiptText(secret, nonce) {
   }
   return marker + '_' + createHmac('sha256', secret).update(nonce).digest('hex').slice(0, 24) + '_OK';
 }
-export function runCLI(executable, args, env, cwd) {
+export function runCLI(executable, args, env, cwd, { signal, timeoutMs = 50_000 } = {}) {
   return new Promise((resolveRun, reject) => {
     const child = spawn(executable, args, { cwd, env, windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -32,9 +32,16 @@ export function runCLI(executable, args, env, cwd) {
       if (stdout.length > 120_000) { overflow = true; child.kill(); }
     });
     child.stderr.on('data', (data) => { stderr = (stderr + data.toString('utf8')).slice(-1000); });
-    const timer = setTimeout(() => child.kill(), 50_000);
-    child.once('error', (error) => { clearTimeout(timer); reject(error); });
-    child.once('close', (code) => { clearTimeout(timer); resolveRun({ code, stdout, stderr, overflow }); });
+    const stop = () => { if (child.exitCode === null) child.kill(); };
+    signal?.addEventListener('abort', stop, { once: true });
+    if (signal?.aborted) stop();
+    const timer = setTimeout(stop, timeoutMs);
+    child.once('error', (error) => { clearTimeout(timer); signal?.removeEventListener('abort', stop); reject(error); });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', stop);
+      resolveRun({ code, stdout, stderr, overflow, aborted: signal?.aborted ?? false });
+    });
   });
 }
 

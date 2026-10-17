@@ -17,12 +17,13 @@ const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 const fresh = () => randomBytes(32).toString('hex');
 
 /** The two native CLI profile runs share ONE browser and local page server. */
-export async function runPageProof({ browser, localPage, nativeBin = cli }) {
+export async function runPageProof({ browser, localPage, nativeBin = cli,
+  adversarialScenario } = {}) {
   if (!existsSync(nativeBin)) throw new Error('pinned local official CLI missing');
   const { openFixtureServer } = await import(pathToFileURL(join(dist, 'fixture-inference.js')).href);
   const { submitLocalPageTurn } = await import(pathToFileURL(join(dist, 'local-browser-companion.js')).href);
   const pageBridge = {
-    async prepare({ version }) {
+    async prepare({ version, scenario }) {
       const token = fresh();
       let connection;
       let companion;
@@ -31,6 +32,8 @@ export async function runPageProof({ browser, localPage, nativeBin = cli }) {
       let accepted = 0;
       let progress = 0;
       let finished = 0;
+      let interrupted = false;
+      const cancellation = new AbortController();
       let turnStarted;
       const chunks = [];
       const turnID = randomBytes(16).toString('hex');
@@ -103,7 +106,35 @@ export async function runPageProof({ browser, localPage, nativeBin = cli }) {
                   const acknowledgment = await rpc('progress', { turnID, value, seq });
                   if (acknowledgment.accepted !== true) throw new Error('G99 RPC progress rejected');
                   progress++;
+                  if (scenario === 'tab-change' && seq === 1) {
+                    // Confirm the *real* initial SSE fragment has left the
+                    // loopback model before intentionally losing the tab.
+                    for (let i = 0; i < 35 && fake.streamFrames() < 1; i++) await delay(40);
+                    if (fake.streamFrames() < 1) throw new Error('G100 pre-fault SSE was never emitted');
+                    // Genuine Chromium tab navigation after ONE accepted DOM fragment.
+                    await browser.page.goto('about:blank', { waitUntil: 'load', timeout: 3000 });
+                    if (browser.page.url() !== 'about:blank')
+                      throw new Error('G100 tab never changed');
+                    const uncertain = await rpc('uncertain', { turnID, reason: 'tab-changed' });
+                    if (uncertain.accepted !== true) throw new Error('G100 native uncertainty not committed');
+                    interrupted = true;
+                    // The installed RPC MUST reject late writes and forged success.
+                    for (const [method, input] of [
+                      ['progress', { turnID, seq: 2, value: 'forged' }],
+                      ['complete', { turnID, response: EXPECTED }],
+                      ['submit', { turnID: randomBytes(16).toString('hex'), prompt: PROMPT }],
+                      ['uncertain', { turnID, reason: 'tab-changed' }],
+                    ]) {
+                      let denied = false;
+                      try { await rpc(method, input); } catch { denied = true; }
+                      if (!denied) throw new Error('G100 post-tab-change ' + method + ' was accepted');
+                    }
+                    // Cancel CLI deliberately: never wait for a 50s natural hang.
+                    cancellation.abort();
+                    throw new Error('G100 injected tab-change uncertainty');
+                  }
                 });
+              if (scenario === 'tab-change') throw new Error('G100 page unexpectedly completed after tab switch');
               if (answer !== EXPECTED) throw new Error('G99 real DOM answer mismatch');
               const done = await rpc('complete', { turnID, response: answer });
               if (done.accepted !== true) throw new Error('G99 RPC complete rejected');
@@ -111,10 +142,33 @@ export async function runPageProof({ browser, localPage, nativeBin = cli }) {
               return;
             }
             throw new Error('G99 native turn never reached browser');
-          })().catch((cause) => { error = cause; });
+          })().catch((cause) => {
+            if (scenario === 'tab-change' && interrupted &&
+              String(cause).includes('G100 injected tab-change uncertainty')) return;
+            error = cause;
+            cancellation.abort();
+          });
           const run = await runCLI(executable, ['run', '--server', url, '--model',
-            'webbridge-fixture/webbridge-native-fixture', '--format', 'json', PROMPT], env, temp);
+            'webbridge-fixture/webbridge-native-fixture', '--format', 'json', PROMPT],
+          env, temp, { signal: cancellation.signal, timeoutMs: scenario === 'tab-change' ? 15_000 : 50_000 });
           await companion;
+          if (scenario === 'tab-change') {
+            const events = (await rpc('poll', { turnID, afterSeq: 0 })).events;
+            if (error || !interrupted || !run.aborted || accepted !== 1 || progress !== 1 ||
+              finished !== 0 || fake.requests() < 1 || fake.streamFrames() < 1 ||
+              fake.completedStreams() !== 0 || run.stdout.includes(EXPECTED) ||
+              events.length !== 2 || events[0]?.kind !== 'text' ||
+              events[1]?.kind !== 'cancelled' || events.some((item) => item.kind === 'finished')) {
+              throw new Error('G100 real tab-change fail-closed proof missing: ' + String(error?.message ?? '') +
+                ', interrupted=' + interrupted + ', CLIaborted=' + run.aborted +
+                ', RPCprogress=' + progress + ', SSE=' + fake.streamFrames() +
+                ', SSEfinished=' + fake.completedStreams() + ', events=' +
+                JSON.stringify(events.map((item) => item.kind)));
+            }
+            return { nativeTabChange: true, uncertain: true, noForgedTerminal: true,
+              cliCancelled: true, browserDOMProgress: progress, partialSSE: fake.streamFrames(),
+              sseDone: fake.completedStreams(), version };
+          }
           if (error || run.code !== 0 || run.overflow || !run.stdout.includes(EXPECTED) ||
             accepted !== 1 || progress !== 3 || finished !== 1 ||
             fake.requests() < 1 || fake.streamFrames() < 3) {
@@ -130,7 +184,8 @@ export async function runPageProof({ browser, localPage, nativeBin = cli }) {
       };
     },
   };
-  return exerciseRPCPackage({ descriptor, nativeBin, modelBridge: pageBridge });
+  return exerciseRPCPackage({ descriptor, nativeBin, modelBridge: pageBridge,
+    adversarialScenario });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -147,10 +202,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       /only explicit local test page URLs/);
     await assert.rejects(submitLocalPageTurn(browser.page, new URL('/admin', page.url).href, PROMPT),
       /only explicit local test page URLs/);
-    const result = await runPageProof({ browser, localPage: page });
+    const result = await runPageProof({ browser, localPage: page,
+      adversarialScenario: 'tab-change' });
     assert.equal(result.nativeChecks.length, 2);
     assert.ok(result.nativeChecks.every((item) => item.model?.pageDOM && item.model?.rpcProgress === 3));
-    console.log('G99 installed combined tarball -> LOCAL CHROMIUM DOM -> RPC -> CLI SSE PASS', JSON.stringify(result));
+    assert.equal(result.adversarial?.nativeTabChange, true);
+    assert.equal(result.adversarial?.noForgedTerminal, true);
+    assert.equal(result.adversarial?.sseDone, 0);
+    console.log('G100 combined native Chromium tab-change uncertainty PASS', JSON.stringify(result));
   } catch (error) {
     console.error('G99 LOCAL CHROMIUM proof FAIL:', String(error));
     process.exitCode = 1;

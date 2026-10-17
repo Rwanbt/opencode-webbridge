@@ -52,7 +52,7 @@ jobs:
       - run: npm run smoke:e2e
       - name: Install isolated headless Chromium
         run: npx playwright install --with-deps --only-shell chromium
-      - name: G99 one installed model+RPC plugin with shared real local Chromium DOM
+      - name: G99/G100 installed plugin local Chromium DOM and fail-closed tab-change
         run: npm run smoke:g99-page
       - run: npm run smoke:local-read
       - name: Offline DOM progressive relay and uncertain interruption

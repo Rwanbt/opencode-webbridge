@@ -27,11 +27,11 @@ async function freePort() {
   return port;
 }
 
-async function smokeNative(profile, env, temp, executable, version, modelBridge, descriptor) {
+async function smokeNative(profile, env, temp, executable, version, modelBridge, descriptor, scenario = 'normal') {
   const configDir = join(temp, 'native-g81');
   await mkdir(configDir, { recursive: true });
   const packageDir = join(profile, 'node_modules', descriptor.name);
-  const extra = modelBridge ? await modelBridge.prepare({ temp, env, version }) : undefined;
+  const extra = modelBridge ? await modelBridge.prepare({ temp, env, version, scenario }) : undefined;
   const config = JSON.stringify({ plugins: [pathToFileURL(packageDir).href,
     ...(extra?.modelPluginDir ? [pathToFileURL(extra.modelPluginDir).href] : [])] });
   await writeFile(join(configDir, 'opencode.json'), config);
@@ -128,7 +128,8 @@ async function smokeNative(profile, env, temp, executable, version, modelBridge,
   }
 }
 
-export async function exerciseRPCPackage({ nativeBin, modelBridge, descriptor = fixture } = {}) {
+export async function exerciseRPCPackage({ nativeBin, modelBridge, descriptor = fixture,
+  adversarialScenario } = {}) {
   const temp = await mkdtemp(join(tmpdir(), 'webbridge-g81-rpc-package-'));
   const env = isolatedEnvironment(temp);
   try {
@@ -155,11 +156,15 @@ export async function exerciseRPCPackage({ nativeBin, modelBridge, descriptor = 
     const upgrade = nativeBin ? await smokeNative(profile, env, temp, nativeBin, '0.0.2', modelBridge, descriptor) : undefined;
     await install(a, a.hash, env, temp, profile, descriptor);
     const rollback = nativeBin ? await smokeNative(profile, env, temp, nativeBin, '0.0.1', modelBridge, descriptor) : undefined;
+    const adversarial = nativeBin && adversarialScenario
+      ? await smokeNative(profile, env, temp, nativeBin, '0.0.1', modelBridge, descriptor, adversarialScenario)
+      : undefined;
     npmCLI(['uninstall', descriptor.name, '--prefix', profile, '--offline', '--ignore-scripts',
       '--no-save', '--no-package-lock', '--no-audit', '--no-fund'], env, temp);
     if (existsSync(join(profile, 'node_modules', descriptor.name))) throw new Error('RPC fixture uninstall failed');
     return { sha256: a.hash, upgraded: true, rollback: true, tamperDenied: denied,
-      uninstalled: true, native: Boolean(nativeBin), nativeChecks: [upgrade, rollback].filter(Boolean) };
+      uninstalled: true, native: Boolean(nativeBin), nativeChecks: [upgrade, rollback].filter(Boolean),
+      adversarial: adversarial?.model };
   } finally {
     await rm(temp, { recursive: true, force: true, maxRetries: 6, retryDelay: 250 });
   }
