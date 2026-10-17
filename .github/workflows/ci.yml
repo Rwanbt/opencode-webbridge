@@ -66,6 +66,10 @@ jobs:
       - run: npm run smoke:e2e
       - name: Install isolated headless Chromium
         run: npx playwright install --with-deps --only-shell chromium
+      - name: G156 attached ChatGPT legacy and Chat/Work DOM real Chromium offline observation
+        run: npm run build && node --test dist/test/g156-chatgpt-dom.test.js
+        env:
+          WEBBRIDGE_G156_BROWSER: '1'
       - name: G99/G100 installed plugin local Chromium DOM and fail-closed tab-change
         run: npm run smoke:g99-page
       - name: G113 installed plugin local Chromium actual page close is terminal uncertain
@@ -186,6 +190,8 @@ jobs:
         run: node --test dist/test/durable-operation-fence.test.js
       - name: G145 serialized read-only fixture refuses non-Linux file execution
         run: node --test dist/test/offline-tool-turn-orchestrator.test.js
+      - name: G156 origin attach and hostile read-only snapshot (Windows no Chromium)
+        run: node --test dist/test/g156-chatgpt-dom.test.js
       - name: G141 G135 Windows file-read closed + untrusted proposals (no Windows Git sandbox claim)
         run: node --test '--test-name-pattern=file.read opens real regular Linux inode|malformed provenance/unknown or mutable actions' dist/test/offline-readonly-tool-executor.test.js
       - name: G141 G138 bounded JSON hostile input and G139 authority snapshots
