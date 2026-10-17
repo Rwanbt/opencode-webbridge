@@ -19,6 +19,7 @@
     "check:policy": "node scripts/check-provider-policy.mjs",
     "check:compat": "node scripts/check-compatibility.mjs",
     "check:acceptance": "node scripts/check-acceptance.mjs",
+    "check:sbom": "node scripts/check-sbom.mjs",
     "diagnose:install": "node scripts/diagnose-install.mjs",
     "check:g119": "node scripts/check-g119-cross-stream.mjs",
     "preview:package": "node scripts/offline-package-preview.mjs",
