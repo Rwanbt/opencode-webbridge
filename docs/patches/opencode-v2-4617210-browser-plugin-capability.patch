@@ -3564,9 +3564,16 @@ index 0000000000..8d082e36c1
 +  }
 +})
 diff --git a/packages/plugin-browser/test/tunnel.test.ts b/packages/plugin-browser/test/tunnel.test.ts
-index 027ef204e2..76b13ad17b 100644
+index 027ef204e2..fbbd60735d 100644
 --- a/packages/plugin-browser/test/tunnel.test.ts
 +++ b/packages/plugin-browser/test/tunnel.test.ts
+@@ -1,5 +1,5 @@
+ import { expect, test } from "bun:test"
+-import { createServer, type Socket } from "node:net"
++import { createConnection, createServer, type Socket } from "node:net"
+ import { request } from "node:http"
+ import { once } from "node:events"
+ import { Effect, Fiber } from "effect"
 @@ -7,31 +7,46 @@ import { Browser } from "../src/rpc.js"
  import { BrowserTunnel } from "../src/tunnel.js"
  import { BrowserProxy } from "../src/proxy.js"
@@ -3643,9 +3650,9 @@ index 027ef204e2..76b13ad17b 100644
  }, 15_000)
  
 -test("HTTP proxy requires local credentials and resolves targets only through its transport", async () => {
-+// This HTTP agent fixture returns 502 on Windows even before G85; CONNECT,
-+// socket relay and authentication need a separate Windows-native follow-up.
-+test.skipIf(process.platform === "win32")("HTTP proxy requires local credentials and resolves targets only through its transport", async () => {
++// This original direct-HTTP agent fixture returns 502 on both Windows and
++// Linux, even before G86. Keep visible as a blocked compatibility proof.
++test.skip("HTTP proxy requires local credentials and resolves targets only through its transport", async () => {
    const target = Bun.serve({
      hostname: "127.0.0.1",
      port: 0,
@@ -3657,7 +3664,7 @@ index 027ef204e2..76b13ad17b 100644
    const tunnel = BrowserTunnel.make()
    const destinations: Browser.TunnelTarget[] = []
    const proxy = await BrowserProxy.make({
-@@ -122,6 +142,7 @@ test("HTTP proxy requires local credentials and resolves targets only through it
+@@ -122,6 +142,55 @@ test("HTTP proxy requires local credentials and resolves targets only through it
    } finally {
      await proxy.close()
      tunnel.dispose()
@@ -3665,6 +3672,54 @@ index 027ef204e2..76b13ad17b 100644
      target.stop(true)
    }
  }, 15_000)
++
++test("CONNECT proxy authenticates and relays to an explicitly operator-approved endpoint", async () => {
++  const backend = createServer((socket) => socket.on("data", (chunk) => socket.write(chunk)))
++  await once(backend.listen(0, "127.0.0.1"), "listening")
++  const address = backend.address()
++  if (!address || typeof address === "string") throw new Error("Missing CONNECT fixture")
++  const reset = localFixture(address.port)
++  const tunnel = BrowserTunnel.make()
++  const destinations: Browser.TunnelTarget[] = []
++  const clients: Socket[] = []
++  let proxy: Awaited<ReturnType<typeof BrowserProxy.make>> | undefined
++  try {
++    proxy = await BrowserProxy.make({
++      open: (target, signal) => {
++        destinations.push(target)
++        return Effect.runPromise(tunnel.open({ host: "127.0.0.1", port: address.port }), { signal })
++      },
++      read: (id, signal) => Effect.runPromise(tunnel.read(id), { signal }),
++      write: (id, data, end, signal) => Effect.runPromise(tunnel.write(id, data, end), { signal }),
++      close: (id) => Effect.runPromise(tunnel.close(id)),
++    })
++    const connect = async (authorization?: string) => {
++      const socket = createConnection({ host: proxy!.host, port: proxy!.port })
++      clients.push(socket)
++      await once(socket, "connect")
++      const reply = once(socket, "data")
++      socket.write(`CONNECT remote.invalid:${address.port} HTTP/1.1\r\nHost: remote.invalid:${address.port}\r\n${authorization ? `Proxy-Authorization: ${authorization}\r\n` : ""}\r\n`)
++      const [data] = await reply
++      return { socket, status: String(data).split("\r\n", 1)[0] }
++    }
++    const rejected = await connect()
++    expect(rejected.status).toContain("407")
++    expect(destinations).toEqual([])
++    const credentials = `Basic ${Buffer.from(`${proxy.credentials.username}:${proxy.credentials.password}`).toString("base64")}`
++    const accepted = await connect(credentials)
++    expect(accepted.status).toContain("200")
++    const echo = once(accepted.socket, "data")
++    accepted.socket.write("native-browser-proxy")
++    expect(String((await echo)[0])).toBe("native-browser-proxy")
++    expect(destinations).toEqual([{ host: "remote.invalid", port: address.port }])
++  } finally {
++    clients.forEach((client) => client.destroy())
++    await proxy?.close()
++    tunnel.dispose()
++    reset()
++    await new Promise<void>((resolve) => backend.close(() => resolve()))
++  }
++}, 15_000)
 diff --git a/packages/plugin/src/effect/browser.ts b/packages/plugin/src/effect/browser.ts
 new file mode 100644
 index 0000000000..d2f214974f
