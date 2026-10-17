@@ -46,6 +46,9 @@ export async function submitLocalPageTurn(page: Page, pageURL: string, prompt: s
     throw new Error('invalid local page progress');
   }
   if (onProgress) await onProgress(monotonicDelta('', partial));
+  // Explicit local fixture handshake: keep the first DOM state visible until it
+  // has been recorded by the native RPC, rather than racing a wall-clock timer.
+  await page.getByRole('button', { name: 'Continue fixture stream' }).click();
   await page.locator('[role="status"][data-state="finished"]').waitFor({ timeout: 6_000 });
   const output = await page.locator('[role="status"]').textContent();
   if (!output || !output.startsWith('WEBBRIDGE_LOCAL_PAGE_OK:') || output.length > 16_100) {

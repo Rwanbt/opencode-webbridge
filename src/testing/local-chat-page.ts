@@ -9,21 +9,31 @@ const HTML = `<!doctype html>
 <textarea id="prompt" aria-label="Prompt" maxlength="16000" required></textarea>
 <button type="submit">Send</button></form>
 <output id="response" role="status" data-state="idle"></output>
+<button id="continue" type="button" hidden>Continue fixture stream</button>
 <script>
+let pending = null;
 document.getElementById('chat').addEventListener('submit', (event) => {
   event.preventDefault();
   const prompt = document.getElementById('prompt').value;
   const response = document.getElementById('response');
   response.dataset.state = 'pending';
   response.textContent = '';
+  document.getElementById('continue').hidden = true;
+  pending = prompt;
   setTimeout(() => {
     response.textContent = 'WEBBRIDGE_LOCAL_PAGE_OK:' + prompt.slice(0, Math.max(1, Math.floor(prompt.length / 2)));
     response.dataset.state = 'streaming';
-    setTimeout(() => {
-      response.textContent = 'WEBBRIDGE_LOCAL_PAGE_OK:' + prompt;
-      response.dataset.state = 'finished';
-    }, 250);
+    document.getElementById('continue').hidden = false;
   }, 15);
+});
+document.getElementById('continue').addEventListener('click', () => {
+  if (pending === null) return;
+  const response = document.getElementById('response');
+  if (response.dataset.state !== 'streaming') return;
+  response.textContent = 'WEBBRIDGE_LOCAL_PAGE_OK:' + pending;
+  response.dataset.state = 'finished';
+  document.getElementById('continue').hidden = true;
+  pending = null;
 });
 </script>
 </body></html>`;
