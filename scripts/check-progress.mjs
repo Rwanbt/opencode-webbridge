@@ -24,16 +24,20 @@ ensure(Array.isArray(a.productionAcceptedStoryIDs) && a.productionAcceptedStoryI
 ensure(Array.isArray(a.commercialProvidersOperational) && a.commercialProvidersOperational.length === 0, 'commercial providers unproven');
 for (const name of ['nativeDesktopElectronE2E', 'atomicCoreChromiumRevocation', 'commercialAutomationAuthorized', 'webbridgeWritesEnabled'])
   ensure(a[name] === false, `unsafe production gate ${name}`);
-ensure(Array.isArray(progress.evidence) && progress.evidence.length === 21, 'unsupported evidence count');
+const firstPR = 142;
+const lastVerifiedPR = 173;
+ensure(Array.isArray(progress.evidence) && progress.evidence.length === lastVerifiedPR - firstPR + 1,
+  'unsupported evidence count');
 const ids = new Set();
 for (const e of progress.evidence) {
-  ensure(Number.isInteger(e.pr) && e.pr >= 142 && e.pr <= 162 && !ids.has(e.pr), 'duplicate/unknown PR');
+  ensure(Number.isInteger(e.pr) && e.pr >= firstPR && e.pr <= lastVerifiedPR && !ids.has(e.pr), 'duplicate/unknown PR');
   ids.add(e.pr);
   ensure(/^[a-f\d]{40}$/.test(e.sha), 'invalid commit SHA');
-  ensure(e.checks === (e.pr >= 152 ? 8 : 6), 'inexact check count');
+  ensure(e.checks === (e.pr <= 151 ? 6 : e.pr <= 167 ? 8 : 4), 'inexact check count');
   ensure(typeof e.scope === 'string' && e.scope.endsWith('-partial'), 'CI is not production acceptance');
 }
-ensure(Array.from({ length: 21 }, (_, index) => 142 + index).every((pr) => ids.has(pr)),
+ensure(Array.from({ length: lastVerifiedPR - firstPR + 1 }, (_, index) => firstPR + index)
+  .every((pr) => ids.has(pr)),
   'every newly claimed PR must be evidenced');
 ensure(Array.isArray(progress.epicEvidence) && progress.epicEvidence.length === backlog.epics.length,
   'missing epic evidence');
@@ -48,4 +52,4 @@ for (const [index, epic] of backlog.epics.entries()) {
     `${epic.id} missing critical release gap`);
 }
 ensure(Array.isArray(progress.blockers) && progress.blockers.length >= 5, 'missing release blockers');
-console.log('Progress guard PASS: 9 epics, 54 stories, 66 issues; 21 partial PRs; 0/5 commercial, 0 accepted');
+console.log(`Progress guard PASS: 9 epics, 54 stories, 66 issues; ${progress.evidence.length} partial PRs; 0/5 commercial, 0 accepted`);
