@@ -6,7 +6,7 @@
  * new ID. Reservation alone is NOT execution authorization.
  */
 
-export type OperationStatus = 'reserved' | 'consented' | 'executed' | 'failed' | 'cancelled' | 'uncertain';
+export type OperationStatus = 'reserved' | 'consented' | 'consuming' | 'executed' | 'failed' | 'cancelled' | 'uncertain';
 
 export interface Operation {
   readonly operationID: string;
@@ -28,14 +28,30 @@ export class ToolBroker {
   private readonly byHash = new Map<string, string>(); // proposalHash -> operationID
   private counter = 0;
 
-  constructor(private readonly capacity = 256) {}
+  constructor(private readonly capacity = 256) {
+    if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 10_000)
+      throw new Error('invalid tool broker capacity');
+  }
 
   /** Reserve an operation for a proposal. Reuses an existing reservation if the
    *  same proposal hash was already reserved (idempotent reservation). */
   reserve(input: {
     proposalHash: string; sessionID: string; agentID: string; turnID: string; workspaceID: string; now: number;
   }): ReserveResult {
-    const { proposalHash, sessionID, agentID, turnID, workspaceID, now } = input;
+    // Operation reservation is still not authorization. Snapshot hostile caller
+    // data before using it; never invoke a getter or toJSON on proposal output.
+    if (!input || typeof input !== 'object' || Object.getPrototypeOf(input) !== Object.prototype ||
+        Reflect.ownKeys(input).sort().join(',') !==
+          'agentID,now,proposalHash,sessionID,turnID,workspaceID') {
+      return { ok: false, reason: 'invalid-input' };
+    }
+    const data: Record<string, unknown> = {};
+    for (const key of ['proposalHash', 'sessionID', 'agentID', 'turnID', 'workspaceID', 'now']) {
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (!descriptor || !('value' in descriptor)) return { ok: false, reason: 'invalid-input' };
+      data[key] = descriptor.value;
+    }
+    const { proposalHash, sessionID, agentID, turnID, workspaceID, now } = data as typeof input;
     if (typeof proposalHash !== 'string' || proposalHash.length < 8 || proposalHash.length > 256) {
       return { ok: false, reason: 'invalid-input' };
     }
@@ -63,10 +79,10 @@ export class ToolBroker {
 
     this.counter += 1;
     const operationID = `op-${this.counter}-${proposalHash.slice(0, 8)}`;
-    const op: Operation = {
+    const op: Operation = Object.freeze({
       operationID, proposalHash, sessionID, agentID, turnID, workspaceID,
       status: 'reserved', createdAt: now,
-    };
+    }) as Operation;
     this.ops.set(operationID, op);
     this.byHash.set(proposalHash, operationID);
     return { ok: true, operation: op, reused: false };
@@ -79,17 +95,26 @@ export class ToolBroker {
   /** Mark an operation as consented (user approved). Does NOT execute. */
   consent(operationID: string, now: number): Operation | null {
     const op = this.ops.get(operationID);
-    if (!op || op.status !== 'reserved') return null;
-    const next: Operation = { ...op, status: 'consented' };
+    if (!op || op.status !== 'reserved' || !Number.isSafeInteger(now) || now < op.createdAt) return null;
+    const next: Operation = Object.freeze({ ...op, status: 'consented' });
     this.ops.set(operationID, next);
     return next;
   }
 
-  /** Mark executed only after the effect actually ran. */
-  executed(operationID: string): Operation | null {
+  /** Irreversibly claim before executing an effect; concurrent callers cannot run twice. */
+  consume(operationID: string): Operation | null {
     const op = this.ops.get(operationID);
     if (!op || op.status !== 'consented') return null;
-    const next: Operation = { ...op, status: 'executed' };
+    const next: Operation = Object.freeze({ ...op, status: 'consuming' });
+    this.ops.set(operationID, next);
+    return next;
+  }
+
+  /** Mark executed only after a previously consumed effect was verified. */
+  executed(operationID: string): Operation | null {
+    const op = this.ops.get(operationID);
+    if (!op || op.status !== 'consuming') return null;
+    const next: Operation = Object.freeze({ ...op, status: 'executed' });
     this.ops.set(operationID, next);
     return next;
   }
@@ -102,8 +127,8 @@ export class ToolBroker {
    */
   uncertain(operationID: string): Operation | null {
     const op = this.ops.get(operationID);
-    if (!op || op.status !== 'consented') return null;
-    const next: Operation = { ...op, status: 'uncertain' };
+    if (!op || op.status !== 'consuming') return null;
+    const next: Operation = Object.freeze({ ...op, status: 'uncertain' });
     this.ops.set(operationID, next);
     return next;
   }
@@ -112,8 +137,8 @@ export class ToolBroker {
   fail(operationID: string, status: 'failed' | 'cancelled'): Operation | null {
     const op = this.ops.get(operationID);
     if (!op) return null;
-    if (op.status === 'executed' || op.status === 'uncertain') return null; // terminal states are immutable
-    const next: Operation = { ...op, status };
+    if (op.status !== 'reserved' && op.status !== 'consented') return null; // consuming and terminal never relabel
+    const next: Operation = Object.freeze({ ...op, status });
     this.ops.set(operationID, next);
     return next;
   }

@@ -40,6 +40,8 @@ test('consent then execute transitions', () => {
   if (!r.ok) return;
   const c = b.consent(r.operation.operationID, 2);
   assert.ok(c && c.status === 'consented');
+  assert.equal(b.executed(r.operation.operationID), null);
+  assert.equal(b.consume(r.operation.operationID)?.status, 'consuming');
   const e = b.executed(r.operation.operationID);
   assert.ok(e && e.status === 'executed');
   // executed is terminal: cannot fail afterwards
@@ -92,6 +94,7 @@ test('a cross-session caller can never obtain another session receipt', () => {
   // The original reservation still executes only under its own scope.
   const c = b.consent(r1.operation.operationID, 2);
   assert.ok(c && c.status === 'consented' && c.sessionID === 's');
+  assert.ok(b.consume(r1.operation.operationID));
   const e = b.executed(r1.operation.operationID);
   assert.ok(e && e.status === 'executed');
 });
@@ -101,8 +104,10 @@ test('an uncertain operation is terminal: never relabelled, never retried', () =
   const r = b.reserve(base);
   assert.equal(r.ok, true);
   if (!r.ok) return;
-  assert.equal(b.uncertain(r.operation.operationID), null); // only from consented
+  assert.equal(b.uncertain(r.operation.operationID), null); // only from consuming
   b.consent(r.operation.operationID, 2);
+  assert.equal(b.uncertain(r.operation.operationID), null); // no effect started yet
+  b.consume(r.operation.operationID);
   const u = b.uncertain(r.operation.operationID);
   assert.ok(u && u.status === 'uncertain');
   // Terminal: never relabelled applied/not-applied, never re-consented, never re-run.
@@ -110,4 +115,70 @@ test('an uncertain operation is terminal: never relabelled, never retried', () =
   assert.equal(b.executed(r.operation.operationID), null);
   assert.equal(b.consent(r.operation.operationID, 3), null);
   assert.equal(b.uncertain(r.operation.operationID), null);
+});
+
+test('returned reservation and receipt objects cannot forge consent or retarget session', () => {
+  const b = new ToolBroker();
+  const r = b.reserve(base);
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const operationID = r.operation.operationID;
+  assert.equal(Object.isFrozen(r.operation), true);
+  assert.throws(() => { (r.operation as { status: string }).status = 'consented'; }, TypeError);
+  assert.throws(() => { (r.operation as { sessionID: string }).sessionID = 'intruder'; }, TypeError);
+  assert.equal(b.executed(operationID), null);
+  assert.equal(b.reserve({ ...base, sessionID: 'intruder' }).ok, false);
+  const consent = b.consent(operationID, 2);
+  assert.ok(consent);
+  assert.equal(Object.isFrozen(consent), true);
+  assert.throws(() => { (consent as { status: string }).status = 'executed'; }, TypeError);
+  assert.equal(b.get(operationID)?.status, 'consented');
+});
+
+test('fail and cancelled are terminal and no effect can be resurrected', () => {
+  const broker = new ToolBroker();
+  const r = broker.reserve(base);
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  assert.equal(broker.fail(r.operation.operationID, 'failed')?.status, 'failed');
+  assert.equal(broker.fail(r.operation.operationID, 'cancelled'), null);
+  assert.equal(broker.consent(r.operation.operationID, 3), null);
+});
+
+test('in-flight operation cannot be marked failed or consumed twice', () => {
+  const broker = new ToolBroker();
+  const r = broker.reserve(base);
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const id = r.operation.operationID;
+  assert.ok(broker.consent(id, 2));
+  assert.equal(broker.consume(id)?.status, 'consuming');
+  assert.equal(broker.consume(id), null);
+  assert.equal(broker.fail(id, 'failed'), null);
+  assert.equal(broker.executed(id)?.status, 'executed');
+  assert.equal(broker.consume(id), null);
+});
+
+test('reservation rejects accessor-based scope spoofing without invoking untrusted getters', () => {
+  const broker = new ToolBroker();
+  let called = 0;
+  const forged = Object.defineProperty({ ...base }, 'sessionID', {
+    enumerable: true, get() { called++; return 'intruder'; },
+  });
+  assert.deepEqual(broker.reserve(forged), { ok: false, reason: 'invalid-input' });
+  assert.equal(called, 0);
+  assert.equal(broker.size(), 0);
+  assert.equal(broker.reserve({ ...base, maliciousGrant: 'yes' } as never).ok, false);
+});
+
+test('invalid consent timestamp cannot bypass creation time or status', () => {
+  const broker = new ToolBroker();
+  const r = broker.reserve({ ...base, now: 500 });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  for (const now of [-1, 0, 499, NaN, Infinity]) {
+    assert.equal(broker.consent(r.operation.operationID, now), null);
+    assert.equal(broker.get(r.operation.operationID)?.status, 'reserved');
+  }
+  assert.ok(broker.consent(r.operation.operationID, 500));
 });

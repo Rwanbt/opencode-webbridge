@@ -61,6 +61,7 @@ test('staged flow: untrusted web output never executes directly', () => {
   assert.equal(isExpired(ctx, 1500), false);
   const consented = broker.consent(reserved.operation.operationID, 1500);
   assert.ok(consented && consented.status === 'consented');
+  assert.ok(broker.consume(reserved.operation.operationID));
   const executed = broker.executed(reserved.operation.operationID);
   assert.ok(executed && executed.status === 'executed');
 });

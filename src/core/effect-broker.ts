@@ -116,7 +116,12 @@ export async function runAuthorizedEffect<R>(
   if (!authority) return refused(operationID, 'no-native-authority');
 
   // Pre-execution attestation. Nothing has run yet: every failure is a refusal.
-  const pre = await authority.attest(ctx, 'pre-execution', now());
+  let pre: EffectAttestation | null;
+  try {
+    pre = await authority.attest(ctx, 'pre-execution', now());
+  } catch {
+    return refused(operationID, 'authority-attestation-missing');
+  }
   if (!pre) return refused(operationID, 'authority-attestation-missing');
   if (pre.authorityEpoch !== ctx.authorityEpoch || pre.policyRevision !== ctx.policyRevision) {
     return refused(operationID, 'authority-mismatch');
@@ -124,6 +129,9 @@ export async function runAuthorizedEffect<R>(
   // Revocation or expiry during the attestation await.
   if (!gate.isGranted()) return refused(operationID, 'consent-absent');
   if (isExpired(ctx, now())) return refused(operationID, 'expired');
+  // Synchronous irreversible consume BEFORE the first possible effect, including
+  // when two calls raced through async pre-execution authorization.
+  if (!broker.consume(operationID)) return refused(operationID, 'operation-not-consented');
 
   // From here on the effect may run; no path may claim success without a
   // confirmed post-execution recheck.
@@ -135,8 +143,14 @@ export async function runAuthorizedEffect<R>(
     return uncertain(operationID, 'executor-failed');
   }
 
-  const post = await authority.attest(ctx, 'post-execution', now());
-  if (!post || post.authorityEpoch !== ctx.authorityEpoch || post.policyRevision !== ctx.policyRevision) {
+  let post: EffectAttestation | null;
+  try {
+    post = await authority.attest(ctx, 'post-execution', now());
+  } catch {
+    post = null;
+  }
+  if (!post || post.authorityEpoch !== ctx.authorityEpoch ||
+      post.policyRevision !== ctx.policyRevision || isExpired(ctx, now())) {
     broker.uncertain(operationID);
     return uncertain(operationID, 'authority-lost-after-execution');
   }

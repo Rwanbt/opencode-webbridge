@@ -212,3 +212,76 @@ test('authority lost after execution yields uncertain instead of claiming succes
   if (!result.ok) { assert.equal(result.status, 'uncertain'); assert.equal(result.reason, 'authority-lost-after-execution'); }
   assert.equal(broker.get(op.operationID)?.status, 'uncertain');
 });
+
+test('concurrent authorized calls consume exactly one operation before any asynchronous effect', async () => {
+  const { broker, op, gate } = consentedFixture();
+  let effects = 0;
+  let unblock!: () => void;
+  const hold = new Promise<void>((resolve) => { unblock = resolve; });
+  const request = {
+    operationID: op.operationID, context: context(),
+    execute: async () => { effects++; await hold; return 'read'; },
+  };
+  const deps = { broker, gate, authority: allow, now: () => 1500 };
+  const p1 = runAuthorizedEffect(deps, request);
+  const p2 = runAuthorizedEffect(deps, request);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(effects, 1, 'a consented operation must run at most once');
+  assert.equal(broker.get(op.operationID)?.status, 'consuming');
+  unblock();
+  const results = await Promise.all([p1, p2]);
+  assert.equal(results.filter((r) => r.ok).length, 1);
+  assert.equal(results.filter((r) => !r.ok && r.status === 'refused').length, 1);
+  assert.equal(broker.get(op.operationID)?.status, 'executed');
+});
+
+test('post-effect native attestation throwing leaves irreversible uncertain outcome', async () => {
+  const { broker, op, gate } = consentedFixture();
+  let calls = 0;
+  const authority: NativeEffectAuthority = {
+    attest: async (ctx, stage) => {
+      if (stage === 'post-execution') throw new Error('host transport reset');
+      return { authorityEpoch: ctx.authorityEpoch, policyRevision: ctx.policyRevision };
+    },
+  };
+  const result = await runAuthorizedEffect(
+    { broker, gate, authority, now: () => 1500 },
+    { operationID: op.operationID, context: context(), execute: async () => { calls++; return 'read'; } },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) { assert.equal(result.status, 'uncertain'); assert.equal(result.reason, 'authority-lost-after-execution'); }
+  assert.equal(calls, 1);
+  assert.equal(broker.get(op.operationID)?.status, 'uncertain');
+  assert.equal(broker.consent(op.operationID, 1600), null);
+});
+
+test('pre-effect native attestation throwing refuses without consuming or executing', async () => {
+  const { broker, op, gate } = consentedFixture();
+  let calls = 0;
+  const result = await runAuthorizedEffect(
+    { broker, gate, authority: { attest: async () => { throw new Error('offline'); } }, now: () => 1500 },
+    { operationID: op.operationID, context: context(), execute: async () => { calls++; return 'x'; } },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.reason, 'authority-attestation-missing');
+  assert.equal(calls, 0);
+  assert.equal(broker.get(op.operationID)?.status, 'consented');
+});
+
+test('ticket expiry during awaited post-effect attestation is terminal uncertain', async () => {
+  const { broker, op, gate } = consentedFixture();
+  let clock = 1500;
+  const result = await runAuthorizedEffect(
+    {
+      broker, gate, now: () => clock,
+      authority: { attest: async (ctx, stage) => {
+        if (stage === 'post-execution') clock = 10_001;
+        return { authorityEpoch: ctx.authorityEpoch, policyRevision: ctx.policyRevision };
+      } },
+    },
+    { operationID: op.operationID, context: context(), execute: async () => 'ran' },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.status, 'uncertain');
+  assert.equal(broker.get(op.operationID)?.status, 'uncertain');
+});

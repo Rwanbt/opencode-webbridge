@@ -154,6 +154,8 @@ jobs:
         run: node --test dist/test/durable-read-ack-sink.test.js dist/test/checkpointed-read-observer.test.js
       - name: G133 reject hostile tool proposal getters, extras and mutable authority (no browser)
         run: node --test dist/test/tool-proposal.test.js dist/test/tool-flow.test.js dist/test/workspace-path.test.js
+      - name: G136 prevent concurrent double-effect and uncertain replay (fixture authority only)
+        run: node --test dist/test/effect-broker.test.js dist/test/tool-broker.test.js
 
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
