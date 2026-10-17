@@ -1,6 +1,7 @@
 /** Manual G1 smoke: native OpenCode 2 session invokes our local fixture only. */
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -9,31 +10,51 @@ import { FIXTURE_MODEL, FIXTURE_REPLY, openFixtureServer } from '../dist/src/tes
 import { FakeBrowserPort } from '../dist/src/testing/fake-browser.js';
 import { browserFixtureResponder } from '../dist/src/testing/browser-fixture-relay.js';
 import { nativeOpenCodeExecutable } from '../dist/src/testing/native-cli-launcher.js';
+import { trackNativeChild } from '../dist/src/testing/native-child-lifecycle.js';
 
-function run(binary, env, cwd) {
+async function freePort() {
+  const listener = createServer();
+  await new Promise((resolve, reject) => {
+    listener.once('error', reject);
+    listener.listen(0, '127.0.0.1', resolve);
+  });
+  const port = listener.address().port;
+  await new Promise((resolve) => listener.close(resolve));
+  return port;
+}
+
+function run(binary, env, cwd, serverURL) {
   return new Promise((resolvePromise, reject) => {
-    const args = ['run', '--standalone', '--print-logs', '--log-level', 'debug', '--model', `webbridge-fixture/${FIXTURE_MODEL}`, '--format', 'json',
+    const args = ['run', '--server', serverURL, '--model', `webbridge-fixture/${FIXTURE_MODEL}`, '--format', 'json',
       'This is a local inference transport verification. Respond once.'];
     const child = spawn(binary, args, {
       cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
       shell: process.platform === 'win32' && /\.cmd$/i.test(binary),
     });
+    const lifecycle = trackNativeChild(child);
     let stdout = '';
     let stderr = '';
     let overflow = false;
+    let timedOut = false;
     const collect = (target, chunk) => {
       const added = chunk.toString('utf8');
       if (target === 'stdout') stdout += added;
       else stderr += added;
-      if (stdout.length + stderr.length > 200_000) { overflow = true; child.kill(); }
+      if (stdout.length + stderr.length > 200_000) {
+        overflow = true;
+        void lifecycle.stop().catch(reject);
+      }
     };
     child.stdout.on('data', (chunk) => collect('stdout', chunk));
     child.stderr.on('data', (chunk) => collect('stderr', chunk));
     child.once('error', reject);
-    const timeout = setTimeout(() => child.kill(), 60_000);
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      void lifecycle.stop().catch(reject);
+    }, 60_000);
     child.once('close', (code) => {
       clearTimeout(timeout);
-      resolvePromise({ code, stdout, stderr, overflow });
+      resolvePromise({ code, stdout, stderr, overflow, timedOut });
     });
   });
 }
@@ -45,10 +66,12 @@ let forwarded = 0;
 const browser = new FakeBrowserPort(() => { forwarded++; return FIXTURE_REPLY; });
 if (useBrowserFixture) await browser.claim(fakeBinding);
 const token = randomBytes(32).toString('hex');
+const serverPassword = randomBytes(32).toString('hex');
 const fixture = await openFixtureServer({
   token,
   ...(useBrowserFixture ? { respond: browserFixtureResponder(browser, fakeBinding) } : {}),
 });
+let serverLifecycle;
 try {
   const configDir = join(temp, 'config');
   await mkdir(configDir);
@@ -85,19 +108,46 @@ try {
     WEBBRIDGE_FIXTURE_ENABLE: '1',
     WEBBRIDGE_FIXTURE_URL: fixture.baseURL,
     WEBBRIDGE_FIXTURE_TOKEN: token,
+    OPENCODE_SERVER_PASSWORD: serverPassword,
   };
   const binary = nativeOpenCodeExecutable();
-  const result = await run(binary, env, temp);
+  const port = await freePort();
+  const serverURL = `http://127.0.0.1:${port}`;
+  const server = spawn(binary, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], {
+    cwd: temp, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  serverLifecycle = trackNativeChild(server);
+  let serverError = '';
+  server.on('error', (error) => { serverError = `spawn ${error.code ?? 'error'}`; });
+  server.stderr.on('data', (chunk) => { serverError = (serverError + chunk.toString('utf8')).slice(-2000); });
+  server.stdout.on('data', () => {});
+  let ready = false;
+  let lastStatus = 'no response';
+  for (let attempt = 0; attempt < 75; attempt++) {
+    if (server.exitCode !== null) break;
+    try {
+      const response = await fetch(`${serverURL}/api/plugin`, {
+        headers: { Authorization: `Basic ${Buffer.from(`opencode:${serverPassword}`).toString('base64')}` },
+        signal: AbortSignal.timeout(700),
+      });
+      lastStatus = `HTTP ${response.status}`;
+      if (response.ok) { ready = true; break; }
+    } catch { /* bounded server startup */ }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  if (!ready) throw new Error(`native fixture server startup failed; exit=${server.exitCode}; status=${lastStatus}; stderr=${serverError.slice(-200)}`);
+  const result = await run(binary, env, temp, serverURL);
   const responded = result.stdout.includes(FIXTURE_REPLY);
   const connected = fixture.requests() > 0 && (!useBrowserFixture || forwarded > 0);
-  console.log(`OpenCode local fixture smoke: exit=${result.code}, HTTP requests=${fixture.requests()}, BrowserPort forwards=${forwarded}, reply-observed=${responded}`);
-  if (result.code !== 0 || !responded || !connected || result.overflow) {
+  console.log(`OpenCode local fixture smoke: exit=${result.code}, timed-out=${result.timedOut}, HTTP requests=${fixture.requests()}, BrowserPort forwards=${forwarded}, reply-observed=${responded}`);
+  if (result.code !== 0 || result.timedOut || !responded || !connected || result.overflow) {
     // Restrict diagnostics to error metadata; never print account secrets or transcripts.
     const debug = result.stderr.split(/\r?\n/).filter((line) => /webbridge|plugin|config|provider|error|warn/i.test(line)).slice(-24).map((line) => line.slice(0,600));
-    console.error(`Fixture native integration incomplete. Output tail: ${result.stdout.slice(-700)}\nRelevant diagnostics:\n${debug.join('\n')}`);
+    console.error(`Fixture native integration incomplete. Relevant diagnostics:\n${debug.join('\n')}`);
     process.exitCode = 1;
   }
 } finally {
+  if (serverLifecycle) await serverLifecycle.stop();
   await fixture.close();
   if (useBrowserFixture) await browser.release(fakeBinding);
   await rm(temp, { recursive: true, force: true, maxRetries: 12, retryDelay: 500 });

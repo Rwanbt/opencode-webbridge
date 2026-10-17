@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { nativeOpenCodeExecutable } from '../dist/src/testing/native-cli-launcher.js';
 import { trackNativeChild } from '../dist/src/testing/native-child-lifecycle.js';
+import { requireEmptyRelayReady } from '../dist/src/testing/native-client-probe.js';
 
 async function freePort() {
   const srv = createServer();
@@ -84,6 +85,7 @@ try {
     return JSON.parse(raw).output;
   }
 
+  await requireEmptyRelayReady(() => rpc('take', {}));
   const accepted = await rpc('submit', { turnID: 'turn-1', prompt: 'offline-only fixture prompt' });
   const invalid = await fetch(`${url}/api/rpc/webbridge-browser-fixture/take`, {
     method: 'POST', headers,
