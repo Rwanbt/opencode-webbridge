@@ -4,8 +4,10 @@ import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readF
 import { join } from 'node:path';
 import { assertOpaqueID, type TabClaim } from './browser-port.js';
 
-type Phase = 'prepared' | 'leased' | 'settled' | 'cancelled';
-type Entry = { turnID: string; phase: Phase };
+type Phase = 'prepared' | 'leased' | 'settled' | 'cancelled' | 'reconciled';
+type Outcome = 'observed-applied' | 'observed-not-applied';
+type Attestation = { outcome: Outcome; evidenceHash: string; operatorHash: string; reviewedAt: string };
+type Entry = { turnID: string; phase: Phase; attestation?: Attestation };
 type Payload = { version: 1; bindingHash: string; entries: Entry[] };
 type State = Payload & { mac: string };
 
@@ -14,7 +16,8 @@ const identity = (binding: TabClaim) => digest(JSON.stringify([
   binding.sessionID, binding.providerID, binding.tabID, binding.accountRef,
 ]));
 const hash = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
-const phase = (v: unknown): v is Phase => v === 'prepared' || v === 'leased' || v === 'settled' || v === 'cancelled';
+const phase = (v: unknown): v is Phase => v === 'prepared' || v === 'leased' || v === 'settled' || v === 'cancelled' || v === 'reconciled';
+const outcome = (v: unknown): v is Outcome => v === 'observed-applied' || v === 'observed-not-applied';
 
 /** Strict, small on-disk journal. Never persists raw prompts, responses or credentials. */
 export class DurableRelayJournal {
@@ -78,7 +81,15 @@ export class DurableRelayJournal {
     for (const item of s.entries) {
       if (!item || typeof item !== 'object' || typeof item.turnID !== 'string' ||
         !/^[A-Za-z0-9_-]{1,128}$/.test(item.turnID) || ids.has(item.turnID) ||
-        !phase(item.phase) || Object.keys(item).length !== 2) return false;
+        !phase(item.phase)) return false;
+      if (item.phase === 'reconciled') {
+        const a = item.attestation;
+        if (Object.keys(item).length !== 3 || !a || typeof a !== 'object' ||
+          Object.keys(a).length !== 4 || !outcome(a.outcome) ||
+          !hash(a.evidenceHash) || !hash(a.operatorHash) ||
+          typeof a.reviewedAt !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(a.reviewedAt) ||
+          !Number.isFinite(Date.parse(a.reviewedAt))) return false;
+      } else if (Object.keys(item).length !== 2 || item.attestation !== undefined) return false;
       ids.add(item.turnID);
     }
     return true;
@@ -130,6 +141,28 @@ export class DurableRelayJournal {
   leased(turnID: string): void { this.transition(turnID, 'prepared', 'leased'); }
   settled(turnID: string): void { this.transition(turnID, 'leased', 'settled'); }
   cancelled(turnID: string): void { this.transition(turnID, 'prepared', 'cancelled'); }
+
+  /** Operator attests to an externally observed outcome. No browser action is executed. */
+  reconcile(turnID: string, input: {
+    outcome: Outcome; evidenceHash: string; operatorID: string; acknowledged: boolean;
+  }): void {
+    this.ensure();
+    assertOpaqueID(turnID, 'turnID');
+    if (!input.acknowledged) throw new Error('explicit operator acknowledgement required');
+    if (!outcome(input.outcome)) throw new Error('unsupported reconciliation outcome');
+    if (!hash(input.evidenceHash)) throw new Error('evidence SHA256 required');
+    assertOpaqueID(input.operatorID, 'operatorID');
+    const current = this.state.entries.find((entry) => entry.turnID === turnID);
+    if (!current || (current.phase !== 'prepared' && current.phase !== 'leased')) {
+      throw new Error('only an uncertain turn may be reconciled');
+    }
+    const attestation: Attestation = {
+      outcome: input.outcome, evidenceHash: input.evidenceHash,
+      operatorHash: digest(input.operatorID), reviewedAt: new Date().toISOString(),
+    };
+    this.commit(this.state.entries.map((entry) => entry.turnID === turnID
+      ? { turnID, phase: 'reconciled', attestation } : entry));
+  }
 
   private transition(turnID: string, from: Phase, to: Phase): void {
     this.ensure();
