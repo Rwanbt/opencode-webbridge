@@ -296,7 +296,21 @@ jobs:
         run: node --test dist/test/g159-chatgpt-approved-send.test.js
         env:
           G159_REAL_CDP: '1'
-      - name: G166 manual real Chromium one-shot send plus provisional progressive DOM and uncertain terminal
+
+  g166-manual-chatgpt-turn:
+    name: G166 manual ChatGPT existing CDP send, bounded provisional answer and uncertain terminal
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - name: Intercepted HTTPS only, single approved click, revocation, ambiguity, reload and cancel
         run: node --test dist/test/g166-chatgpt-manual-turn.test.js
         env:
           G166_REAL_CDP: '1'
