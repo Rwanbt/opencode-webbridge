@@ -56,7 +56,8 @@
     "journal:operator": "npm run build && node scripts/reconcile-relay.mjs",
     "issues:dry-run": "node scripts/sync-github-issues.mjs",
     "issues:sync": "node scripts/sync-github-issues.mjs --apply",
-    "docs:traceability": "node scripts/generate-traceability.mjs --write"
+    "docs:traceability": "node scripts/generate-traceability.mjs --write",
+    "docs:qualification": "node scripts/generate-qualification.mjs --write"
   },
   "dependencies": {
     "@opencode/plugin": "2.0.29",
