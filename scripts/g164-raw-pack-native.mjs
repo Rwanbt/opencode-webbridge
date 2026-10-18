@@ -57,7 +57,7 @@ function packageContract(meta) {
     'dist/src/index.d.ts', 'dist/src/runtime/g163-root-read.js',
     'dist/src/browser/explicit-cdp-read.js', 'dist/src/runtime/g166-chatgpt-manual-turn.js',
     'dist/src/providers/provider-adapters.js', 'dist/src/runtime/observe-provider.js',
-    'dist/src/native/journal-operator.js',
+    'dist/src/native/journal-operator.js', 'dist/src/runtime/readonly-tools.js',
     'bin/webbridge-manual-chatgpt.mjs', 'bin/webbridge-manual-observe.mjs',
     'bin/webbridge-journal.mjs']) {
     assert.ok(paths.includes(required), 'raw tarball misses ' + required);

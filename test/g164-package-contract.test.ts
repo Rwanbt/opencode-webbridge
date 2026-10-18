@@ -31,6 +31,8 @@ test('G164 pack main must be emitted, not raw TS and never the test harness', as
     'src/runtime/observe-provider.ts',
     // The journal operator loads these helpers by name from the tarball.
     'src/native/journal-operator.ts',
+    // The read-only workspace tools are loaded lazily by the root when activated.
+    'src/runtime/readonly-tools.ts',
   ]);
   assert.equal(manifest.bin['webbridge-manual-chatgpt'], './bin/webbridge-manual-chatgpt.mjs');
   assert.equal(manifest.bin['webbridge-manual-observe'], './bin/webbridge-manual-observe.mjs');
