@@ -1,0 +1,17 @@
+# ADR 0046 — Lecture native : remplacement de document irréversible (G131)
+
+**Décision :** durcir le patch du Core/BrowserConnection officiel V2 au commit exact `4617210822bdbb31e5749751afbfb4584ccedac8`. L'état observé d'un onglet ne doit pas pouvoir réautoriser un `read.commit`, `read.live` ou résultat de lecture pour un document remplacé. Protéger la liste d'onglets Core contre un état à génération décroissante. Aucun changement de politique d'écriture, d'accès commercial ou de provenance Desktop.
+
+## Risque démontré sur le vrai code natif
+
+Après G126, `BrowserConnection.state` affectait directement `browser.state = input.state`, sans ordre ni invalidation des commandes de lecture en attente. `read.commit`, `read.live` et `result` revérifiaient seulement l'état **courant**. Séquence exécutable adversariale : un `snapshotOnce` autorisé sur l'onglet génération 1, `state(2)` après navigation, puis une notification retardée `state(1)` ; le ticket initial redevenait valide. **RED réel** : `read.commit` retourne `true` pour l'ancien document malgré le remplacement. Avec `read.commit` puis `read.live` déjà vrais, la même alternance faisait accepter un résultat contenant le texte de l'ancien document. Le ticket d'autorisation Core pouvait rester valide pendant toute la courte fenêtre, donc un simple contrôle de sa politique ne suffisait pas.
+
+## Correctif borné
+
+Le Core refuse tout état de génération inférieure à la génération **actuellement observée** pour un onglet identique. Pour chaque notification de tab state acceptée, il compare tous les reads en attente avec l'identité document `(tabID, generation, URL)` figée au dispatch. Dès qu'un onglet disparaît, change de génération ou d'URL, le Core marque la lecture définitivement consommée, `committed=false`, `live=false`. Ces attributs ne sont jamais restaurés par une notification suivante, même si elle décrit de nouveau le document initial. Les trois barrières `read.commit`, `read.live`, `result` revérifient aussi URL et génération, avant toute restitution. Les évolutions de titre/chargement sans changement du document ne révoquent pas la lecture.
+
+Trois tests exécutable RED→GREEN/contre-régression dans la suite native réelle `read-commit.test.ts` vérifient : 1) génération `1→2→1` après dispatch et avant `read.commit` ; 2) même séquence après une autorisation `read.live` déjà obtenue ; 3) changement d'URL puis retour à l'URL initiale à génération identique après `read.commit`. Le miroir `browser.tabs.list` reste accessible via la connexion de test autorisée, reflète la génération 2 et refuse la notification retardée. Aucun test ne simule une authentification Electron réelle.
+
+## Frontières conservées, NO-GO
+
+L'attestation du **premier processus Desktop** reste impossible avec le transport HTTP/RPC officiel (ADR 0044–0045) : le navigateur intégré **ne peut pas s'attacher sans autorité OS**, y compris après cette PR. Les tests d'attache avec `verify: () => true` sont seulement des fixtures locales, jamais une preuve OS. Le flux `read.live→effet Chromium` n'est pas transactionnel entre processus ; le Desktop peut avoir lu la page avant la révocation. Le Core évite uniquement de communiquer une réponse périmée dans les cas testés ; il ne prouve pas la non-exécution de l'effet. Le suivi de générations n'est pas persistant au-delà du cycle d'attachement. Pas de fournisseur commercial activé (0/5), écriture WebBridge OFF, aucune validation du Desktop Electron distribué : **NO-GO production et fusion**.

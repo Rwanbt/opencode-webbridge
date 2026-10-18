@@ -16,4 +16,445 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run check:backlog
+      - run: npm run check:progress
+      - run: npm run check:policy
+      - run: npm run check:compat
+      - run: npm run check:acceptance
+      - run: npm run check:sbom
+      - run: npm run check:release
+      - name: G119 prove exact G106 full patch and G113 standalone browser fixture on one SHA
+        run: npm run check:g119
+      - name: D01/D02 execute pinned official Desktop 2.0.32 packaged IPC refusal
+        run: npm run check:d01d02
       - run: npm test
+      - name: G146 Linux real serialized tool turn through durable authorization, read-only FS/Git and verified receipt
+        run: node --test dist/test/offline-tool-turn-orchestrator.test.js
+      - name: G141 G135 Linux real ephemeral filesystem/Git and G138 hostile serialized JSON ingress
+        run: node --test dist/test/offline-readonly-tool-executor.test.js dist/test/tool-proposal-json-ingress.test.js
+      - name: Deterministic offline package, upgrade, rollback and uninstall
+        run: npm run preview:package
+      - name: Packaged RPC fixture offline upgrade, tamper denial and rollback
+        run: npm run preview:rpc-package
+      - name: G97 combined standalone RPC and model package offline lifecycle
+        run: npm run preview:g97
+
+  native-fixture-smoke:
+    name: Native fixture smoke (OpenCode 2.0.29)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install exact OpenCode CLI for isolated smoke
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.29
+      - name: G119 refuse downgraded G106 patch or modified G113 local model before Chromium
+        run: npm run check:g119
+      - name: Verify offline package installed in disposable OpenCode profile
+        run: npm run smoke:package-native
+      - name: Native CLI packaged RPC authority, upgrade and rollback (no Chromium)
+        run: npm run smoke:rpc-package-native
+      - name: G88 installed RPC through official CLI model turn and progressive fake SSE
+        run: npm run smoke:packaged-model
+      - name: G97 ONLY one installed tarball registers BOTH native RPC and model
+        run: npm run smoke:g97-native
+      - run: npm run smoke:native
+      - run: npm run smoke:browser
+      - run: npm run smoke:rpc
+      - run: npm run smoke:e2e
+      - name: Install isolated headless Chromium
+        run: npx playwright install --with-deps --only-shell chromium
+      - name: G163 real ROOT tool registration and owned five-origin CDP read-only Chromium
+        run: npm run build && G163_REAL_CDP=1 node --test dist/test/g163-root-read.test.js
+      - name: G156 attached ChatGPT legacy and Chat/Work DOM real Chromium offline observation
+        run: npm run build && node --test dist/test/g156-chatgpt-dom.test.js
+        env:
+          WEBBRIDGE_G156_BROWSER: '1'
+      - name: G99/G100 installed plugin local Chromium DOM and fail-closed tab-change
+        run: npm run smoke:g99-page
+      - name: G113 installed plugin local Chromium actual page close is terminal uncertain
+        run: npm run smoke:g99-page
+        env:
+          WEBBRIDGE_G113_PAGE_CLOSE: '1'
+      - name: G119 replay EXACT G106 official V2 patch in same native G113 Chromium CI job
+        shell: bash
+        run: |
+          node scripts/check-g119-cross-stream.mjs
+          git init "$RUNNER_TEMP/g119-combined-v2"
+          git -C "$RUNNER_TEMP/g119-combined-v2" fetch --depth=1 https://github.com/anomalyco/opencode.git 4617210822bdbb31e5749751afbfb4584ccedac8
+          git -C "$RUNNER_TEMP/g119-combined-v2" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/g119-combined-v2" rev-parse HEAD)" = 4617210822bdbb31e5749751afbfb4584ccedac8
+          git -C "$RUNNER_TEMP/g119-combined-v2" apply --check "$GITHUB_WORKSPACE/docs/patches/opencode-v2-4617210-browser-plugin-capability.patch"
+          git -C "$RUNNER_TEMP/g119-combined-v2" apply "$GITHUB_WORKSPACE/docs/patches/opencode-v2-4617210-browser-plugin-capability.patch"
+          grep -F 'browserPolicy?.()' "$RUNNER_TEMP/g119-combined-v2/packages/core/src/plugin/browser.ts"
+          grep -F 'readonly browserPolicy?:' "$RUNNER_TEMP/g119-combined-v2/packages/core/src/permission.ts"
+      - run: npm run smoke:local-read
+      - name: Offline DOM progressive relay and uncertain interruption
+        run: npm run smoke:dom-rpc
+      - run: npm run smoke:page
+
+  official-v2-032-cli-plugin:
+    name: D01 official OpenCode 2.0.32 CLI packaged plugin model/RPC (no Electron)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install public official CLI exact 2.0.32 into isolated CI dependency tree
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - name: D01 native combined plugin model and RPC through official 2.0.32 CLI
+        run: npm run smoke:g97-native
+      - name: G163 ACTUAL npm-packed root loads opt-in read-only tool in official CLI 2.0.32
+        run: npm run build && G163_NATIVE_ROOT=1 node --test dist/test/g163-root-read.test.js
+
+  g125-official-v2032-full-page-session:
+    name: G125 official CLI 2.0.32 installed model→Chromium→RPC→SSE→persistent session
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: G141 G132 bounded official persisted finish proof, forged and missing receipts
+        run: node --test scripts/test-g125-persisted-session.mjs
+      - name: Install exact official CLI 2.0.32, never replace system Desktop
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - name: Install ephemeral Linux Chromium shell
+        run: npx playwright install --with-deps --only-shell chromium
+      - name: G125 full native single-tarball positive and both adversarial persisted sessions
+        run: npm run smoke:g125-native
+
+  g130-official-v2032-durable-read-receipts:
+    name: G130 CLI 2.0.32 DOM→RPC→encrypted durable host ACK→SSE→restart
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: G141 exact G131 native patch and bounded G125 persisted completion guard
+        run: node scripts/check-g119-cross-stream.mjs && node --test scripts/test-g125-persisted-session.mjs
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - name: Install isolated headless Chromium for localhost only
+        run: npx playwright install --with-deps --only-shell chromium
+      - name: RED→GREEN G130 encrypted host-sink lost ACK and wrong scope
+        run: npm run build && node --test scripts/test-g130-receipt-host.mjs
+      - name: Real installed CLI single-tarball DOM/RPC/SSE and durable receipts after restart
+        run: npm run smoke:g130-native
+
+  g149-official-v2032-integrated-readonly-turn:
+    name: G149 actual CLI 2.0.32 model session to Chromium/RPC/SSE and host read-only tool before ACK
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: npx playwright install --with-deps --only-shell chromium
+      - name: Denied host permission and forged official session fail before file reads
+        run: npm run build && node --test scripts/test-g149-vertical-host.mjs
+      - name: Actual official same-turn model Chromium DOM RPC host fsync tool and SSE
+        run: npm run smoke:g149-vertical
+
+  windows-progressive-relay:
+    name: Windows bounded RPC progress (no Chromium)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - name: Native protocol and fail-closed deltas, no browser or account
+        run: node --test dist/test/browser-exchange.test.js dist/test/rpc-relay-port.test.js dist/test/rpc-browser-port.test.js dist/test/fixture-inference.test.js
+      - name: G127/G128 encrypted read sink and immutable frame regression (no Chromium)
+        run: node --test dist/test/durable-read-ack-sink.test.js dist/test/checkpointed-read-observer.test.js
+      - name: G133 reject hostile tool proposal getters, extras and mutable authority (no browser)
+        run: node --test dist/test/tool-proposal.test.js dist/test/tool-flow.test.js dist/test/workspace-path.test.js
+      - name: G136 prevent concurrent double-effect and uncertain replay (fixture authority only)
+        run: node --test dist/test/effect-broker.test.js dist/test/tool-broker.test.js
+      - name: G140 durable anti-replay fence restart/rollback/lock (local temp files only)
+        run: node --test dist/test/durable-operation-fence.test.js
+      - name: G145 serialized read-only fixture refuses non-Linux file execution
+        run: node --test dist/test/offline-tool-turn-orchestrator.test.js
+      - name: G152 independent personal provider opt-in, verified capabilities, source isolation
+        run: node --test dist/test/personal-provider-activation.test.js dist/test/provider-policy.test.js dist/test/adapter-contract.test.js
+      - name: G156 origin attach and hostile read-only snapshot (Windows no Chromium)
+        run: node --test dist/test/g156-chatgpt-dom.test.js
+      - name: G157 explicit CDP composition refuses missing consent (Windows no Chromium)
+        run: node --test dist/test/g157-chatgpt-cdp-observer.test.js
+      - name: G160 other providers lack silent origin, tab or reading opt-in (Windows no Chromium)
+        run: node --test dist/test/g160-other-provider-dom.test.js
+      - name: G161 same-target same-URL document epoch anti-reload gate (Windows no Chromium)
+        run: node --test dist/test/g161-document-epoch.test.js
+      - name: G141 G135 Windows file-read closed + untrusted proposals (no Windows Git sandbox claim)
+        run: node --test '--test-name-pattern=file.read opens real regular Linux inode|malformed provenance/unknown or mutable actions' dist/test/offline-readonly-tool-executor.test.js
+      - name: G141 G138 bounded JSON hostile input and G139 authority snapshots
+        run: node --test dist/test/tool-proposal-json-ingress.test.js dist/test/authority-context.test.js dist/test/effect-broker.test.js
+      - name: G141 G142 nonresettable rate quota leases under clock/adversarial cancellation
+        run: node --test dist/test/rate-limiter.test.js
+      - name: G143 actual inert root artifact pack integrity (no official app)
+        run: npm run smoke:actual-package
+      - name: G150 default-off real root and localhost-only rejected opt-in
+        run: node --test dist/test/g150-root-local-gate.test.js dist/test/distributed-entrypoint-package.test.js
+
+  g143-distributed-root-plugin:
+    name: G143 actual WebBridge root .tgz and official CLI 2.0.32 disposable install lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install official CLI exact 2.0.32 only in ephemeral CI dependency tree
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - name: Build and lifecycle-test the ACTUAL inert WebBridge entrypoint, not a synthetic fixture
+        run: npm run smoke:actual-package-native
+
+  g152-actual-root-chromium-read-sse:
+    name: G152 real root .tgz selected CLI model DOM RPC read-only tool and durable resumed SSE
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: npx playwright install --with-deps --only-shell chromium
+      - name: Real installed root local-only model, DOM, native RPC, tool, SSE and restart
+        run: npm run smoke:g152-root-vertical
+
+  g153-real-root-native-git-turn:
+    name: G153 actual installed root CLI2.0.32 Chromium model and Git readonly durable resume
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: npx playwright install --with-deps --only-shell chromium
+      - name: G153 real temporary FS Git status/diff/log and durable restart negatives
+        run: npm run build && node --test scripts/test-g153-host.mjs
+      - name: G165 inherited G158 native model stream race protections
+        run: node --test scripts/test-g158-model-gate.mjs
+      - name: G153 actual root native selected model DOM RPC Git effects read-only before SSE
+        run: npm run smoke:g153-root-git
+
+  g155-explicit-cdp-readonly:
+    name: G155 explicit user CDP discovery and read-only heading transport
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - name: Real Chromium CDP permitted tab and replaced/hostile negative checks
+        run: node --test dist/test/g155-explicit-cdp-read.test.js
+        env:
+          G155_REAL_CDP: '1'
+      - name: G157 composed existing Chromium CDP target + selected ChatGPT DOM response stream
+        run: node --test dist/test/g157-chatgpt-cdp-observer.test.js
+        env:
+          G157_REAL_CDP: '1'
+      - name: G160 composed DeepSeek Gemini Mistral real CDP and read-only DOM fixtures
+        run: node --test dist/test/g160-other-provider-dom.test.js
+        env:
+          G160_REAL_CDP: '1'
+      - name: G165 inherited G159 guarded one-shot send on actual isolated Chromium
+        run: node --test dist/test/g159-chatgpt-approved-send.test.js
+        env:
+          G159_REAL_CDP: '1'
+
+  g164-raw-npm-package:
+    name: G168 raw npm tarball install upgrade rollback official CLI 2.0.32
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: node --test scripts/g164-raw-pack-native.mjs
+        env:
+          G164_OFFICIAL_CLI: '1'
+      - name: G172 packaged operator command fail-closed without interactive approval
+        run: node --test scripts/test-g172-operator-cli.mjs
+
+  g164-raw-npm-package-windows:
+    name: Windows raw npm tarball install upgrade rollback official CLI 2.0.32
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: node --test scripts/g164-raw-pack-native.mjs
+        env:
+          G164_OFFICIAL_CLI: '1'
+      - name: G172 operator fail-closed without interactive approval (Windows)
+        run: node --test scripts/test-g172-operator-cli.mjs
+
+  g166-manual-chatgpt-turn:
+    name: G168 approved CDP turn with bounded provisional response
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - run: node --test dist/test/g166-chatgpt-manual-turn.test.js
+        env:
+          G166_REAL_CDP: '1'
+
+  g169-qwen-conservative-read:
+    name: G173 Qwen origin probe and fixture-only DOM guarded read
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - run: node --test dist/test/g169-qwen-read.test.js
+        env:
+          G169_REAL_CDP: '1'
+          G169_INTERCEPTED_FIXTURE: '1'
+
+  g170-official-cli-provider-probe:
+    name: G173 native official CLI provider registration only with bounded fixture
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: npm run build
+      - run: node --test dist/test/g170-native-registration.test.js
+        env:
+          G170_NATIVE_CLI: '1'
+      - name: Native provider module and uncertain-terminal evidence through official CLI
+        run: node --test dist/test/native-provider-module.test.js
+        env:
+          NATIVE_PROVIDER_MODULE_CLI: '1'
+      - name: "Raw package native web models: activation, one honest turn, uncertain terminal, detached refusal"
+        run: node --test dist/test/native-web-models-cli.test.js
+        env:
+          NATIVE_WEB_MODELS_CLI: '1'
+
+  g177-packed-interactive-operator:
+    name: G177 tarball-installed operator terminal approved Chromium one-shot
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - run: node --test dist/test/g177-packed-operator-pty.test.js
+        env:
+          G177_REAL_PTY: '1'
+
+  g175-unified-browser-progress:
+    name: G178 unified four-provider provisional progress and Qwen NO-GO
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - run: node --test dist/test/g175-browser-progress.test.js
+        env:
+          G175_REAL_CDP: '1'
+
+  upstream-v2-browser-patch:
+    name: Upstream V2 browser capability patch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fetch exact official V2 source and verify patch
+        shell: bash
+        run: |
+          node scripts/check-g119-cross-stream.mjs
+          git init "$RUNNER_TEMP/opencode-v2"
+          git -C "$RUNNER_TEMP/opencode-v2" fetch --depth=1 https://github.com/anomalyco/opencode.git 4617210822bdbb31e5749751afbfb4584ccedac8
+          git -C "$RUNNER_TEMP/opencode-v2" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/opencode-v2" rev-parse HEAD)" = 4617210822bdbb31e5749751afbfb4584ccedac8
+          git -C "$RUNNER_TEMP/opencode-v2" apply --check "$GITHUB_WORKSPACE/docs/patches/opencode-v2-4617210-browser-plugin-capability.patch"
+          git -C "$RUNNER_TEMP/opencode-v2" apply "$GITHUB_WORKSPACE/docs/patches/opencode-v2-4617210-browser-plugin-capability.patch"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+      - name: Install upstream dependencies
+        run: bun install --frozen-lockfile
+        working-directory: ${{ runner.temp }}/opencode-v2
+      - name: G141 G137 exact G131 document finality + G126 provenance + G106 policy and one-shot native broker
+        working-directory: ${{ runner.temp }}/opencode-v2
+        run: |
+          bun run --cwd packages/plugin typecheck
+          bun run --cwd packages/plugin-browser typecheck
+          bun run --cwd packages/core typecheck
+          bun run --cwd packages/gui-extensions typecheck
+          (cd packages/core && bun test test/permission.test.ts test/permission-browser-lease.test.ts test/plugin/browser-lease.test.ts test/plugin/browser-one-shot.test.ts test/plugin/browser-capability.test.ts test/plugin/browser-rpc-provenance.test.ts)
+          (cd packages/plugin-browser && bun test test/read-commit.test.ts test/first-attach-authority.test.ts test/connection-location.test.ts test/attach-ownership.test.ts test/tunnel-provenance.test.ts)
+          (cd packages/gui-extensions && bun test src/browser/read-commit-gate.test.ts)

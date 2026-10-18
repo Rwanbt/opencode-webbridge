@@ -1,4 +1,4 @@
-/** Planned browser-backed providers. None is enabled for inference yet. */
+/** Exact site origins for explicitly attached CDP tabs. Inference is not enabled. */
 export const WEB_PROVIDER_CATALOG = [
   { id: "chatgpt", name: "ChatGPT", origin: "https://chatgpt.com" },
   { id: "deepseek", name: "DeepSeek", origin: "https://chat.deepseek.com" },

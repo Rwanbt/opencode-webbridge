@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/index.ts", "src/native/provider-anchor.ts",
+    "src/runtime/g166-chatgpt-manual-turn.ts", "src/runtime/observe-provider.ts",
+    "src/native/journal-operator.ts", "src/runtime/readonly-tools.ts"],
+  "exclude": ["test", "src/testing"]
+}

@@ -1,0 +1,389 @@
+/** G143: package the ACTUAL src/index.ts output in a disposable OpenCode profile.
+ * Never installs into or recompiles the user's official OpenCode application.
+ * The current public entrypoint is intentionally inert (no model/RPC/tool). */
+import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isolatedEnvironment } from './offline-package-preview.mjs';
+import { runCLI } from './smoke-packaged-model.mjs';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const name = 'opencode-webbridge';
+const id = 'opencode.webbridge';
+const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const integrity = (bytes) => 'sha512-' + createHash('sha512').update(bytes).digest('base64');
+
+/** Runtime-loaded modules that are never reached through a static import: the core
+ *  imports the anchor by name (provider `package: 'aisdk:file://…'`), so the graph
+ *  walker cannot discover it and it is listed here explicitly. */
+const RUNTIME_ENTRYPOINTS = ['native/provider-anchor.js'];
+/** Supplied by the repository (not emitted under dist/src) and packed as-is. */
+const PROVIDED_AT_ROOT = ['g97-local.mjs'];
+const MAX_GRAPH_FILES = 48;
+const MAX_GRAPH_BYTES = 1_048_576;
+const RELATIVE_MODULE = /(?:from\s*|import\(\s*)["'](\.{1,2}\/[^"']+)["']/g;
+
+export function actualManifest(version, runtimeFiles = []) {
+  if (!/^0\.0\.[1-9][0-9]*$/.test(version)) throw new Error('invalid disposable package version');
+  return Object.freeze({
+    name, version, type: 'module', main: 'index.mjs',
+    license: 'MIT', files: ['index.mjs', 'g97-local.mjs', 'LICENSE', ...runtimeFiles],
+    dependencies: { '@opencode/plugin': '2.0.29' },
+    description: 'Real root: inert by default; explicit localhost fixture only, commercial providers disabled',
+  });
+}
+
+/** The distributed root ships its REAL relative module graph (bounded, reviewed
+ *  closure of dist/src/index.js) plus the runtime-loaded anchor. No stale or extra
+ *  file may enter the archive, and nothing may escape the compiled root. */
+async function rootModuleGraph(entryText) {
+  const distSrc = resolve(root, 'dist', 'src');
+  const entryAbs = join(distSrc, 'index.js');
+  const files = new Map();
+  const seen = new Set();
+  const pending = [{ abs: entryAbs, pkg: 'index.mjs' }];
+  let bytes = 0;
+  while (pending.length) {
+    const item = pending.shift();
+    if (seen.has(item.abs)) continue;
+    seen.add(item.abs);
+    const text = item.abs === entryAbs ? entryText : await readFile(item.abs, 'utf8');
+    bytes += Buffer.byteLength(text);
+    files.set(item.pkg, text);
+    if (files.size > MAX_GRAPH_FILES || bytes > MAX_GRAPH_BYTES)
+      throw new Error('root module graph exceeded the reviewed bound');
+    for (const match of text.matchAll(RELATIVE_MODULE)) {
+      const abs = resolve(dirname(item.abs), match[1]);
+      const pkg = relative(distSrc, abs).split(sep).join('/');
+      if (pkg.startsWith('..') || resolve(distSrc, pkg) !== abs)
+        throw new Error('root module graph escaped the compiled root: ' + match[1]);
+      if (PROVIDED_AT_ROOT.includes(pkg)) continue;
+      if (!pkg.endsWith('.js')) throw new Error('unsupported module in root graph: ' + pkg);
+      pending.push({ abs, pkg });
+    }
+  }
+  for (const pkg of RUNTIME_ENTRYPOINTS) {
+    if (files.has(pkg)) continue;
+    const abs = join(distSrc, pkg);
+    const text = await readFile(abs, 'utf8');
+    bytes += Buffer.byteLength(text);
+    if (bytes > MAX_GRAPH_BYTES) throw new Error('root module graph exceeded the reviewed bound');
+    files.set(pkg, text);
+  }
+  return files;
+}
+
+/** The reviewed contract of the packaged native modules: the root itself only
+ *  lazily imports the registration module, which alone owns the provider
+ *  transform, the scoped language hook and the explicit activation list; the
+ *  anchor refuses every call when that hook is inactive. */
+export function reviewNativeGraph(files) {
+  const at = (pkg) => {
+    const text = files.get(pkg);
+    if (typeof text !== 'string') throw new Error('reviewed native module missing from the archive: ' + pkg);
+    return text;
+  };
+  const entry = at('index.mjs');
+  if (!entry.includes('import("./native/registration.js")'))
+    throw new Error('actual root no longer loads the reviewed native registration module');
+  if (/WEBBRIDGE_NATIVE_WEB_MODELS|WEBBRIDGE_NATIVE_TAB_/.test(entry))
+    throw new Error('activation list/tab configuration must stay inside the reviewed native module');
+  const registration = at('native/registration.js');
+  if (!registration.includes('ctx.provider.transform') || !registration.includes('ctx.aisdk.hook') ||
+      !registration.includes('WEBBRIDGE_NATIVE_WEB_MODELS'))
+    throw new Error('native registration module no longer owns provider.transform + scoped hook + opt-in list');
+  const webModel = at('native/web-model.js');
+  if (!webModel.includes('webbridge-dom-completion-observed') ||
+      !webModel.includes('webbridge-terminal-uncertain'))
+    throw new Error('native model terminal markers changed');
+  const anchor = at('native/provider-anchor.js');
+  if (!/export function create[A-Za-z]*\(/.test(anchor) || !anchor.includes('refusing to fabricate'))
+    throw new Error('anchor module no longer offers a fail-closed create* factory');
+  if (/\bimport\b[^("]*["'][^."']/.test(anchor))
+    throw new Error('anchor module must stay dependency-free for the core loader');
+  return Object.freeze({
+    graphFiles: files.size,
+    nativeRegistrationShipped: true,
+    nativeAnchorShipped: true,
+  });
+}
+
+export function sourceContract(text) {
+  if (typeof text !== 'string' || text.length > 20_000 ||
+      !text.includes('import { Plugin } from "@opencode/plugin"') ||
+      !text.includes('id: "opencode.webbridge"') ||
+      !text.includes('setup(ctx)') ||
+      !text.includes('WEBBRIDGE_G150_LOCAL_FIXTURE') ||
+      /provider\.transform|aisdk\.hook|rpc\.register|browser\.navigate|browser\.click|child_process|WEBBRIDGE_FIXTURE_ENABLE/.test(text))
+    throw new Error('actual root plugin changed: re-review public entrypoint and release gates');
+  // Reviewed 2026-10-18: the root lazily loads the opt-in native models module;
+  // the graph contract below pins what that module may own.
+  if (!text.includes('import("./native/registration.js")'))
+    throw new Error('actual root no longer loads the reviewed native registration module');
+  if (/WEBBRIDGE_NATIVE_WEB_MODELS|WEBBRIDGE_NATIVE_TAB_/.test(text))
+    throw new Error('activation list/tab configuration must stay inside the reviewed native module');
+  return Object.freeze({ entrySHA256: hash(Buffer.from(text)), id, transportActive: false });
+}
+
+function npm(args, env, cwd) {
+  const npmPath = process.env.npm_execpath;
+  if (!npmPath || !/npm-cli\.js$/i.test(npmPath) || !existsSync(npmPath))
+    throw new Error('npm CLI must be invoked through a repository npm script');
+  const outcome = spawnSync(process.execPath, [npmPath, ...args], {
+    cwd, env, encoding: 'utf8', timeout: 180_000, windowsHide: true,
+    maxBuffer: 300_000,
+  });
+  if (outcome.error || outcome.status !== 0)
+    throw new Error('isolated npm ' + args[0] + ' failed: ' +
+      (outcome.error?.code ?? outcome.status) + ' ' + (outcome.stderr ?? '').slice(-350));
+  return outcome.stdout;
+}
+
+async function packageActual(temp, label, version, entry, env) {
+  const source = join(temp, 'package-' + label);
+  const output = join(temp, 'archives-' + label);
+  await Promise.all([mkdir(source), mkdir(output)]);
+  const graph = await rootModuleGraph(entry);
+  const reviewed = reviewNativeGraph(graph);
+  const runtimeFiles = [...graph.keys()].filter((p) => p !== 'index.mjs').sort();
+  await Promise.all([
+    ...[...graph].map(async ([pkg, text]) => {
+      const target = join(source, ...pkg.split('/'));
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, text);
+    }),
+    copyFile(join(root, 'fixtures/g97-combined-preview.mjs'), join(source, 'g97-local.mjs')),
+    writeFile(join(source, 'package.json'), JSON.stringify(actualManifest(version, runtimeFiles)) + '\n'),
+    copyFile(join(root, 'LICENSE'), join(source, 'LICENSE')),
+  ]);
+  const expected = new Set(['index.mjs', 'g97-local.mjs', 'package.json', 'LICENSE', ...runtimeFiles]);
+  const [meta] = JSON.parse(npm(['pack', source, '--pack-destination', output,
+    '--ignore-scripts', '--json', '--offline'], env, temp));
+  if (meta?.name !== name || meta.version !== version ||
+      meta.files?.length !== expected.size ||
+      meta.files.some((f) => !expected.has(f.path)))
+    throw new Error('distribution archive contains an unexpected entry');
+  const path = join(output, meta.filename);
+  const bytes = await readFile(path);
+  if (meta.integrity !== integrity(bytes)) throw new Error('npm archive SHA512 mismatch');
+  return Object.freeze({ path, sha256: hash(bytes), version, graph: reviewed });
+}
+
+async function install(item, env, temp, prefix) {
+  if (hash(await readFile(item.path)) !== item.sha256)
+    throw new Error('distribution SHA256 mismatch: refuse before npm');
+  npm(['install', item.path, '--prefix', prefix, '--ignore-scripts', '--no-save',
+    '--no-package-lock', '--no-audit', '--no-fund'], env, temp);
+  const location = join(prefix, 'node_modules', name);
+  const manifest = JSON.parse(await readFile(join(location, 'package.json'), 'utf8'));
+  const entry = await readFile(join(location, 'index.mjs'), 'utf8');
+  if (manifest.version !== item.version || manifest.dependencies?.['@opencode/plugin'] !== '2.0.29')
+    throw new Error('installed root package manifest mismatch');
+  const sdk = JSON.parse(await readFile(join(prefix, 'node_modules',
+    '@opencode', 'plugin', 'package.json'), 'utf8'));
+  if (sdk.name !== '@opencode/plugin' || sdk.version !== '2.0.29')
+    throw new Error('installed SDK version differs from tested exact pin');
+  return { location, entry };
+}
+
+async function nativeProof(temp, env, entry, bin, fixture) {
+  if (!bin || !existsSync(bin)) throw new Error('exact official CLI binary missing');
+  const configDir = join(temp, fixture ? 'native-config-local' : 'native-config');
+  await mkdir(configDir);
+  const config = JSON.stringify({ plugins: [pathToFileURL(entry).href] });
+  const password = randomBytes(32).toString('hex');
+  const sandbox = { ...env, OPENCODE_CONFIG_DIR: configDir, OPENCODE_CONFIG_CONTENT: config,
+    OPENCODE_SERVER_PASSWORD: password, OPENCODE_DISABLE_PROJECT_CONFIG: 'true',
+    ...(fixture?.env ?? {}) };
+  await writeFile(join(configDir, 'opencode.json'), config);
+  // Reserve then release a loopback port; no special OpenCode app instance
+  // or user browser is created. Tests run inside a disposable CI profile.
+  const socket = createServer();
+  await new Promise((resolveDone, reject) => {
+    socket.once('error', reject);
+    socket.listen(0, '127.0.0.1', resolveDone);
+  });
+  const port = socket.address().port;
+  await new Promise((done) => socket.close(done));
+  const running = spawn(bin, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], {
+    cwd: temp, env: sandbox, stdio: ['ignore','pipe','pipe'], windowsHide: true, shell: false,
+  });
+  let stderr = '';
+  for (const pipe of [running.stdout, running.stderr])
+    pipe.on('data', (bytes) => { stderr = (stderr + bytes.toString('utf8')).slice(-2000); });
+  const base = 'http://127.0.0.1:' + port;
+  const headers = { Authorization: 'Basic ' +
+    Buffer.from('opencode:' + password).toString('base64') };
+  let proof;
+  try {
+    let pluginLoaded = false;
+    for (let i = 0; i < 80 && running.exitCode === null; i++) {
+      try {
+        const response = await fetch(base + '/api/plugin', {
+          headers, signal: AbortSignal.timeout(700),
+        });
+        if (response.ok) {
+          const body = await response.json();
+          pluginLoaded = Array.isArray(body?.data) &&
+            body.data.some((p) => p.id === id && p.state?.status === 'active');
+          if (pluginLoaded) break;
+        }
+      } catch { /* startup retry, no fake success */ }
+      await new Promise((done) => setTimeout(done, 150));
+    }
+    if (!pluginLoaded) throw new Error('actual installed plugin not active in official CLI: ' +
+      stderr.replaceAll(password, '[REDACTED]').slice(-900));
+    const inventory = async () => {
+      const provider = await fetch(base + '/api/provider', {
+        headers, signal: AbortSignal.timeout(3000),
+      });
+      if (!provider.ok) throw new Error('official provider inventory inaccessible');
+      return JSON.stringify(await provider.json());
+    };
+    let models = await inventory();
+    if (!fixture && /webbridge-fixture|webbridge-native-fixture|webbridge-g99-page/i.test(models))
+      throw new Error('inert distributed entrypoint unexpectedly advertised fixture model');
+    if (!fixture && /webbridge-(chatgpt|deepseek|gemini|qwen|mistral)/i.test(models))
+      throw new Error('dormant distributed entrypoint advertised a web provider without the activation list');
+    if (fixture) {
+      // /api/provider lists provider *info*, not nested model IDs. A selected
+      // native model turn below is the actual proof of model availability.
+      for (let i = 0; i < 20 && !models.includes('"id":"webbridge-fixture"'); i++) {
+        await new Promise((done) => setTimeout(done, 150));
+        models = await inventory();
+      }
+      if (!models.includes('"id":"webbridge-fixture"'))
+        throw new Error('G150 opt-in failed to register provider in actual root: ' +
+          'cliDiagnostic=' + stderr.slice(-500)
+            .replaceAll(password, '[REDACTED]')
+            .replaceAll(fixture.env.WEBBRIDGE_FIXTURE_TOKEN, '[REDACTED]')
+            .replaceAll(fixture.env.WEBBRIDGE_G81_SECRET, '[REDACTED]'));
+      const headersJSON = { ...headers, 'Content-Type': 'application/json' };
+      const call = (scope, secret, nonce) => fetch(
+        base + '/api/rpc/webbridge-g81-package/challenge', {
+          method: 'POST', headers: headersJSON, signal: AbortSignal.timeout(3000),
+          body: JSON.stringify({ input: { scope, secret, nonce } }),
+        });
+      const nonce = 'g150_local_nonce';
+      const bad = await call('other-workspace', fixture.env.WEBBRIDGE_G81_SECRET, nonce);
+      if (bad.ok) throw new Error('G150 forged workspace obtained native RPC receipt');
+      const answer = await call('g81-local-profile', fixture.env.WEBBRIDGE_G81_SECRET, nonce);
+      const expected = createHmac('sha256', fixture.env.WEBBRIDGE_G81_SECRET).update(nonce).digest('hex');
+      if (!answer.ok || (await answer.json())?.output?.receipt !== expected)
+        throw new Error('G150 actual root RPC response not host-scoped');
+      const duplicate = await call('g81-local-profile', fixture.env.WEBBRIDGE_G81_SECRET, nonce);
+      if (duplicate.ok) throw new Error('G150 native RPC replay admitted');
+      await fixture.beforeNativeTurn?.({ base, headers, temp });
+      const run = await runCLI(bin, ['run', '--server', base, '--model',
+        'webbridge-fixture/webbridge-native-fixture', '--format', 'json',
+        fixture.prompt ?? 'G150_LOCAL_TEST_MODEL_PROMPT'], sandbox, temp,
+        { timeoutMs: fixture.timeoutMs ?? 50_000 });
+      const outputSeen = run.stdout.includes(fixture.expected ?? 'G150_ACTUAL_ROOT_LOCAL_OK');
+      const requestSeen = Boolean(fixture.requests());
+      if (run.code !== 0 || run.overflow || !outputSeen || !requestSeen)
+        throw new Error('G150 selected actual root fixture model CLI native SSE failed' +
+          ' (exit=' + run.code + ', overflow=' + run.overflow +
+          ', expectedOutput=' + outputSeen + ', requests=' + requestSeen + ')');
+      await fixture.afterNativeTurn?.({ base, headers, temp });
+    }
+    proof = Object.freeze({ officialCLI: true, rootPluginActive: true,
+      advertisedCommercialProviders: 0, fixtureModelRegistered: Boolean(fixture),
+      ...(fixture ? { fixtureNativeRpc: true, fixtureModelSSE: true } : {}) });
+  } finally {
+    if (running.exitCode === null) running.kill();
+    await Promise.race([
+      new Promise((done) => running.once('close', done)),
+      new Promise((done) => setTimeout(done, 3000)),
+    ]);
+  }
+  // A genuine installed CLI server has terminated before the host test
+  // reopens its durable session and encrypted receipts.
+  await fixture?.afterShutdown?.({ executable: bin, env: sandbox, temp,
+    headers, url: base });
+  return proof;
+}
+
+export async function proveActualEntrypoint({ native = false, localFactory } = {}) {
+  const entry = await readFile(join(root, 'dist/src/index.js'), 'utf8');
+  const source = sourceContract(entry);
+  const temp = await mkdtemp(join(tmpdir(), 'webbridge-actual-plugin-'));
+  const env = { ...isolatedEnvironment(temp), npm_config_offline: 'false' };
+  try {
+    await Promise.all(['home','tmp','appdata','localappdata'].map((p) => mkdir(join(temp,p))));
+    await Promise.all(['blank.npmrc','blank-global.npmrc'].map((p) =>
+      writeFile(join(temp,p),'\n')));
+    const first = await packageActual(temp, 'original', '0.0.1', entry, env);
+    const repeated = await packageActual(temp, 'identical', '0.0.1', entry, env);
+    if (first.sha256 !== repeated.sha256) throw new Error('actual root archive not reproducible');
+    const upgraded = await packageActual(temp, 'upgrade', '0.0.2', entry, env);
+    if (first.sha256 === upgraded.sha256) throw new Error('version upgrade not distinguishable');
+    if (!native) return { ...source, reproducible: true,
+      packedSHA256: first.sha256, realNativeCLI: false, commercialOperational: 0 };
+    const profile = join(temp, 'profile');
+    await mkdir(profile);
+    const original = await install(first, env, temp, profile);
+    if (original.entry !== entry) throw new Error('installed root differs from source');
+    await install(upgraded, env, temp, profile);
+    const tampered = join(temp, 'tampered.tgz');
+    await copyFile(first.path, tampered);
+    await writeFile(tampered, Buffer.concat([await readFile(tampered), Buffer.from('tampered')]));
+    let rejected = false;
+    try { await install({ ...first, path: tampered }, env, temp, profile); }
+    catch (error) {
+      if (!/SHA256 mismatch/.test(String(error))) throw error;
+      rejected = true;
+    }
+    if (!rejected) throw new Error('tampered package accepted');
+    const restored = await install(first, env, temp, profile);
+    if (restored.entry !== entry) throw new Error('rollback failed source parity');
+    // Official CLI executable: packaged binary on Windows (npm shims are not
+    // spawnable there), npm shim elsewhere.
+    const packagedWin = join(root, 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe');
+    const nativeBin = process.platform === 'win32' && existsSync(packagedWin)
+      ? packagedWin : join(root, 'node_modules', '.bin', 'opencode');
+    const proof = await nativeProof(temp, env, restored.location, nativeBin);
+    const { openFixtureServer } = await import(pathToFileURL(
+      join(root, 'dist/src/testing/fixture-inference.js')).href);
+    const token = randomBytes(32).toString('hex');
+    const custom = localFactory ? await localFactory({ temp }) : null;
+    const fake = await openFixtureServer({ token,
+      respond: custom?.respond ?? (async () => (async function* () {
+        yield 'G150_ACTUAL_ROOT_';
+        yield 'LOCAL_OK';
+      })()),
+    });
+    let local;
+    try {
+      local = await nativeProof(temp, env, restored.location, nativeBin, {
+        env: { WEBBRIDGE_G150_LOCAL_FIXTURE: '1', WEBBRIDGE_G81_TEST_ONLY: '1',
+          WEBBRIDGE_FIXTURE_ENABLE: '1',
+          WEBBRIDGE_G81_SECRET: randomBytes(32).toString('hex'),
+          WEBBRIDGE_FIXTURE_TOKEN: token, WEBBRIDGE_FIXTURE_URL: fake.baseURL },
+        requests: () => fake.requests(),
+        ...(custom ?? {}),
+      });
+    } finally { await fake.close(); await custom?.close?.(); }
+    if (!local.fixtureNativeRpc || !local.fixtureModelSSE ||
+        !proof.rootPluginActive || proof.fixtureModelRegistered)
+      throw new Error('G150 default-on vs opt-in contract violated');
+    npm(['uninstall', name, '--prefix', profile, '--no-save',
+      '--ignore-scripts','--no-package-lock','--no-audit','--no-fund'], env, temp);
+    if (existsSync(restored.location)) throw new Error('real plugin uninstall left package behind');
+    return { ...source, ...proof, localOptIn: local, reproducible: true,
+      rootGraph: first.graph,
+      upgraded: true, rolledBack: true, tamperDenied: true, uninstalled: true };
+  } finally {
+    await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  proveActualEntrypoint({ native: process.argv.includes('--native') })
+    .then((proof) => console.log('G143 actual root plugin package PASS', JSON.stringify(proof)))
+    .catch((error) => { console.error('G143 actual root plugin NO-GO:', error.message); process.exitCode = 1; });
+}

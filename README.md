@@ -49,6 +49,72 @@ Explicitly user-authenticated website, if automation is permitted
 
 OpenCode's documentation describes [`@opencode/plugin` v2](https://opencode.ai/v2/docs/build/plugins/) and an [integrated browser tool](https://opencode.ai/v2/docs/tools/). These do **not**, by themselves, prove a server plugin can control an existing browser tab or supply native inference. Both integration points need an experimental proof before activating a provider.
 
+## Native models (experimental, dormant by default)
+
+`src/index.ts` can register the five web providers as native OpenCode models through public SDK
+surfaces only (`ctx.provider.transform` + a scoped `ctx.aisdk.hook('language')` with a packaged
+anchor module). Registration is **dormant** unless the user individually activates a provider:
+
+```sh
+WEBBRIDGE_NATIVE_WEB_MODELS=chatgpt opencode run --model webbridge-chatgpt/chatgpt-web "..."
+```
+
+### Consented browser session (per provider, per tab)
+
+A model only ever drives a browser tab the operator declares explicitly. Two environment
+variables are required together:
+
+```sh
+# One already-open tab, selected by its CDP target id (ChatGPT only for now):
+WEBBRIDGE_NATIVE_TAB_CHATGPT=http://127.0.0.1:9222#<tabID>
+# An existing private, operator-owned directory for the durable attempt journal:
+WEBBRIDGE_NATIVE_JOURNAL_DIR=~/.webbridge/journal   # mkdir -m 700 it first
+```
+
+Start Chrome/Chromium with a **dedicated** `--user-data-dir` and `--remote-debugging-port=9222`
+(Chrome 136+ refuses a debug port on the default profile; sign in to the provider inside that
+profile if the tab you consent to requires it), open e.g. `https://chatgpt.com` in exactly one
+tab, and read that tab's target id from `http://127.0.0.1:9222/json/list` (the `id` of the page
+whose `url` is on the provider origin). Declaring the tab **is** the authorization — there is no
+per-send prompt, because `ctx.aisdk.hook('language')` receives no session identity (see
+`docs/proposals/plugin-provided-language-model.fr.md`). Revocation = remove the declaration and
+restart OpenCode; a tab that is closed, replaced or navigated away is refused at every read.
+The audited send primitive caps the submitted prompt at 4000 characters, and a declared tab
+whose browser is unreachable refuses explicitly before any UI effect.
+
+Honest state rules that are enforced by construction:
+
+- without an attached, explicitly authorized browser session the model **refuses** with an
+  explicit error; no text is ever fabricated, and no fixture is ever presented as a provider answer;
+- a **proven** DOM completion becomes `stop` with the explicit raw marker
+  `webbridge-dom-completion-observed`; anything unproven becomes an `error` finish with
+  `webbridge-terminal-uncertain` (OpenCode 2.0.32 has no first-class UNCERTAIN terminal).
+  No completion proof for the ChatGPT DOM exists yet, so real turns end `uncertain` today;
+- every turn records an attempt (atomically, temp+fsync+rename) in the journal **before** any UI
+  effect: a retried model call re-observes the same browser turn instead of submitting the prompt
+  twice, a possibly-sent turn is never replayed, and a corrupt record refuses the turn instead of
+  being read as "no record";
+- core auxiliary calls (thread titles) are answered locally and never reach a browser;
+- only ChatGPT has a reviewed send primitive today; declaring a tab for another provider is
+  refused loudly instead of half-working.
+
+The read-only side is provider-wide: `webbridge-manual-observe` attaches one already-open declared
+tab (every provider), discovers the latest assistant message, displays it for confirmation
+(`--message` skips discovery) and streams bounded `[UNVERIFIED]` fragments. It never sends, never
+claims finality, and Qwen ends `NO-GO` after a real readiness probe. Per-provider capabilities are
+single-sourced in `src/providers/provider-adapters.ts` (read primitive, discovery, send, completion
+proof, notes); see `docs/OBSERVE-PROVIDER.fr.md`.
+
+The durable attempt journal (`WEBBRIDGE_NATIVE_JOURNAL_DIR`) is operator-inspectable and explicitly
+reconcilable: `webbridge-journal` lists every attempt (state, turn, selected message, acknowledged
+cursor, tab scope, age — never assistant text) and `--abandon <turnID|key-prefix>` closes a
+provisional attempt so a later identical prompt becomes a new turn instead of being reconciled onto a
+possibly-stale browser turn. It never claims a completion; see `docs/JOURNAL-OPERATOR.fr.md`.
+
+The browser transport used by the CLI test is a token-gated fixture that labels itself
+`[WebBridge test fixture - NOT a provider answer]`; it cannot activate without a 64-hex token and
+it is never a substitute for a real authenticated session.
+
 ## Development
 
 Requires Node.js 22.19+ and an OpenCode 2 installation for eventual smoke tests.
@@ -59,7 +125,7 @@ npm run typecheck
 npm test
 ```
 
-This repository intentionally does not advertise an install command until the native provider lifecycle has been validated. The current entrypoint in `src/index.ts` registers no models or tools.
+This repository intentionally does not advertise an install command until the native provider lifecycle has been validated. The current entrypoint registers tools/models only under explicit individual opt-in; the raw npm package installs, registers a provider, and serves the plugin model through the official CLI (`test/native-web-models-cli.test.ts`).
 
 ## Origins and attribution
 
