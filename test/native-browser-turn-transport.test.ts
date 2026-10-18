@@ -348,6 +348,22 @@ test("an oversized prompt is refused before any attach, and the exact bound is a
   assert.equal(calls.sends.length, 1, "the exact reviewed bound is still a legitimate prompt");
 });
 
+test("a forged provider/model request cannot split the durable one-shot namespace", async () => {
+  const { transport, store, calls } = build({ baseline: null,
+    samples: [{ messageKey: "m2", text: "response" }] });
+  for (const request of [
+    { ...REQUEST, providerID: "different-provider" },
+    { ...REQUEST, modelID: "another-model" },
+  ]) {
+    await assert.rejects(collect(transport, request), /provider\/model mismatch/);
+  }
+  assert.equal(calls.sends.length, 0);
+  assert.equal(store.snapshot().length, 0);
+  const accepted = await collect(transport);
+  assert.deepEqual(fragments(accepted), ["response"]);
+  assert.equal(calls.sends.length, 1);
+});
+
 test("time and frequency budgets are explicit and refuse invalid values at construction", () => {
   for (const extra of [
     { polls: 0 }, { polls: 65 },

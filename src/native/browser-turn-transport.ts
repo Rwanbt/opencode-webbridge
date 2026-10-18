@@ -144,6 +144,8 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
 
   return Object.freeze({
     async *stream(request: NativeTurnRequest): AsyncIterable<NativeTurnEvent> {
+      if (request?.providerID !== config.providerID || request?.modelID !== config.modelID)
+        throw new Error("WebBridge browser turn: provider/model mismatch");
       if (!request || typeof request.prompt !== "string" || !request.prompt.trim())
         throw new Error("WebBridge browser turn: empty prompt refused");
       if (request.prompt.length > MAX_PROMPT_CHARS)
