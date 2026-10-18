@@ -153,7 +153,8 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
     await mkdir(profile);
     invokeNpm(['install', join(temp, archive), '--prefix', profile, '--ignore-scripts',
       '--no-save', '--no-package-lock', '--no-audit', '--no-fund']);
-    const entry = join(profile, 'node_modules/opencode-webbridge/dist/src/index.js');
+    const installedRoot = join(profile, 'node_modules/opencode-webbridge');
+    const entry = join(installedRoot, 'dist/src/index.js');
     await access(entry); // A missing compiled root is a hard packaging error.
     const imported = await import(pathToFileURL(entry).href);
     assert.equal(imported.default?.id, 'opencode.webbridge',
@@ -161,7 +162,10 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
     const configDir = join(temp, 'config');
     await mkdir(configDir);
     await Promise.all(['home', 'data', 'cache'].map((dir) => mkdir(join(temp, dir))));
-    const config = JSON.stringify({ plugins: [pathToFileURL(entry).href] });
+    // OpenCode's confirmed native install lifecycle registers package DIRECTORY
+    // URLs, not direct file module URLs (G143 and G150), then resolves main.
+    const configuredRoot = pathToFileURL(installedRoot).href;
+    const config = JSON.stringify({ plugins: [configuredRoot] });
     await writeFile(join(configDir, 'opencode.json'), config);
     const password = randomBytes(32).toString('hex');
     const port = await reservePort();
@@ -191,7 +195,7 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
           if (configReply.ok) {
             responseOk = true;
             const publicConfig = JSON.stringify(await configReply.json());
-            configFound = publicConfig.includes(pathToFileURL(entry).href);
+            configFound = publicConfig.includes(configuredRoot);
           }
         }
         const response = await fetch(endpoint + '/api/plugin', {
