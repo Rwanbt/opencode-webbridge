@@ -34,7 +34,7 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
   const content = provider === 'deepseek' ? [root]
     : provider === 'qwen' ? [...root.querySelectorAll('.qwen-markdown')]
     : provider === 'gemini' ? [...root.querySelectorAll('model-response-content')]
-    : [...root.querySelectorAll('.markdown')];
+    : [...root.querySelectorAll('[class*="markdown"]')]; // mistral (observed layout)
   if (content.length !== 1) return null; // No broad text fallback: reasoning/user contamination.
   let keyNode: Element | null = root;
   let key: string | null = null;

@@ -14,7 +14,7 @@ export type ProviderReadPrimitive =
   | "g157-chatgpt-cdp-observer"
   | "g160-other-provider-dom"
   | "g169-qwen-probe";
-export type ProviderSendPrimitive = "g159-chatgpt-one-shot" | "g174-deepseek-one-shot" | "g175-gemini-one-shot" | "g176-qwen-one-shot";
+export type ProviderSendPrimitive = "g159-chatgpt-one-shot" | "g174-deepseek-one-shot" | "g175-gemini-one-shot" | "g176-qwen-one-shot" | "g177-mistral-one-shot";
 
 export interface ProviderAdapter {
   readonly id: WebProviderID;
@@ -69,9 +69,9 @@ const CAPABILITIES: Readonly<
   mistral: {
     readPrimitive: "g160-other-provider-dom",
     discoverable: true,
-    sendPrimitive: null,
+    sendPrimitive: "g177-mistral-one-shot",
     completionProof: "none",
-    notes: "read-only observer with tentative selectors (unverified against the authenticated UI); no send primitive",
+    notes: "consented one-shot send (composer + 'Envoyer' control observed on the authenticated UI) + read-only observer; response finality stays UNCERTAIN",
   },
 };
 
