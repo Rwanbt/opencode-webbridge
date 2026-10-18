@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -11,13 +12,31 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const NAME = 'opencode-webbridge';
-const NATIVE = process.platform === 'linux' && process.env.G164_OFFICIAL_CLI === '1';
+const WINDOWS = process.platform === 'win32';
+const NATIVE = (process.platform === 'linux' || WINDOWS) && process.env.G164_OFFICIAL_CLI === '1';
 const digest = (s) => createHash('sha256').update(s).digest('hex');
+// Windows cannot spawn npm's cmd shim without a shell; reuse the npm that runs beside this Node.
+let npmCli;
+const resolveNpmCli = () => {
+  if (npmCli !== undefined) return npmCli;
+  npmCli = WINDOWS
+    ? [join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+       join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')]
+        .find((candidate) => existsSync(candidate)) ?? null
+    : null;
+  if (WINDOWS && !npmCli)
+    throw new Error('G164 cannot locate npm-cli.js beside ' + process.execPath);
+  return npmCli;
+};
 const execNpm = (args, cwd, timeout = 120_000) => {
-  const result = spawnSync('npm', args, {
+  const cli = resolveNpmCli();
+  const options = {
     cwd, env: { ...process.env, npm_config_audit: 'false', npm_config_fund: 'false' },
     encoding: 'utf8', timeout, maxBuffer: 1024 * 1024, windowsHide: true,
-  });
+  };
+  const result = cli
+    ? spawnSync(process.execPath, [cli, ...args], options)
+    : spawnSync('npm', args, options);
   assert.equal(result.status, 0, 'npm ' + args[0] + ' failed: ' +
     (result.stderr ?? '').slice(-900));
   return result.stdout;
@@ -64,7 +83,8 @@ async function sourceVariant(temp) {
   const manifest = JSON.parse(await readFile(join(repo, 'package.json'), 'utf8'));
   manifest.version = '0.0.1';
   await writeFile(join(work, 'package.json'), JSON.stringify(manifest) + '\n');
-  await symlink(join(repo, 'node_modules'), join(work, 'node_modules'), 'dir');
+  await symlink(join(repo, 'node_modules'), join(work, 'node_modules'),
+    WINDOWS ? 'junction' : 'dir');
   return work;
 }
 async function port() {
@@ -96,10 +116,13 @@ async function nativeProof(prefix, temp, stage) {
   await writeFile(join(configDir, 'opencode.json'), config);
   const pwd = randomBytes(32).toString('hex');
   const bind = await port();
-  const bin = join(repo, 'node_modules/.bin/opencode');
+  const bin = WINDOWS
+    ? join(repo, 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe')
+    : join(repo, 'node_modules/.bin/opencode');
   const server = spawn(bin, ['serve', '--hostname', '127.0.0.1', '--port', String(bind)], {
     cwd: temp, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, HOME: join(temp, 'home'),
+      ...(WINDOWS ? { USERPROFILE: join(temp, 'home') } : {}),
       XDG_CONFIG_HOME: configDir, XDG_DATA_HOME: join(temp, 'data'),
       XDG_CACHE_HOME: join(temp, 'cache'), OPENCODE_CONFIG_DIR: configDir,
       OPENCODE_CONFIG_CONTENT: config, OPENCODE_DISABLE_PROJECT_CONFIG: 'true',
@@ -145,7 +168,9 @@ async function nativeProof(prefix, temp, stage) {
       /webbridge-(chatgpt|deepseek|gemini|qwen|mistral)/,
       'unproven commercial model was advertised');
   } finally {
-    if (server.exitCode === null) server.kill();
+    if (server.exitCode === null && WINDOWS && server.pid)
+      spawnSync('taskkill', ['/pid', String(server.pid), '/t', '/f'], { windowsHide: true });
+    else if (server.exitCode === null) server.kill();
     await Promise.race([new Promise((done) => server.once('close', done)),
       new Promise((done) => setTimeout(done, 2500))]);
   }
