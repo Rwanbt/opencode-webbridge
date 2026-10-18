@@ -72,6 +72,10 @@ jobs:
         run: npm run build && node --test dist/test/g156-chatgpt-dom.test.js
         env:
           WEBBRIDGE_G156_BROWSER: '1'
+      - name: W11 provider reader fixtures in real Chromium (qwen empty turn, live layouts, fail closed)
+        run: npm run build && node --test dist/test/w11-selector-robustness.test.js
+        env:
+          WEBBRIDGE_G160_BROWSER: '1'
       - name: G99/G100 installed plugin local Chromium DOM and fail-closed tab-change
         run: npm run smoke:g99-page
       - name: G113 installed plugin local Chromium actual page close is terminal uncertain
