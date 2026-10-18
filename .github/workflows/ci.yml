@@ -367,6 +367,23 @@ jobs:
         env:
           G170_NATIVE_CLI: '1'
 
+  g177-packed-interactive-operator:
+    name: G177 tarball-installed operator terminal approved Chromium one-shot
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - run: node --test dist/test/g177-packed-operator-pty.test.js
+        env:
+          G177_REAL_PTY: '1'
+
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
     runs-on: ubuntu-latest
