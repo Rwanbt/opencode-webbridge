@@ -4,7 +4,7 @@ import { strict as assert } from 'node:assert';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -97,6 +97,112 @@ async function port() {
   const n = socket.address().port;
   await new Promise((ok) => socket.close(ok));
   return n;
+}
+async function spawnOfficialCLI(temp, label, config) {
+  const configDir = join(temp, 'config-' + label);
+  for (const dir of ['home', 'data', 'cache', 'config-' + label])
+    await mkdir(join(temp, dir), { recursive: true });
+  await writeFile(join(configDir, 'opencode.json'), config);
+  const pwd = randomBytes(32).toString('hex');
+  const bind = await port();
+  const bin = WINDOWS
+    ? join(repo, 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe')
+    : join(repo, 'node_modules/.bin/opencode');
+  const server = spawn(bin, ['serve', '--hostname', '127.0.0.1', '--port', String(bind)], {
+    cwd: temp, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, HOME: join(temp, 'home'),
+      ...(WINDOWS ? { USERPROFILE: join(temp, 'home') } : {}),
+      XDG_CONFIG_HOME: configDir, XDG_DATA_HOME: join(temp, 'data'),
+      XDG_CACHE_HOME: join(temp, 'cache'), OPENCODE_CONFIG_DIR: configDir,
+      OPENCODE_CONFIG_CONTENT: config, OPENCODE_DISABLE_PROJECT_CONFIG: 'true',
+      OPENCODE_SERVER_PASSWORD: pwd, WEBBRIDGE_PERSONAL_CDP_READONLY: '1',
+      WEBBRIDGE_PERSONAL_BROWSER_OWNED: '1',
+      WEBBRIDGE_PERSONAL_CDP_ENDPOINT: 'http://127.0.0.1:9333',
+      WEBBRIDGE_G150_LOCAL_FIXTURE: '0' },
+  });
+  let log = '';
+  for (const stream of [server.stdout, server.stderr]) {
+    stream.on('data', (value) => { log = (log + value.toString()).slice(-2500); });
+  }
+  return { server,
+    base: 'http://127.0.0.1:' + bind,
+    headers: { Authorization: 'Basic ' +
+      Buffer.from('opencode:' + pwd).toString('base64') },
+    diagnostic: () => log.replaceAll(pwd, '[REDACTED]').slice(-600),
+    stop: async () => {
+      if (server.exitCode === null && WINDOWS && server.pid)
+        spawnSync('taskkill', ['/pid', String(server.pid), '/t', '/f'], { windowsHide: true });
+      else if (server.exitCode === null) server.kill();
+      await Promise.race([new Promise((done) => server.once('close', done)),
+        new Promise((done) => setTimeout(done, 2500))]);
+    } };
+}
+async function waitReady(host) {
+  for (let i = 0; i < 100 && host.server.exitCode === null; i++) {
+    try {
+      const reply = await fetch(host.base + '/api/plugin', {
+        headers: host.headers, signal: AbortSignal.timeout(650),
+      });
+      if (reply.ok) return reply.json();
+    } catch { /* bounded startup retry */ }
+    await new Promise((done) => setTimeout(done, 160));
+  }
+  throw new Error('official CLI never became ready, diagnostic=' + host.diagnostic());
+}
+async function waitPluginActive(host) {
+  let inventory = 'none';
+  for (let i = 0; i < 100 && host.server.exitCode === null; i++) {
+    try {
+      const reply = await fetch(host.base + '/api/plugin', {
+        headers: host.headers, signal: AbortSignal.timeout(650),
+      });
+      if (reply.ok) {
+        const result = await reply.json();
+        inventory = JSON.stringify(result.data?.filter((item) =>
+          /webbridge|failed/i.test(item?.id ?? '')).map((item) =>
+          ({ id: item.id, status: item.state?.status })));
+        if (result.data?.some((item) => item.id === 'opencode.webbridge' &&
+          item.state?.status === 'active')) return;
+      }
+    } catch { /* bounded startup retry */ }
+    await new Promise((done) => setTimeout(done, 160));
+  }
+  throw new Error('official CLI never activated the installed raw root, inventory=' +
+    inventory + ' diagnostic=' + host.diagnostic());
+}
+async function pluginInventory(host) {
+  const reply = await fetch(host.base + '/api/plugin', {
+    headers: host.headers, signal: AbortSignal.timeout(3000),
+  });
+  assert.equal(reply.ok, true, 'official plugin inventory unavailable');
+  return (await reply.json()).data ?? [];
+}
+async function officialSession(host, title) {
+  const reply = await fetch(host.base + '/api/session', { method: 'POST',
+    headers: { ...host.headers, 'content-type': 'application/json' },
+    body: JSON.stringify({ title }), signal: AbortSignal.timeout(5000) });
+  assert.equal(reply.ok, true, 'official session create failed HTTP ' + reply.status);
+  const body = await reply.json();
+  assert.match(body?.data?.id ?? '', /^ses_[a-zA-Z0-9_-]+$/, 'invalid official session id');
+  assert.equal(body.data.title, title);
+  return body.data.id;
+}
+async function assertSessionIntact(host, sessionID, title) {
+  const list = await fetch(host.base + '/api/session?limit=100', {
+    headers: host.headers, signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(list.ok, true, 'official session list unavailable');
+  assert.ok((await list.json()).data?.some((session) => session.id === sessionID),
+    'persisted session missing from official list');
+  const detail = await fetch(host.base + '/api/session/' + encodeURIComponent(sessionID), {
+    headers: host.headers, signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(detail.ok, true, 'official session detail unavailable');
+  assert.equal((await detail.json())?.data?.title, title, 'persisted session title corrupted');
+  const messages = await fetch(host.base + '/api/session/' + encodeURIComponent(sessionID) +
+    '/message?limit=100', { headers: host.headers, signal: AbortSignal.timeout(5000) });
+  assert.equal(messages.ok, true, 'official session history unavailable');
+  assert.ok(Array.isArray((await messages.json())?.data), 'official message history missing');
 }
 async function nativeProof(prefix, temp, stage) {
   const installed = join(prefix, 'node_modules', NAME);
@@ -216,4 +322,63 @@ test('G164 RAW npm pack, official CLI 2.0.32, upgrade and rollback without dist 
         if (stage === 'rollback') assert.equal(proof.rootHash, initialHash);
       }
     } finally { await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+  });
+
+test('G164 lifecycle: uninstall from the package keeps official sessions and frees temp resources',
+  { skip: !NATIVE }, async () => {
+    const cli = JSON.parse(await readFile(join(repo, 'node_modules/@opencode/cli/package.json')));
+    assert.equal(cli.version, '2.0.32');
+    const temp = await mkdtemp(join(tmpdir(), 'webbridge-g164-life-'));
+    let removed = false;
+    try {
+      const green = await pack(repo, temp, '0.0.0');
+      packageContract(green.meta);
+      const prefix = join(temp, 'installed-profile');
+      execNpm(['install', green.path, '--prefix', prefix, '--ignore-scripts',
+        '--no-save', '--no-package-lock', '--no-audit', '--no-fund'], temp, 360_000);
+      const installed = join(prefix, 'node_modules', NAME);
+      const title = 'webbridge lifecycle ' + randomBytes(4).toString('hex');
+      const staleConfig = JSON.stringify({ plugins: [pathToFileURL(installed).href] });
+
+      // A real official session is created while the installed raw root is active.
+      const live = await spawnOfficialCLI(temp, 'life-active', staleConfig);
+      let sessionID;
+      try {
+        await waitPluginActive(live);
+        sessionID = await officialSession(live, title);
+      } finally { await live.stop(); }
+
+      // Uninstall the raw package from the disposable profile.
+      execNpm(['uninstall', NAME, '--prefix', prefix, '--ignore-scripts',
+        '--no-save', '--no-package-lock', '--no-audit', '--no-fund'], temp, 360_000);
+      await assert.rejects(lstat(installed), 'uninstalled package directory is still present');
+
+      // Stale config still points at the removed package: the server must stay
+      // healthy, never report webbridge active, and keep the session intact.
+      const stale = await spawnOfficialCLI(temp, 'life-stale', staleConfig);
+      try {
+        await waitReady(stale);
+        const items = await pluginInventory(stale);
+        assert.ok(!items.some((item) => item.id === 'opencode.webbridge' &&
+          item.state?.status === 'active'), 'removed package still reported active');
+        await assertSessionIntact(stale, sessionID, title);
+      } finally { await stale.stop(); }
+
+      // Clean config without the plugin entry: nothing webbridge registered, session intact.
+      const clean = await spawnOfficialCLI(temp, 'life-clean', JSON.stringify({ plugins: [] }));
+      try {
+        await waitReady(clean);
+        const items = await pluginInventory(clean);
+        assert.ok(!items.some((item) => item.id === 'opencode.webbridge'),
+          'removed plugin is still registered');
+        await assertSessionIntact(clean, sessionID, title);
+      } finally { await clean.stop(); }
+
+      // Temporary resources are removable once every official server is stopped.
+      await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      removed = true;
+      await assert.rejects(lstat(temp), 'temporary resources survived cleanup');
+    } finally {
+      if (!removed) await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
   });
