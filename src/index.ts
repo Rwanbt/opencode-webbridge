@@ -11,11 +11,20 @@ export default Plugin.define({
     const { registerNativeWebModels } = await import("./native/registration.js");
     const nativeCleanup = await registerNativeWebModels(ctx, process.env);
     if (process.env.WEBBRIDGE_G150_LOCAL_FIXTURE !== "1") {
-      if (process.env.WEBBRIDGE_PERSONAL_CDP_READONLY !== "1") return nativeCleanup;
-      const { registerG163PersonalRead } = await import("./runtime/g163-root-read.js");
-      const readCleanup = await registerG163PersonalRead(ctx, process.env);
+      const cleanups: Array<() => Promise<void>> = [];
+      if (process.env.WEBBRIDGE_PERSONAL_READONLY_TOOLS === "1") {
+        const { registerReadonlyTools } = await import("./runtime/readonly-tools.js");
+        const readonlyCleanup = await registerReadonlyTools(ctx, process.env);
+        if (readonlyCleanup) cleanups.push(readonlyCleanup);
+      }
+      if (process.env.WEBBRIDGE_PERSONAL_CDP_READONLY === "1") {
+        const { registerG163PersonalRead } = await import("./runtime/g163-root-read.js");
+        const readCleanup = await registerG163PersonalRead(ctx, process.env);
+        if (readCleanup) cleanups.push(readCleanup);
+      }
+      if (cleanups.length === 0) return nativeCleanup;
       return async () => {
-        if (readCleanup) await readCleanup();
+        for (const cleanup of cleanups) await cleanup();
         if (nativeCleanup) await nativeCleanup();
       };
     }
