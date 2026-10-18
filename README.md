@@ -49,6 +49,31 @@ Explicitly user-authenticated website, if automation is permitted
 
 OpenCode's documentation describes [`@opencode/plugin` v2](https://opencode.ai/v2/docs/build/plugins/) and an [integrated browser tool](https://opencode.ai/v2/docs/tools/). These do **not**, by themselves, prove a server plugin can control an existing browser tab or supply native inference. Both integration points need an experimental proof before activating a provider.
 
+## Native models (experimental, dormant by default)
+
+`src/index.ts` can register the five web providers as native OpenCode models through public SDK
+surfaces only (`ctx.provider.transform` + a scoped `ctx.aisdk.hook('language')` with a packaged
+anchor module). Registration is **dormant** unless the user individually activates a provider:
+
+```sh
+WEBBRIDGE_NATIVE_WEB_MODELS=chatgpt opencode run --model webbridge-chatgpt/chatgpt-web "..."
+```
+
+Honest state rules that are enforced by construction:
+
+- without an attached, explicitly authorized browser session the model **refuses** with an
+  explicit error; no text is ever fabricated, and no fixture is ever presented as a provider answer;
+- a **proven** DOM completion becomes `stop` with the explicit raw marker
+  `webbridge-dom-completion-observed`; anything unproven becomes an `error` finish with
+  `webbridge-terminal-uncertain` (OpenCode 2.0.32 has no first-class UNCERTAIN terminal);
+- core auxiliary calls (thread titles) are answered locally and never reach a browser;
+- the consented CDP send/read transport is the next increment; until then these models are
+  selectable but never produce an answer.
+
+The browser transport used by the CLI test is a token-gated fixture that labels itself
+`[WebBridge test fixture - NOT a provider answer]`; it cannot activate without a 64-hex token and
+it is never a substitute for a real authenticated session.
+
 ## Development
 
 Requires Node.js 22.19+ and an OpenCode 2 installation for eventual smoke tests.
@@ -59,7 +84,7 @@ npm run typecheck
 npm test
 ```
 
-This repository intentionally does not advertise an install command until the native provider lifecycle has been validated. The current entrypoint in `src/index.ts` registers no models or tools.
+This repository intentionally does not advertise an install command until the native provider lifecycle has been validated. The current entrypoint registers tools/models only under explicit individual opt-in; the raw npm package installs, registers a provider, and serves the plugin model through the official CLI (`test/native-web-models-cli.test.ts`).
 
 ## Origins and attribution
 

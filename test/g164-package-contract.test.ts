@@ -20,7 +20,13 @@ test('G164 pack main must be emitted, not raw TS and never the test harness', as
   assert.equal(manifest.devDependencies.playwright, undefined);
   assert.equal(manifest.private, true, 'do not publish unqualified commercial integration');
   const tsconfig = JSON.parse(await readFile(join(base, 'tsconfig.pack.json'), 'utf8'));
-  assert.deepEqual(tsconfig.include, ['src/index.ts', 'src/runtime/g166-chatgpt-manual-turn.ts']);
+  assert.deepEqual(tsconfig.include, [
+    'src/index.ts',
+    // Runtime-loaded entry point: the core imports it by name via the `aisdk:` anchor,
+    // so it is never reachable through imports and must be packaged explicitly.
+    'src/native/provider-anchor.ts',
+    'src/runtime/g166-chatgpt-manual-turn.ts',
+  ]);
   assert.equal(manifest.bin['webbridge-manual-chatgpt'], './bin/webbridge-manual-chatgpt.mjs');
   assert.ok(manifest.files.includes('bin/'));
   assert.ok(tsconfig.exclude.includes('test'));
