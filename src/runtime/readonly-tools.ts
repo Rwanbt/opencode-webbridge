@@ -31,6 +31,24 @@ const Input = Schema.Struct({
   staged: Schema.optional(Schema.Boolean),
 });
 
+const IDENTITY = /^[A-Za-z0-9_-]{1,128}$/;
+/** A sub-agent invocation is only actionable when its identity is verifiable:
+ *  an empty or malformed session/agent/turn/call can never be granted, so it is
+ *  refused instead of being passed along as if it were authority. */
+const requireIdentity = (invocation: {
+  readonly sessionID?: unknown; readonly agent?: unknown;
+  readonly messageID?: unknown; readonly id?: unknown;
+}) => {
+  for (const [field, value] of [
+    ['sessionID', invocation.sessionID], ['agent', invocation.agent],
+    ['messageID', invocation.messageID], ['id', invocation.id],
+  ] as const) {
+    if (typeof value !== 'string' || !IDENTITY.test(value))
+      return fail(`missing or invalid ${field}: refusing to act without a verifiable identity`);
+  }
+  return true;
+};
+
 /** Read-only workspace tools; the workspace root is re-verified on every call. */
 export async function registerReadonlyTools(ctx: Context, env: NodeJS.ProcessEnv) {
   const config = readonlyToolsConfig(env);
@@ -44,6 +62,7 @@ export async function registerReadonlyTools(ctx: Context, env: NodeJS.ProcessEnv
       + 'declared workspace. Requires OpenCode permission for every call; cannot write.',
     input: Input,
     async execute(input, invocation) {
+      requireIdentity(invocation);
       const scope: ToolScope = Object.freeze({
         sessionID: invocation.sessionID, agentID: invocation.agent,
         turnID: invocation.messageID, workspaceID: workspaceRef, callID: invocation.id,
