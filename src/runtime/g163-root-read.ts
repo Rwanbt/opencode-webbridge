@@ -9,9 +9,11 @@ type Context = Plugin.Context;
 const PROVIDERS = new Set<string>(WEB_PROVIDER_CATALOG.map((provider) => provider.id));
 const fail = (reason: string): never => { throw new Error('G163 browser session refused: ' + reason); };
 const Input = Schema.Struct({
-  action: Schema.Literals(['list', 'headings', 'read']),
+  action: Schema.Literals(['list', 'headings', 'read', 'observe']),
   provider: Schema.optional(Schema.String),
   tabID: Schema.optional(Schema.String),
+  messageKey: Schema.optional(Schema.String),
+  polls: Schema.optional(Schema.Number),
 });
 const OPT = 'WEBBRIDGE_PERSONAL_CDP_READONLY';
 
@@ -83,6 +85,10 @@ export async function registerG163PersonalRead(ctx: Context, env: NodeJS.Process
           } };
         }
         if (provider === 'qwen') return fail('Qwen answer selectors unverified; discovery only');
+        if (input.action === 'observe' && (typeof input.messageKey !== 'string' ||
+            !/^[\w:.-]{1,256}$/.test(input.messageKey) ||
+            !Number.isSafeInteger(input.polls ?? 4) || (input.polls ?? 4) < 1 ||
+            (input.polls ?? 4) > 12)) return fail('selected message and bounded polls required');
         const read = async () => {
           await authorize('webbridge.cdp.assistant.read', [provider, tabID]);
           return true;
@@ -99,6 +105,18 @@ export async function registerG163PersonalRead(ctx: Context, env: NodeJS.Process
           : await (await import('../providers/g160-other-provider-dom.js')).G160OtherProviderObserver
             .attach(config.endpoint, tabID, provider, consent);
         try {
+          if (input.action === 'observe') {
+            const fragments: Array<{seq: number; value: string}> = [];
+            for await (const event of attachment.observe(invocation.id, input.messageKey!, input.polls ?? 4)) {
+              await authorize('webbridge.cdp.assistant.read', [provider, tabID]);
+              if (event.kind === 'text') fragments.push({seq: event.seq, value: event.value});
+              if (fragments.length > 64) return fail('observation limit exceeded');
+            }
+            await authorize('webbridge.cdp.assistant.read', [provider, tabID]);
+            return {content: JSON.stringify(fragments), metadata: {
+              provider, mode: 'read-only', completionVerified: false, inferenceEnabled: false,
+            }};
+          }
           const answer = await attachment.sample();
           await authorize('webbridge.cdp.assistant.read', [provider, tabID]);
           if (!answer) return fail('no unambiguous selected assistant message');

@@ -69,6 +69,8 @@ test('G163 read requires explicit provider+tab, never opens CDP without both', a
   await assert.rejects(host.invoke({ action: 'read', provider: 'qwen', tabID: '' }), /explicit/);
   await assert.rejects(host.invoke({ action: 'read', provider: 'evil', tabID: 'ABCD' }), /explicit/);
   await assert.rejects(host.invoke({ action: 'read', provider: 'qwen', tabID: 'ABCD' }), /unverified/);
+  await assert.rejects(host.invoke({ action: 'observe', provider: 'qwen', tabID: 'ABCD',
+    messageKey: 'answer-1' }), /unverified/);
   assert.equal(host.actions.length, 0);
 });
 
@@ -111,6 +113,12 @@ test('G163 real root registration -> owned Chromium CDP five origins -> ChatGPT 
     const read = await host.invoke({ action: 'read', provider: 'chatgpt', tabID: tab.tabID });
     assert.equal(read.content, 'Real local root read');
     assert.doesNotMatch(JSON.stringify(read), /PRIVATE_CREDENTIAL|PRIVATE_PROMPT/);
+    const progress = await host.invoke({ action: 'observe', provider: 'chatgpt',
+      tabID: tab.tabID, messageKey: 'answer-1', polls: 2 });
+    const fragments = JSON.parse(progress.content) as { seq: number; value: string }[];
+    assert.equal(fragments.map((piece) => piece.value).join(''), 'Real local root read');
+    assert.equal(progress.metadata.completionVerified, false);
+    assert.doesNotMatch(JSON.stringify(progress), /PRIVATE_CREDENTIAL|PRIVATE_PROMPT/);
     assert.ok(host.actions.includes('webbridge.cdp.attach'));
     assert.ok(host.actions.includes('webbridge.cdp.assistant.read'));
     host.deny();
