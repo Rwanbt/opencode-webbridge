@@ -37,6 +37,8 @@ test('G164 pack main must be emitted, not raw TS and never the test harness', as
   assert.equal(manifest.bin['webbridge-manual-chatgpt'], './bin/webbridge-manual-chatgpt.mjs');
   assert.equal(manifest.bin['webbridge-manual-observe'], './bin/webbridge-manual-observe.mjs');
   assert.equal(manifest.bin['webbridge-journal'], './bin/webbridge-journal.mjs');
+  assert.equal(manifest.bin['webbridge-doctor'], './bin/webbridge-doctor.mjs');
+  assert.equal(manifest.bin['webbridge-selftest'], './bin/webbridge-selftest.mjs');
   assert.ok(manifest.files.includes('bin/'));
   assert.ok(tsconfig.exclude.includes('test'));
   assert.ok(tsconfig.exclude.includes('src/testing'));

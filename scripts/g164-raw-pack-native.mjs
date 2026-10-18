@@ -59,11 +59,11 @@ function packageContract(meta) {
     'dist/src/providers/provider-adapters.js', 'dist/src/runtime/observe-provider.js',
     'dist/src/native/journal-operator.js', 'dist/src/runtime/readonly-tools.js',
     'bin/webbridge-manual-chatgpt.mjs', 'bin/webbridge-manual-observe.mjs',
-    'bin/webbridge-journal.mjs']) {
+    'bin/webbridge-journal.mjs', 'bin/webbridge-doctor.mjs', 'bin/webbridge-selftest.mjs']) {
     assert.ok(paths.includes(required), 'raw tarball misses ' + required);
   }
   assert.ok(paths.every((path) => path === 'package.json' || path === 'index.mjs' ||
-    /^bin\/webbridge-(manual-(chatgpt|observe)|journal)\.mjs$/.test(path) ||
+    /^bin\/webbridge-(manual-(chatgpt|observe)|journal|doctor|selftest)\.mjs$/.test(path) ||
     /^(README.md|LICENSE|SECURITY.md|THIRD-PARTY-NOTICES.md)$/.test(path) ||
     path.startsWith('dist/src/')), 'release tarball leaked source/tests/fixtures');
   assert.ok(!paths.some((path) => path.startsWith('dist/src/testing/') ||
