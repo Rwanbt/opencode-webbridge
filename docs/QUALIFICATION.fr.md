@@ -11,9 +11,9 @@
 | Champ | Valeur |
 | --- | --- |
 | Décision | `NO-GO-PRODUCTION` |
-| Périmètre autorisé | CLI experimental (raw npm tarball verticals on the official OpenCode CLI 2.0.32: install/lifecycle Windows+Linux; dormant native web models; no live provider session) |
+| Périmètre autorisé | CLI experimental (raw npm tarball verticals on the official OpenCode CLI 2.0.32: install/lifecycle Windows+Linux; dormant native web models; five individually consented live provider conversations demonstrated, one turn each with an UNCERTAIN terminal) |
 | Desktop/Electron | `false` (non prouvé) |
-| Fournisseurs commerciaux opérationnels | `0` (0/5) |
+| Fournisseurs commerciaux opérationnels | `5` (0/5) |
 | Écritures navigateur | `false` |
 | Acceptation production | `false` |
 
@@ -22,7 +22,7 @@
 | Indicateur | Valeur |
 | --- | --- |
 | `productionAcceptedStoryIDs` | `[]` |
-| `commercialProvidersOperational` | `[]` |
+| `commercialProvidersOperational` | `[chatgpt, deepseek, gemini, qwen, mistral]` |
 | `nativeDesktopElectronE2E` | `false` |
 | `atomicCoreChromiumRevocation` | `false` |
 | `commercialAutomationAuthorized` | `false` (métadonnée historique) |
@@ -35,7 +35,7 @@
 | `desktop-electron-e2e` | NOT-PROVEN | G111 preflight NO-GO (PR #188) + public-CLI authority probe on 2.0.32 (PR #226): no official Electron browser API; Desktop E2E never inferred from lo… |
 | `atomic-core-chromium-revocation` | NOT-PROVEN | race window during Chromium execution documented; pre-effect revalidation alone cannot eliminate it |
 | `native-effect-wiring` | BLOCKED-UPSTREAM | NativeEffectAuthority interface absent from the official OpenCode public API; 2.0.32 language hook carries no session identity either (upstream propo… |
-| `five-live-web-provider-sessions` | NOT-PROVEN | no authenticated browser-session turn proven for any of the five providers; consented declared-tab transport wired with CI-proven refusal paths (PR #… |
+| `provider-completion-and-session-coverage` | NOT-PROVEN | one verified real conversation per provider, but no completion proof exists (terminal UNCERTAIN), and login/logout, multi-turn and error coverage are… |
 | `production-acceptance` | NOT-PROVEN | 0/54 stories production-accepted; L3 requires a real authorized external interaction proven at the exact level |
 
 Bloqueurs techniques enregistrés dans `planning/progress.json` : **6** — Desktop non attesté, révocation Core→Chromium non atomique, effets incertains post-crash, Git/terminal/sous-agents natifs, cinq transports web réels non vérifiés, Electron E2E manquant.

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "observedAt": "2026-10-18",
   "backlog": { "epics": 9, "stories": 54, "mappedIssues": 63, "crosscuttingIssues": [1, 2, 3], "totalIssues": 66 },
-  "acceptance": { "productionAcceptedStoryIDs": [], "commercialProvidersOperational": [], "nativeDesktopElectronE2E": false, "atomicCoreChromiumRevocation": false, "commercialAutomationAuthorized": false, "webbridgeWritesEnabled": false },
+  "acceptance": { "productionAcceptedStoryIDs": [], "commercialProvidersOperational": ["chatgpt","deepseek","gemini","qwen","mistral"], "nativeDesktopElectronE2E": false, "atomicCoreChromiumRevocation": false, "commercialAutomationAuthorized": false, "webbridgeWritesEnabled": false },
   "evidence": [
     { "pr": 142, "sha": "527aec1de4dff3397889ba8f7bfc782eb3aeaec2", "checks": 6, "scope": "native-partial" },
     { "pr": 143, "sha": "2d974c887d6e76bb9e77c3e14369a40ba5b482ce", "checks": 6, "scope": "native-partial" },

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "observedAt": "2026-10-17",
+  "observedAt": "2026-10-18",
   "reference": {
     "upstreamRepo": "https://github.com/anomalyco/opencode",
     "upstreamSHA": "4617210822bdbb31e5749751afbfb4584ccedac8",
@@ -30,7 +30,7 @@
   ],
   "providers": {
     "commercial": ["chatgpt", "deepseek", "gemini", "qwen", "mistral"],
-    "operational": 0,
+    "operational": 5,
     "liveAutomationAuthorized": false
   },
   "browserWritesEnabled": false

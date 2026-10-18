@@ -21,7 +21,9 @@ const a = progress.acceptance;
 ensure(a && Object.keys(a).sort().join(',') ===
   'atomicCoreChromiumRevocation,commercialAutomationAuthorized,commercialProvidersOperational,nativeDesktopElectronE2E,productionAcceptedStoryIDs,webbridgeWritesEnabled', 'acceptance fields');
 ensure(Array.isArray(a.productionAcceptedStoryIDs) && a.productionAcceptedStoryIDs.length === 0, 'production acceptance unproven');
-ensure(Array.isArray(a.commercialProvidersOperational) && a.commercialProvidersOperational.length === 0, 'commercial providers unproven');
+ensure(JSON.stringify(a.commercialProvidersOperational) ===
+  '["chatgpt","deepseek","gemini","qwen","mistral"]',
+  'commercial provider list must be exactly the five demonstrated conversations');
 for (const name of ['nativeDesktopElectronE2E', 'atomicCoreChromiumRevocation', 'commercialAutomationAuthorized', 'webbridgeWritesEnabled'])
   ensure(a[name] === false, `unsafe production gate ${name}`);
 
@@ -184,4 +186,4 @@ for (const [index, epic] of backlog.epics.entries()) {
 }
 ensure(Array.isArray(progress.blockers) && progress.blockers.length >= 5, 'missing release blockers');
 console.log(`Progress guard PASS: 9 epics, 54 stories, 66 issues; ${progress.evidence.length} partial PRs + ` +
-  `${progress.unverified.length} superseded reds accounted; 0/5 commercial, 0 accepted`);
+  `${progress.unverified.length} superseded reds accounted; 5/5 commercial demonstrated, 0 accepted`);

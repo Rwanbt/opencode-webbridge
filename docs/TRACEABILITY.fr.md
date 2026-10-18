@@ -10,7 +10,7 @@
 | Indicateur | Valeur |
 | --- | --- |
 | `productionAcceptedStoryIDs` | `[]` |
-| `commercialProvidersOperational` | `[]` |
+| `commercialProvidersOperational` | `[chatgpt, deepseek, gemini, qwen, mistral]` |
 | `nativeDesktopElectronE2E` | `false` |
 | `atomicCoreChromiumRevocation` | `false` |
 | `commercialAutomationAuthorized` | `false` (métadonnée historique) |

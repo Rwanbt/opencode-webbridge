@@ -55,7 +55,8 @@ test("acceptance stays provably empty and the indicators stay unchanged", async 
   const sources = await generator.loadSources();
   const accepted = sources.progress.acceptance.productionAcceptedStoryIDs as string[];
   assert.deepEqual(accepted, [], "no story may be accepted without a real user session");
-  assert.equal((sources.progress.acceptance.commercialProvidersOperational as string[]).length, 0);
+  assert.deepEqual((sources.progress.acceptance.commercialProvidersOperational as string[]),
+    ["chatgpt", "deepseek", "gemini", "qwen", "mistral"]);
   assert.equal(sources.progress.acceptance.nativeDesktopElectronE2E, false);
   assert.equal(sources.progress.acceptance.atomicCoreChromiumRevocation, false);
   assert.equal(sources.progress.acceptance.webbridgeWritesEnabled, false);

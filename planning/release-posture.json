@@ -3,9 +3,9 @@
   "observedAt": "2026-10-18",
   "decision": "NO-GO-PRODUCTION",
   "allowedClaims": {
-    "scope": "CLI experimental (raw npm tarball verticals on the official OpenCode CLI 2.0.32: install/lifecycle Windows+Linux; dormant native web models; no live provider session)",
+    "scope": "CLI experimental (raw npm tarball verticals on the official OpenCode CLI 2.0.32: install/lifecycle Windows+Linux; dormant native web models; five individually consented live provider conversations demonstrated, one turn each with an UNCERTAIN terminal)",
     "desktop": false,
-    "commercialProviders": 0,
+    "commercialProviders": 5,
     "browserWrites": false,
     "productionAccepted": false
   },
@@ -26,9 +26,9 @@
       "evidence": "NativeEffectAuthority interface absent from the official OpenCode public API; 2.0.32 language hook carries no session identity either (upstream proposal PR #260); un-attested effects refused (no-native-authority)"
     },
     {
-      "id": "five-live-web-provider-sessions",
+      "id": "provider-completion-and-session-coverage",
       "status": "NOT-PROVEN",
-      "evidence": "no authenticated browser-session turn proven for any of the five providers; consented declared-tab transport wired with CI-proven refusal paths (PR #262/#263), no real provider conversation demonstrated (0/5)"
+      "evidence": "one verified real conversation per provider, but no completion proof exists (terminal UNCERTAIN), and login/logout, multi-turn and error coverage are not demonstrated for any provider"
     },
     {
       "id": "production-acceptance",

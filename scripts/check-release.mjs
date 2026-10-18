@@ -20,7 +20,7 @@ const claims = posture.allowedClaims;
 ensure(claims && Object.keys(claims).sort().join(',') === 'browserWrites,commercialProviders,desktop,productionAccepted,scope', 'allowedClaims fields');
 ensure(typeof claims.scope === 'string' && claims.scope.startsWith('CLI experimental'), 'only the CLI experimental scope may be announced');
 ensure(claims.desktop === false, 'desktop claims are not permitted');
-ensure(claims.commercialProviders === 0, 'commercial providers are not permitted');
+ensure(claims.commercialProviders === 5, 'commercial provider claim must match the five demonstrated conversations');
 ensure(claims.browserWrites === false, 'browser writes are not permitted');
 ensure(claims.productionAccepted === false, 'no story is production-accepted');
 
@@ -36,7 +36,7 @@ const BLOCKERS = [
   'desktop-electron-e2e',
   'atomic-core-chromium-revocation',
   'native-effect-wiring',
-  'five-live-web-provider-sessions',
+  'provider-completion-and-session-coverage',
   'production-acceptance',
 ];
 ensure(Array.isArray(posture.blockers) && posture.blockers.map((blocker) => blocker.id).join(',') === BLOCKERS.join(','),
@@ -55,4 +55,4 @@ const counts = posture.blockers.reduce((acc, blocker) => {
 console.log('Release guard PASS: NO-GO-PRODUCTION — CLI experimental (OpenCode 2.0.32 raw-tarball verticals) scope only; ' +
   `${posture.blockers.length} blockers unresolved (${counts['NOT-PROVEN'] ?? 0} not-proven, ` +
   `${counts['BLOCKED-UPSTREAM'] ?? 0} upstream, ${counts['BLOCKED-CONTRACT'] ?? 0} contract); ` +
-  '0/54 accepted; 0/5 commercial; writes disabled');
+  '0/54 accepted; 5/5 commercial demonstrated; writes disabled');

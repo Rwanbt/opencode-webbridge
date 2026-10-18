@@ -48,7 +48,8 @@ test("the report states the exact release verdict, blockers and indicator values
   assert.equal(sources.posture.decision, "NO-GO-PRODUCTION");
   assert.match(doc, /NO-GO-PRODUCTION/);
   assert.equal((sources.progress.acceptance.productionAcceptedStoryIDs as string[]).length, 0);
-  assert.equal((sources.progress.acceptance.commercialProvidersOperational as string[]).length, 0);
+  assert.deepEqual((sources.progress.acceptance.commercialProvidersOperational as string[]),
+    ["chatgpt", "deepseek", "gemini", "qwen", "mistral"]);
   assert.equal(sources.progress.acceptance.nativeDesktopElectronE2E, false);
   assert.equal(sources.progress.acceptance.atomicCoreChromiumRevocation, false);
   assert.equal(sources.progress.acceptance.commercialAutomationAuthorized, false);

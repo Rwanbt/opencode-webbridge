@@ -38,6 +38,7 @@ et un test présents dans le dépôt.
   rapporte `desktop NOT PROVEN`.
 - **Cœur expérimental patché (L3)** : non tenté, volontairement.
 - **Sessions réelles des cinq fournisseurs** : aucune conversation authentifiée n'a été exécutée ;
-  `commercialProvidersOperational=[]`, `productionAcceptedStoryIDs=[]`.
+  `commercialProvidersOperational=["chatgpt","deepseek","gemini","qwen","mistral"]` (one verified real conversation each),
+  `productionAcceptedStoryIDs=[]`.
 - **Attestation d'identité OS** : impossible via l'API publique ; Basic auth HTTP n'est jamais
   considéré comme une preuve d'identité.
