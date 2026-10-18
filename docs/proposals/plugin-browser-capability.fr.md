@@ -70,6 +70,33 @@ Autrement dit : la seule pièce manquante est la **production** de cet hôte par
    réponse d'achèvement non prouvable ; sans quoi WebBridge conservera `UNCERTAIN`
    (voir la proposition modèle pour l'état terminal).
 
+## Signature proposée (prête pour une PR upstream)
+
+Le corps d'issue **prêt à déposer** est `docs/proposals/upstream/browser-capability-issue.md`.
+La forme exacte demandée :
+
+```ts
+interface Plugin.Context { readonly browser?: BrowserCapability }
+interface BrowserCapability {
+  list(): Promise<readonly { tabID: string; origin: string; generation: number }[]>;
+  attach(input: { sessionID: string; tabID: string }): Promise<BrowserTab>;
+}
+interface BrowserTab {
+  readonly tabID: string;
+  readonly generation: number;
+  submit(request: { turnID: string; prompt: string }): Promise<void>;
+  events(turnID: string, afterSeq: number): Promise<readonly TurnEvent[]>;
+  cancel(turnID: string): Promise<boolean>;
+  release(): Promise<void>;
+}
+```
+
+Point d'application côté hôte : le constructeur du `Plugin.Context` doit peupler `ctx.browser`
+depuis le gestionnaire de navigateur de l'hôte, sous réserve de l'action de permission `browser`
+(règle de refus intégrée) et d'une action scopée plugin ; `undefined` sinon (fail-closed). La
+consommation côté WebBridge (`BrowserHostCapability`) est déjà prête et testée : elle accepte
+exactement cette forme via `BrowserHostRegistration`, sans modification.
+
 ## Hors périmètre
 
 - Aucun contournement d'authentification, de CAPTCHA ou de règles fournisseur.
