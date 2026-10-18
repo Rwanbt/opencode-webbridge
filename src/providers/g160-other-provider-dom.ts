@@ -7,7 +7,12 @@ import { readPlainFields } from '../core/adapter-contract.js';
 import { assertOpaqueID, type TurnEvent } from '../core/browser-port.js';
 
 export type OtherProviderID = 'deepseek' | 'gemini' | 'mistral' | 'qwen';
-export type OtherResponse = { readonly messageKey: string; readonly text: string };
+export type OtherResponse = {
+  readonly messageKey: string;
+  readonly text: string;
+  /** Provider-final evidence: the UI itself finalized THIS message. */
+  readonly finalized: boolean;
+};
 export interface OtherReadConsent extends CdpConsent {
   readonly allowAssistantText: (tab: CdpTab) => Promise<boolean>;
 }
@@ -58,7 +63,39 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
   if (!key || !documentKey.test(key)) return null; // No unstable indices/text hashes.
   const text = content[0].textContent ?? '';
   if (!text || text.length > 16_000) return null;
-  return { messageKey: key, text };
+  // Provider-final evidence, observed live (2026-10-18). A finalized answer
+  // exposes its OWN action bar; the user turn's controls ("Copier le message",
+  // "Modifier le message", "Copier le prompt") never match, so a streaming turn
+  // cannot borrow them. DOM silence is never used as proof.
+  const labelOf = (el: Element): string =>
+    el.getAttribute('aria-label') ?? el.getAttribute('title') ?? el.getAttribute('data-testid') ?? '';
+  const FINAL = provider === 'deepseek'
+    // Observed: DeepSeek exposes only "Lire à voix haute" — not a finality bar.
+    ? /(?!)/ // never: stays honest, no completion claim
+    : provider === 'gemini'
+      ? /^copier$|^écouter$|^partager et exporter$|bonne réponse|mauvaise réponse|afficher plus d'options/i
+      : provider === 'qwen'
+        ? /^copier$|^régénérer$|^partager$|bonne réponse|mauvaise réponse|plus d'actions/i
+        : /copy to clipboard|^rewrite$|^like$|^dislike$|lire à voix haute/i; // mistral
+  const STOPPING = /stop|arr[êe]ter|abort|interrupt/i;
+  let finalControls = 0;
+  let bar: Element | null = root;
+  for (let i = 0; i < 3 && bar; i++, bar = bar.parentElement) {
+    const labels = new Set<string>();
+    for (const b of bar.querySelectorAll('button,[role="button"]')) {
+      const l = labelOf(b);
+      if (l && FINAL.test(l)) labels.add(l);
+    }
+    finalControls = Math.max(finalControls, labels.size);
+  }
+  let generating = false;
+  let seen = 0;
+  for (const b of document.querySelectorAll('button,[role="button"],[data-testid*="stop" i]')) {
+    if (++seen > 4000) break;
+    if (STOPPING.test(labelOf(b))) { generating = true; break; }
+  }
+  const finalized = finalControls >= 2 && !generating;
+  return { messageKey: key, text, finalized };
 }
 
 /** Uses the ACTUAL existing user-selected Chromium tab and exact DOM reader. */
@@ -132,13 +169,15 @@ export class G160OtherProviderObserver {
     const raw = await this.page.evaluate(g160ReadOtherDOM, this.provider);
     await this.authorize();
     if (raw === null) return null;
-    const parsed = readPlainFields(raw, ['messageKey', 'text']);
+    const parsed = readPlainFields(raw, ['messageKey', 'text', 'finalized']);
     if (!parsed.ok) throw new Error('G160 invalid DOM snapshot');
     const key = parsed.fields.get('messageKey'), text = parsed.fields.get('text');
+    const finalized = parsed.fields.get('finalized');
     if (typeof key !== 'string' || !KEY.test(key) ||
-        typeof text !== 'string' || !text || text.length > 16_000)
+        typeof text !== 'string' || !text || text.length > 16_000 ||
+        typeof finalized !== 'boolean')
       throw new Error('G160 invalid assistant content');
-    return Object.freeze({ messageKey: key, text });
+    return Object.freeze({ messageKey: key, text, finalized });
   }
 
   async *observe(turnID: string, messageKey: string, polls = 12): AsyncGenerator<TurnEvent> {

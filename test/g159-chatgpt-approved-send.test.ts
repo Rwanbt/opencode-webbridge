@@ -4,6 +4,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { MAX_PROMPT_CHARS } from '../src/core/prompt-bound.js';
 import { chromium } from 'playwright';
 import { ExplicitCdpReadBridge } from '../src/browser/explicit-cdp-read.js';
 import { g159ConsumeOnce, g159SendChatgptOnce, type G159SendConsent } from '../src/providers/g159-chatgpt-approved-send.js';
@@ -45,7 +46,7 @@ test('G159 rejects malformed turn, prompt, endpoint before opening any CDP conne
     journalDir: '/nonexistent', consent: consent() };
   await assert.rejects(g159SendChatgptOnce({ ...base, turnID: '../escape' }), /invalid/);
   await assert.rejects(g159SendChatgptOnce({ ...base, prompt: '\u0000secret' }), /invalid/);
-  await assert.rejects(g159SendChatgptOnce({ ...base, prompt: 'x'.repeat(4001) }), /invalid/);
+  await assert.rejects(g159SendChatgptOnce({ ...base, prompt: 'x'.repeat(MAX_PROMPT_CHARS + 1) }), /invalid/);
   await assert.rejects(g159SendChatgptOnce({ ...base, endpoint: 'http://localhost:9222' }), /loopback/);
 });
 

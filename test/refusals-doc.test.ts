@@ -45,7 +45,7 @@ test("every documented refusal marker exists literally in the native sources", a
 test("the catalogue keeps the decisive refusals documented", async () => {
   const markers = documentedMarkers(await read(DOC));
   for (const required of [
-    "empty prompt refused", "prompt exceeds the reviewed bound", "invalid bounded budget",
+    "empty prompt refused", "above the reviewed bound", "invalid bounded budget",
     "checkpoint-mismatch", "scope-changed", "send-uncertain", "governance-",
     "corrupt attempt record", "has no consented send primitive yet",
     "dom-completion-proven", "webbridge-terminal-uncertain", "must be an explicit loopback",

@@ -1,6 +1,7 @@
 /** G159: explicit, user-approved ONE-shot UI submission in an EXISTING Chrome tab.
  * No OS/Desktop attestation; never auto-retry, authenticate, bypass CAPTCHA or inspect secrets. */
 import { createHash } from 'node:crypto';
+import { MAX_PROMPT_CHARS } from '../core/prompt-bound.js';
 import { lstat, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type Browser, type Page, type CDPSession } from 'playwright';
@@ -81,7 +82,7 @@ export async function g159SendChatgptOnce(request: G159SendRequest): Promise<{
 }> {
   const { endpoint, tabID, sessionID, turnID, prompt, journalDir, consent } = request;
   if (!id(tabID) || !id(sessionID) || !id(turnID) ||
-      typeof prompt !== 'string' || !prompt.trim() || prompt.length > 4000 ||
+      typeof prompt !== 'string' || !prompt.trim() || prompt.length > MAX_PROMPT_CHARS ||
       /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(prompt) ||
       typeof consent?.approveSend !== 'function' ||
       typeof consent?.isStillApproved !== 'function') return deny('invalid request or missing explicit send authorization');

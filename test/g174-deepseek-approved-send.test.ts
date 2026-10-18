@@ -4,6 +4,7 @@ import { strict as assert } from 'node:assert';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { MAX_PROMPT_CHARS } from '../src/core/prompt-bound.js';
 import { g174ConsumeOnce, g174SendDeepseekOnce } from '../src/providers/g174-deepseek-approved-send.js';
 
 const action = Object.freeze({
@@ -28,7 +29,7 @@ test('G174 refuses an over-long or control-character prompt', async () => {
     userDeclaresBrowserOwnership: true as const, approve: async () => true,
     approveSend: async () => true, isStillApproved: () => true,
   };
-  for (const prompt of ['x'.repeat(4001), 'bad\u0001prompt']) {
+  for (const prompt of ['x'.repeat(MAX_PROMPT_CHARS + 1), 'bad\u0001prompt']) {
     await assert.rejects(
       g174SendDeepseekOnce({
         endpoint: 'http://127.0.0.1:9222', tabID: 'ABCD1234', sessionID: 'session_one',

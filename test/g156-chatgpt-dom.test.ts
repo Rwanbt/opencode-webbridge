@@ -9,7 +9,7 @@ import { WEB_PROVIDER_CATALOG } from '../src/catalog.js';
 
 const original: G156Tab = { tabID: 'attachedTab', generation: 'gen1',
   url: 'https://chatgpt.com/c/fixture' };
-const answer: G156Observation = { messageKey: 'msg-1', layout: 'legacy', text: 'Hello' };
+const answer: G156Observation = { messageKey: 'msg-1', layout: 'legacy', text: 'Hello', finalized: false };
 function fixture(initial: G156Observation | null = answer) {
   let tab: G156Tab = { ...original };
   let response = initial;

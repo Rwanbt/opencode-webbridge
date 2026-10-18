@@ -1,7 +1,10 @@
-/** Selector robustness: the in-page readers are exercised against real DOM
- *  fixtures served locally (no network, no account). These cases pin the live
- *  layouts observed on 2026-10-18 and the two failure modes that motivated the
- *  hardening: a trailing empty turn (Qwen) and a dead primary selector. */
+/** Selector robustness + provider-final completion evidence.
+ *
+ *  These cases run the REAL in-page readers in Chromium against DOM fixtures
+ *  served locally (no network, no account). They pin the live layouts observed
+ *  on 2026-10-18 and the failure modes that motivated the hardening: a trailing
+ *  empty turn (Qwen), a dead primary selector, and — critically — a streaming
+ *  turn that must NEVER be reported as complete. */
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { chromium, type Browser, type Page } from 'playwright';
@@ -10,25 +13,35 @@ import { g156ChatgptReadDOM } from '../src/providers/g156-chatgpt-dom.js';
 
 const CASES = [
   {
-    name: 'deepseek: assistant body with a stable message id',
+    name: 'deepseek: assistant body with a stable message id (no finality bar -> never complete)',
     provider: 'deepseek' as const,
     url: 'https://chat.deepseek.com/a/chat/s/abcdefgh-1234',
     html: '<div data-message-id="ds-live-1"><div class="ds-markdown ds-assistant-message-main-content">DS answer</div></div>',
-    expect: { messageKey: 'ds-live-1', text: 'DS answer' },
+    expect: { messageKey: 'ds-live-1', text: 'DS answer', finalized: false },
   },
   {
-    name: 'gemini: model-response/model-response-content pair',
+    name: 'gemini: model-response pair with its finalized action bar',
     provider: 'gemini' as const,
     url: 'https://gemini.google.com/app/abcdef',
-    html: '<model-response data-message-id="ge-live-1"><model-response-content>GE answer</model-response-content></model-response>',
-    expect: { messageKey: 'ge-live-1', text: 'GE answer' },
+    html: '<model-response data-message-id="ge-live-1"><model-response-content>GE answer</model-response-content>'
+      + '<button aria-label="Copier"></button><button aria-label="Bonne réponse"></button></model-response>',
+    expect: { messageKey: 'ge-live-1', text: 'GE answer', finalized: true },
   },
   {
-    name: 'mistral: assistant role container with one markdown body',
+    name: 'gemini: a single stray control is not enough to claim completion',
+    provider: 'gemini' as const,
+    url: 'https://gemini.google.com/app/abcdef',
+    html: '<model-response data-message-id="ge-live-2"><model-response-content>GE answer</model-response-content>'
+      + '<button aria-label="Copier"></button></model-response>',
+    expect: { messageKey: 'ge-live-2', text: 'GE answer', finalized: false },
+  },
+  {
+    name: 'mistral: assistant role container with its finalized action bar',
     provider: 'mistral' as const,
     url: 'https://chat.mistral.ai/chat/abcdef',
-    html: '<div data-message-id="mi-live-1" data-message-author-role="assistant"><div class="markdown">MI answer</div></div>',
-    expect: { messageKey: 'mi-live-1', text: 'MI answer' },
+    html: '<div data-message-id="mi-live-1" data-message-author-role="assistant"><div class="markdown">MI answer</div>'
+      + '<button aria-label="Copy to clipboard"></button><button aria-label="Rewrite"></button></div>',
+    expect: { messageKey: 'mi-live-1', text: 'MI answer', finalized: true },
   },
   {
     name: 'qwen: a trailing empty turn must not hide the real answer',
@@ -36,7 +49,7 @@ const CASES = [
     url: 'https://chat.qwen.ai/c/abcdef',
     html: '<div id="chat-response-message-a"><div class="qwen-markdown">QW answer</div></div>'
       + '<div id="chat-response-message-b"></div>',
-    expect: { messageKey: 'chat-response-message-a', text: 'QW answer' },
+    expect: { messageKey: 'chat-response-message-a', text: 'QW answer', finalized: false },
   },
   {
     name: 'qwen: a container with two bodies is skipped, never guessed',
@@ -45,7 +58,24 @@ const CASES = [
     html: '<div id="chat-response-message-a"><div class="qwen-markdown">QW answer</div></div>'
       + '<div id="chat-response-message-b"><div class="qwen-markdown">one</div>'
       + '<div class="qwen-markdown">two</div></div>',
-    expect: { messageKey: 'chat-response-message-a', text: 'QW answer' },
+    expect: { messageKey: 'chat-response-message-a', text: 'QW answer', finalized: false },
+  },
+  {
+    name: 'qwen: the finalized action bar proves completion',
+    provider: 'qwen' as const,
+    url: 'https://chat.qwen.ai/c/abcdef',
+    html: '<div id="chat-response-message-a"><div class="qwen-markdown">QW answer</div>'
+      + '<button aria-label="Copier"></button><button aria-label="Régénérer"></button></div>',
+    expect: { messageKey: 'chat-response-message-a', text: 'QW answer', finalized: true },
+  },
+  {
+    name: 'qwen: an ACTIVE stop control vetoes completion even with the action bar',
+    provider: 'qwen' as const,
+    url: 'https://chat.qwen.ai/c/abcdef',
+    html: '<div id="chat-response-message-a"><div class="qwen-markdown">QW answer</div>'
+      + '<button aria-label="Copier"></button><button aria-label="Régénérer"></button></div>'
+      + '<button aria-label="Arrêter"></button>',
+    expect: { messageKey: 'chat-response-message-a', text: 'QW answer', finalized: false },
   },
   {
     name: 'qwen: an unrecognized layout reads nothing (fail closed)',
@@ -56,15 +86,18 @@ const CASES = [
   },
 ] as const;
 
-const BROWSER = process.env.WEBBRIDGE_G160_BROWSER === '1';
-
 async function serve(page: Page, origin: string, html: string): Promise<void> {
+  // The charset is mandatory: without it Chromium decodes the body as
+  // windows-1252 and accented provider labels ("Bonne réponse") arrive as
+  // mojibake, which would silently defeat the finality detection under test.
   await page.route(origin + '/**', (route) => route.fulfill({
-    status: 200, contentType: 'text/html', body: html,
+    status: 200, contentType: 'text/html; charset=utf-8', body: html,
   }));
 }
 
-test('G160 readers: live layouts, trailing empty turn and fail-closed unknown UI', {
+const BROWSER = process.env.WEBBRIDGE_G160_BROWSER === '1';
+
+test('G160 readers: live layouts, trailing empty turn, finality bar and fail-closed unknown UI', {
   skip: !BROWSER,
 }, async () => {
   const browser: Browser = await chromium.launch({ headless: true });
@@ -81,24 +114,42 @@ test('G160 readers: live layouts, trailing empty turn and fail-closed unknown UI
   } finally { await browser.close(); }
 });
 
-test('G156 ChatGPT reader: work layout, legacy fallback and ambiguity refusal', {
+test('G156 ChatGPT reader: work/legacy layouts, ambiguity refusal and the user-turn trap', {
   skip: !BROWSER,
 }, async () => {
   const browser: Browser = await chromium.launch({ headless: true });
   const cases = [
     {
-      name: 'work layout wins and reads the last assistant turn',
+      name: 'work layout reads the last assistant turn (no finality bar yet)',
       html: '<div data-content-search-unit-key="u1:assistant">'
         + '<div data-markdown-text-style="assistant-message">first</div></div>'
         + '<div data-content-search-unit-key="u2:assistant">'
         + '<div data-markdown-text-style="assistant-message">second</div></div>',
-      expect: { messageKey: 'u2:assistant', layout: 'work', text: 'second' },
+      expect: { messageKey: 'u2:assistant', layout: 'work', text: 'second', finalized: false },
     },
     {
       name: 'legacy article layout still reads',
       html: '<article data-turn="assistant" data-turn-id="turn-7">'
         + '<div class="markdown">legacy answer</div></article>',
-      expect: { messageKey: 'turn-7', layout: 'legacy', text: 'legacy answer' },
+      expect: { messageKey: 'turn-7', layout: 'legacy', text: 'legacy answer', finalized: false },
+    },
+    {
+      name: 'the assistant finality bar (ancestor level) proves completion',
+      html: '<div data-content-search-unit-key="u5:assistant">'
+        + '<div data-markdown-text-style="assistant-message">done</div>'
+        + '<button aria-label="Copier"></button>'
+        + '<button aria-label="Régénérer la réponse"></button></div>',
+      expect: { messageKey: 'u5:assistant', layout: 'work', text: 'done', finalized: true },
+    },
+    {
+      name: 'the USER turn controls must never be borrowed as completion evidence',
+      html: '<div class="turn"><div class="user">'
+        + '<button aria-label="Copier le message"></button>'
+        + '<button aria-label="Modifier le message"></button>'
+        + '<button aria-label="Partager le prompt"></button></div>'
+        + '<div data-content-search-unit-key="u6:assistant">'
+        + '<div data-markdown-text-style="assistant-message">streaming</div></div></div>',
+      expect: { messageKey: 'u6:assistant', layout: 'work', text: 'streaming', finalized: false },
     },
     {
       name: 'two answer bodies in one turn is ambiguous and refused',
