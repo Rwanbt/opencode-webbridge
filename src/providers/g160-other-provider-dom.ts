@@ -26,8 +26,12 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
     nodes = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
   } else if (provider === 'qwen') {
     // Observed on the real authenticated Qwen UI (2026-10-18): each assistant
-    // turn is a container with id "chat-response-message-<uuid>".
-    nodes = [...document.querySelectorAll('[id^="chat-response-message-"]')];
+    // turn is a container with id "chat-response-message-<uuid>". The live list
+    // held 4 such nodes for only 3 ".qwen-markdown" bodies (one container was an
+    // empty/pending turn), so selecting the last node blindly could read
+    // nothing. Keep only containers carrying exactly one answer body.
+    nodes = [...document.querySelectorAll('[id^="chat-response-message-"]')]
+      .filter((node) => node.querySelectorAll('.qwen-markdown').length === 1);
   } else return null;
   if (!nodes.length || nodes.length > 128) return null;
   const root = nodes.at(-1)!;
@@ -144,7 +148,13 @@ export class G160OtherProviderObserver {
     let seen = '', seq = 0;
     for (let i = 0; i < polls; i++) {
       const found = await this.sample();
-      if (!found || found.messageKey !== messageKey) throw new Error('G160 answer replaced');
+      if (!found || found.messageKey !== messageKey) {
+        // Distinguish "the UI no longer exposes a recognizable answer" from
+        // "the answer was swapped for another turn": never a silent guess.
+        if (!seen && !found) throw new Error('G160 no assistant answer found on the declared '
+          + this.provider + ' tab (the UI may have changed; see docs/ADAPTERS-LIVE-RECON.fr.md)');
+        throw new Error('G160 answer replaced');
+      }
       if (!found.text.startsWith(seen)) throw new Error('G160 answer rewritten/uncertain');
       const pending = found.text.slice(seen.length);
       for (let j = 0; j < pending.length; j += 4096) {
