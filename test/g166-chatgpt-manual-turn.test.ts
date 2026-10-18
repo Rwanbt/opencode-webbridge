@@ -151,7 +151,21 @@ test('G166 intercepted HTTPS Chromium: one approved click, progressive candidate
       }
       assert.equal((cancelled.at(-1) as Extract<G166TurnEvent, { kind: 'terminal' }>).reason, 'cancelled');
       assert.equal((await sent()).length, 1);
-      assert.equal((await readdir(journal)).length, 5);
+
+      await page.reload();
+      let unblock!: () => void, entered!: () => void;
+      const held = new Promise<void>((resolve) => { unblock = resolve; });
+      const requested = new Promise<void>((resolve) => { entered = resolve; });
+      const first = run('turn_parallelfirst', { consent: {
+        ...consent(), approveSend: async () => { entered(); await held; return true; },
+      } });
+      await requested;
+      await assert.rejects(run('turn_parallelsecond'), /concurrent or unreconciled/);
+      assert.deepEqual(await sent(), []);
+      unblock();
+      assert.equal((await first).at(-1)?.kind, 'terminal');
+      assert.deepEqual(await sent(), [base.prompt]);
+      assert.equal((await readdir(journal)).length, 6);
     } finally {
       await context?.close();
       await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
