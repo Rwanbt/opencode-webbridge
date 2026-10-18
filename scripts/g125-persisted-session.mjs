@@ -17,7 +17,13 @@ export async function listSessionIDs(url, headers) {
 }
 
 export async function durableSession(url, headers, sessionID, { expected, prompt },
-  { maxRetries = 20, intervalMs = 100 } = {}) {
+  // A native turn may commit its durable history well after CLI stdout closes,
+  // and a loaded CI runner needs more than the previous 2 s budget: observed on
+  // the G149 vertical (same SHA passing one run and failing another with
+  // "finished native assistant text missing from persistent history"). The
+  // assertion itself is unchanged and still requires an EXACT finish:'stop'
+  // message with the exact persisted text — only the bounded wait grew.
+  { maxRetries = 60, intervalMs = 150 } = {}) {
   assert.match(sessionID, /^ses_[a-zA-Z0-9_-]+$/);
   const details = await readAPI(url, headers, '/api/session/' + encodeURIComponent(sessionID));
   assert.equal(details?.data?.id, sessionID);
