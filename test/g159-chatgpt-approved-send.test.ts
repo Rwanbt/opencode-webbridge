@@ -129,6 +129,15 @@ test('G159 existing Linux Chrome CDP: approved one click, denied/revoked/ambiguo
       assert.equal(await page.locator('#prompt-textarea').textContent(), base.prompt);
       await page.locator('#prompt-textarea').fill('');
 
+      // Reload to EXACTLY the same URL during approval: only CDP loaderId changes.
+      await assert.rejects(g159SendChatgptOnce({
+        ...base, turnID: 'turn_sameurl', consent: consent(async () => {
+          await page.reload({ waitUntil: 'domcontentloaded' }); return true;
+        }),
+      }), /document generation|navigation/);
+      assert.equal((await readdir(journal)).length, 2);
+      assert.deepEqual(await sent(), []);
+
       // Navigate during operator approval: same tab ID is NOT enough to send.
       await assert.rejects(g159SendChatgptOnce({
         ...base, turnID: 'turn_navigate', consent: consent(async () => {
