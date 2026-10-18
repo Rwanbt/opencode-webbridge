@@ -11,6 +11,7 @@ import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFileAttemptStore, requirePrivateDirectory } from "../src/native/attempt-store.js";
@@ -159,4 +160,52 @@ test("a declared but unreachable browser refuses, sends nothing and leaves no re
       "the refusal must stay repeatable instead of deadlocking on a stale attempt");
     assert.deepEqual(await readdir(dir), []);
   } finally { await drop(); }
+});
+
+test("a declared target can never cross the approved provider origins", async () => {
+  const { dir, drop } = await temp("webbridge-origin-");
+  let server: HttpServer | undefined;
+  try {
+    // A deliberately fake local CDP inventory: one approved-origin page and one
+    // page outside the provider allowlist. No browser is involved.
+    server = createHttpServer((req, res) => {
+      if (req.url !== "/json/list") { res.statusCode = 404; res.end("not found"); return; }
+      const port = (server!.address() as { port: number }).port;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify([
+        {
+          id: "target-approved", type: "page", url: "https://chatgpt.com/",
+          webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/target-approved`,
+        },
+        {
+          id: "target-local", type: "page", url: "https://example.com/",
+          webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/target-local`,
+        },
+      ]));
+    });
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+    const refusal = async (tabID: string) => {
+      const env = {
+        [CHATGPT.tabEnv]: `http://127.0.0.1:${port}#${tabID}`,
+        WEBBRIDGE_NATIVE_JOURNAL_DIR: dir,
+      };
+      const transport = await consentedTransport(env, CHATGPT);
+      assert.ok(transport);
+      const request: NativeTurnRequest = {
+        providerID: CHATGPT.providerID, modelID: CHATGPT.modelID,
+        prompt: `explain ${tabID}`, signal: new AbortController().signal,
+      };
+      await assert.rejects(
+        (async () => { for await (const event of transport.stream(request)) void event; })(),
+        /no attached authorized browser session/, tabID);
+      assert.deepEqual(await readdir(dir), [], tabID);
+    };
+    await refusal("target-local"); // named by the operator, still filtered by origin
+    await refusal("target-missing"); // absent from the browser inventory
+    await refusal("target-approved"); // approved origin, but no live CDP connection behind it
+  } finally {
+    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    await drop();
+  }
 });
