@@ -155,6 +155,9 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
       '--no-save', '--no-package-lock', '--no-audit', '--no-fund']);
     const entry = join(profile, 'node_modules/opencode-webbridge/dist/src/index.js');
     await access(entry); // A missing compiled root is a hard packaging error.
+    const imported = await import(pathToFileURL(entry).href);
+    assert.equal(imported.default?.id, 'opencode.webbridge',
+      'actual packed root module is not loadable by Node');
     const configDir = join(temp, 'config');
     await mkdir(configDir);
     await Promise.all(['home', 'data', 'cache'].map((dir) => mkdir(join(temp, dir))));
@@ -195,10 +198,14 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
       } catch { /* expected startup attempts */ }
       await new Promise((done) => setTimeout(done, 150));
     }
+    const logStates = (logs.match(/(?:error|fail|warn|plugin|webbridge)[^\r\n]{0,80}/ig) ?? [])
+      .slice(-6).map((line) => line.replaceAll(password, '[REDACTED]')
+        .replace(/(secret|token|key)\s*[:=]\s*\S+/ig, '$1=[REDACTED]'));
     assert.equal(active, true, 'ACTUAL npm-packed opt-in root was not loaded in CLI' +
       ` (exit=${child.exitCode}, inventory=${observed.slice(0, 500)},` +
       ` missingModule=${/ERR_MODULE_NOT_FOUND|Cannot find module/.test(logs)},` +
-      ` pluginError=${/plugin.*error|failed to load/i.test(logs)})`);
+      ` pluginError=${/plugin.*error|failed to load/i.test(logs)},` +
+      ` logStates=${JSON.stringify(logStates)})`);
     const providers = await fetch(endpoint + '/api/provider', {
       headers, signal: AbortSignal.timeout(3000),
     });
