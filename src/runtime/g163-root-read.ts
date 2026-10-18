@@ -9,7 +9,7 @@ type Context = Plugin.Context;
 const PROVIDERS = new Set<string>(WEB_PROVIDER_CATALOG.map((provider) => provider.id));
 const fail = (reason: string): never => { throw new Error('G163 browser session refused: ' + reason); };
 const Input = Schema.Struct({
-  action: Schema.Literals(['list', 'headings', 'read', 'observe']),
+  action: Schema.Literals(['list', 'headings', 'read', 'observe', 'probe']),
   provider: Schema.optional(Schema.String),
   tabID: Schema.optional(Schema.String),
   messageKey: Schema.optional(Schema.String),
@@ -72,6 +72,25 @@ export async function registerG163PersonalRead(ctx: Context, env: NodeJS.Process
           }))), metadata: { inferenceEnabled: false, mode: 'read-only' } };
         }
         const provider = input.provider as WebProviderID, tabID = input.tabID!;
+        if (input.action === 'probe') {
+          if (provider !== 'qwen') return fail('Qwen-only readiness probe');
+          await authorize('webbridge.cdp.qwen.probe', [provider, tabID]);
+          const { G169QwenRead } = await import('../providers/g169-qwen-read.js');
+          const attachment = await G169QwenRead.attach(config.endpoint, tabID, {
+            userDeclaresBrowserOwnership: true, approve,
+            signal: invocation.signal,
+            allowAssistantText: async () => false,
+            isStillApproved: () => !invocation.signal.aborted,
+          });
+          try {
+            const status = await attachment.probe();
+            await authorize('webbridge.cdp.qwen.probe', [provider, tabID]);
+            return { content: JSON.stringify(status), metadata: {
+              mode: 'read-only', inferenceEnabled: false,
+              liveSiteSelectorsVerified: false,
+            } };
+          } finally { await attachment.close(); }
+        }
         if (input.action === 'headings') {
           await discovery.open();
           const selected = (await discovery.tabs()).find((tab) =>

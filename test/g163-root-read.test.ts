@@ -121,10 +121,23 @@ test('G163 real root registration -> owned Chromium CDP five origins -> ChatGPT 
     assert.doesNotMatch(JSON.stringify(progress), /PRIVATE_CREDENTIAL|PRIVATE_PROMPT/);
     assert.ok(host.actions.includes('webbridge.cdp.attach'));
     assert.ok(host.actions.includes('webbridge.cdp.assistant.read'));
-    host.deny();
-    await assert.rejects(host.invoke({ action: 'read', provider: 'chatgpt', tabID: tab.tabID }),
-      /denied/);
     assert.equal(await page.locator('.markdown').textContent(), 'Real local root read');
+    await page.route('https://chat.qwen.ai/**', (route) => route.fulfill({
+      status: 200, contentType: 'text/html', body: '<h1>Qwen local metadata only</h1>',
+    }));
+    await page.goto('https://chat.qwen.ai/c/intercepted', { waitUntil: 'domcontentloaded' });
+    const qwenList = await host.invoke({ action: 'list' });
+    const qwenTab = (JSON.parse(qwenList.content) as { provider: string; tabID: string }[])
+      .find((item) => item.provider === 'qwen');
+    assert.ok(qwenTab);
+    const probe = await host.invoke({ action: 'probe', provider: 'qwen', tabID: qwenTab.tabID });
+    assert.equal(JSON.parse(probe.content).readStatus, 'NO_GO_UNVERIFIED_LIVE_QWEN_DOM');
+    assert.equal(probe.metadata.inferenceEnabled, false);
+    await assert.rejects(host.invoke({ action: 'read', provider: 'qwen', tabID: qwenTab.tabID }),
+      /unverified/);
+    host.deny();
+    await assert.rejects(host.invoke({ action: 'probe', provider: 'qwen', tabID: qwenTab.tabID }),
+      /denied/);
   } finally {
     await browser?.close();
     await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

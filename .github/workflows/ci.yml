@@ -332,6 +332,41 @@ jobs:
         env:
           G166_REAL_CDP: '1'
 
+  g169-qwen-conservative-read:
+    name: G173 Qwen origin probe and fixture-only DOM guarded read
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - run: node --test dist/test/g169-qwen-read.test.js
+        env:
+          G169_REAL_CDP: '1'
+          G169_INTERCEPTED_FIXTURE: '1'
+
+  g170-official-cli-provider-probe:
+    name: G173 native official CLI provider registration only with bounded fixture
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: npm run build
+      - run: node --test dist/test/g170-native-registration.test.js
+        env:
+          G170_NATIVE_CLI: '1'
+
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
     runs-on: ubuntu-latest
