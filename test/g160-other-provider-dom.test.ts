@@ -72,7 +72,9 @@ test('G160 real existing CDP Chromium provider-specific bodies, exact identity a
         item.id, consent(() => allowed));
       try {
         const answer = await observer.sample();
-        assert.deepEqual(answer, { messageKey: item.key, text: item.id.slice(0, 2).toUpperCase() + ' answer' });
+        const fixtureAnswer = item.id === 'deepseek' ? 'DS answer' :
+          item.id.slice(0, 2).toUpperCase() + ' answer';
+        assert.deepEqual(answer, { messageKey: item.key, text: fixtureAnswer });
         const parts: string[] = [];
         let updated = false;
         for await (const fragment of observer.observe('readTurn', item.key, 2)) {
@@ -84,7 +86,7 @@ test('G160 real existing CDP Chromium provider-specific bodies, exact identity a
             await page.locator(selector).evaluate((el) => { el.textContent += ' more'; });
           }
         }
-        assert.deepEqual(parts, [item.id.slice(0, 2).toUpperCase() + ' answer', ' more']);
+        assert.deepEqual(parts, [fixtureAnswer, ' more']);
         assert.doesNotMatch(parts.join(''), /PRIVATE_USER|PRIVATE_TOKEN|HIDDEN_REASONING/);
         allowed = false;
         await assert.rejects(observer.sample(), /revoked/);
