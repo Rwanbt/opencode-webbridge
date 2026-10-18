@@ -52,6 +52,19 @@ export async function attachDeclaredChatgptTab(
     approve: async () => stillDeclared(),
     allowAssistantText: async () => stillDeclared(),
   };
+  const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+  // Read-only CDP inventory: the declared tab's current URL. Used only to
+  // detect the same-origin navigation our own send causes.
+  const tabUrl = async (): Promise<string | null> => {
+    const response = await fetch(consent.endpoint + '/json/list', {
+      redirect: 'error', signal: AbortSignal.timeout(3000),
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) return null;
+    const list = await response.json();
+    const entry = Array.isArray(list) ? list.find((item) => item && item.id === consent.tabID) : null;
+    return typeof entry?.url === 'string' ? entry.url : null;
+  };
   let observer: G157ChatgptCdpObserver;
   try {
     observer = await G157ChatgptCdpObserver.attach(consent.endpoint, consent.tabID, driverConsent);
@@ -73,6 +86,7 @@ export async function attachDeclaredChatgptTab(
     baseline: await read(),
     async send(prompt: string, turnID: string): Promise<void> {
       stillDeclared();
+      const beforeUrl = await tabUrl().catch(() => null);
       try {
         await g159SendChatgptOnce({
           endpoint: consent.endpoint,
@@ -94,6 +108,34 @@ export async function attachDeclaredChatgptTab(
         if (/G159_SEND_UNCERTAIN/.test(message)) throw new BrowserTurnUncertainError(message);
         throw new BrowserTurnRefusedError(message); // no UI effect happened
       }
+      // A successful click navigates the new-chat document to the conversation
+      // it just created: same declared tab, same provider origin, new URL and
+      // generation. Re-bind the READ-ONLY observer to that document. G157 still
+      // enforces tab identity, origin and document epoch; if the re-bind fails
+      // the turn stays uncertain (never a fabricated answer).
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        await sleep(250);
+        const nowUrl = await tabUrl().catch(() => null);
+        if (!nowUrl || nowUrl === beforeUrl) continue;
+        let sameOrigin = false;
+        try { sameOrigin = new URL(nowUrl).origin === provider.origin; } catch { sameOrigin = false; }
+        if (!sameOrigin) return; // origin change is never adopted
+        // Same-origin navigation to the conversation our click created: re-bind
+        // the read-only observer to the new document (same declared tab).
+        await observer.close().catch(() => {});
+        const rebindDeadline = Date.now() + 8_000;
+        while (Date.now() < rebindDeadline) {
+          try {
+            observer = await G157ChatgptCdpObserver.attach(consent.endpoint, consent.tabID, driverConsent);
+            return;
+          } catch { await sleep(250); }
+        }
+        return;
+      }
+      // No navigation (the tab was already inside a conversation): the
+      // original observer is still bound to the same URL/generation and reads
+      // the same document.
     },
     sample: read,
     // No `completion` proof exists for this provider: an unproven turn stays uncertain.

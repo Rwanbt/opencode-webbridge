@@ -36,9 +36,11 @@ const id = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_-]{8,12
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const deny = (reason: string): never => { throw new Error('G159 send refused: ' + reason); };
 const COMPOSER = '#prompt-textarea[contenteditable="true"],textarea#prompt-textarea,' +
-  '[role="textbox"][contenteditable="true"][data-testid="composer-input"]';
+  '[role="textbox"][contenteditable="true"][data-testid="composer-input"],' +
+  'div[role="textbox"][contenteditable="true"]';
 const SEND = 'button[data-testid="send-button"],button[aria-label="Send message"],' +
-  'button[aria-label="Send prompt"],button[aria-label="Envoyer le message"]';
+  'button[aria-label="Send prompt"],button[aria-label="Envoyer le message"],' +
+  'button[aria-label="Envoyer"],button[aria-label="Send"]';
 
 /** Durable consume BEFORE any UI effect. No reset/rollback method exists. */
 export async function g159ConsumeOnce(journalDir: string, turnID: string, action: G159SendAction): Promise<void> {
@@ -116,11 +118,13 @@ export async function g159SendChatgptOnce(request: G159SendRequest): Promise<{
         if (selected.url() !== tab.url || await cdpFrame(session) !== firstFrame)
           return deny('navigation or document generation replaced');
       };
-      const composer = selected.locator(COMPOSER), button = selected.locator(SEND);
+      const composer = selected.locator(COMPOSER);
       await recheck();
-      if (await composer.count() !== 1 || await button.count() !== 1 ||
-          !await composer.isVisible() || !await button.isVisible())
-        return deny('missing or ambiguous accessible composer/send control');
+      // The current ChatGPT UI only mounts its send control once the composer
+      // has content, so the composer is the pre-fill requirement; the send
+      // control is required (and re-verified) AFTER the fill, before the click.
+      if (await composer.count() !== 1 || !await composer.isVisible())
+        return deny('missing or ambiguous accessible composer');
       const blank = await composer.evaluate((element) => {
         const value = element instanceof HTMLTextAreaElement ? element.value : element.textContent;
         return !value?.trim();
@@ -141,6 +145,7 @@ export async function g159SendChatgptOnce(request: G159SendRequest): Promise<{
       await composer.fill(prompt, { timeout: 2000 });
       await recheck();
       if (consent.isStillApproved(action) !== true) return deny('send authorization revoked');
+      const button = selected.locator(SEND);
       if (await composer.count() !== 1 || await button.count() !== 1 ||
           !await button.isVisible() || !await button.isEnabled())
         return deny('send control changed after filling');
