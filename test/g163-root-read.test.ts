@@ -70,7 +70,7 @@ test('G163 read requires explicit provider+tab, never opens CDP without both', a
   await assert.rejects(host.invoke({ action: 'read', provider: 'evil', tabID: 'ABCD' }), /explicit/);
   await assert.rejects(host.invoke({ action: 'read', provider: 'qwen', tabID: 'ABCD' }), /unverified/);
   await assert.rejects(host.invoke({ action: 'observe', provider: 'qwen', tabID: 'ABCD',
-    messageKey: 'answer-1' }), /unverified/);
+    messageKey: 'invalid key !' }), /selected message/);
   assert.equal(host.actions.length, 0);
 });
 
@@ -118,6 +118,7 @@ test('G163 real root registration -> owned Chromium CDP five origins -> ChatGPT 
     const fragments = JSON.parse(progress.content) as { seq: number; value: string }[];
     assert.equal(fragments.map((piece) => piece.value).join(''), 'Real local root read');
     assert.equal(progress.metadata.completionVerified, false);
+    assert.equal(progress.metadata.terminalStatus, 'uncertain');
     assert.doesNotMatch(JSON.stringify(progress), /PRIVATE_CREDENTIAL|PRIVATE_PROMPT/);
     assert.ok(host.actions.includes('webbridge.cdp.attach'));
     assert.ok(host.actions.includes('webbridge.cdp.assistant.read'));
@@ -133,6 +134,10 @@ test('G163 real root registration -> owned Chromium CDP five origins -> ChatGPT 
     const probe = await host.invoke({ action: 'probe', provider: 'qwen', tabID: qwenTab.tabID });
     assert.equal(JSON.parse(probe.content).readStatus, 'NO_GO_UNVERIFIED_LIVE_QWEN_DOM');
     assert.equal(probe.metadata.inferenceEnabled, false);
+    const qwenProgress = await host.invoke({ action: 'observe', provider: 'qwen',
+      tabID: qwenTab.tabID, messageKey: 'synthetic_only', polls: 1 });
+    assert.equal(qwenProgress.metadata.terminalStatus, 'no-go');
+    assert.equal(qwenProgress.metadata.terminalReason, 'qwen-unverified-live-dom');
     await assert.rejects(host.invoke({ action: 'read', provider: 'qwen', tabID: qwenTab.tabID }),
       /unverified/);
     host.deny();

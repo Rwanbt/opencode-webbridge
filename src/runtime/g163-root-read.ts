@@ -103,11 +103,38 @@ export async function registerG163PersonalRead(ctx: Context, env: NodeJS.Process
             provider, mode: 'read-only', inferenceEnabled: false,
           } };
         }
+        if (input.action === 'observe') {
+          if (typeof input.messageKey !== 'string' || !/^[\w:.-]{1,256}$/.test(input.messageKey) ||
+              !Number.isSafeInteger(input.polls ?? 4) || (input.polls ?? 4) < 1 ||
+              (input.polls ?? 4) > 12) return fail('selected message and bounded polls required');
+          const { g175BrowserProgress } = await import('./g175-browser-progress.js');
+          const fragments: Array<{seq: number; value: string}> = [];
+          let terminalStatus: string | undefined, terminalReason: string | undefined;
+          for await (const event of g175BrowserProgress({
+            endpoint: config.endpoint, provider, tabID, turnID: invocation.id,
+            messageKey: input.messageKey, polls: input.polls ?? 4,
+            signal: invocation.signal,
+            consent: { userDeclaresBrowserOwnership: true, approve,
+              allowAssistantText: async () => {
+                await authorize('webbridge.cdp.assistant.read', [provider, tabID]);
+                return true;
+              },
+              isStillApproved: () => !invocation.signal.aborted,
+            },
+          })) {
+            await authorize('webbridge.cdp.assistant.read', [provider, tabID]);
+            if (event.kind === 'candidate') {
+              fragments.push({ seq: event.seq, value: event.text });
+              if (fragments.length > 64) return fail('observation limit exceeded');
+            } else { terminalStatus = event.status; terminalReason = event.reason; }
+          }
+          await authorize('webbridge.cdp.assistant.read', [provider, tabID]);
+          return { content: JSON.stringify(fragments), metadata: {
+            provider, mode: 'read-only', completionVerified: false,
+            inferenceEnabled: false, terminalStatus, terminalReason,
+          }};
+        }
         if (provider === 'qwen') return fail('Qwen answer selectors unverified; discovery only');
-        if (input.action === 'observe' && (typeof input.messageKey !== 'string' ||
-            !/^[\w:.-]{1,256}$/.test(input.messageKey) ||
-            !Number.isSafeInteger(input.polls ?? 4) || (input.polls ?? 4) < 1 ||
-            (input.polls ?? 4) > 12)) return fail('selected message and bounded polls required');
         const read = async () => {
           await authorize('webbridge.cdp.assistant.read', [provider, tabID]);
           return true;
@@ -124,18 +151,6 @@ export async function registerG163PersonalRead(ctx: Context, env: NodeJS.Process
           : await (await import('../providers/g160-other-provider-dom.js')).G160OtherProviderObserver
             .attach(config.endpoint, tabID, provider, consent);
         try {
-          if (input.action === 'observe') {
-            const fragments: Array<{seq: number; value: string}> = [];
-            for await (const event of attachment.observe(invocation.id, input.messageKey!, input.polls ?? 4)) {
-              await authorize('webbridge.cdp.assistant.read', [provider, tabID]);
-              if (event.kind === 'text') fragments.push({seq: event.seq, value: event.value});
-              if (fragments.length > 64) return fail('observation limit exceeded');
-            }
-            await authorize('webbridge.cdp.assistant.read', [provider, tabID]);
-            return {content: JSON.stringify(fragments), metadata: {
-              provider, mode: 'read-only', completionVerified: false, inferenceEnabled: false,
-            }};
-          }
           const answer = await attachment.sample();
           await authorize('webbridge.cdp.assistant.read', [provider, tabID]);
           if (!answer) return fail('no unambiguous selected assistant message');

@@ -1,0 +1,15 @@
+# ADR 0128 — G175 : progression DOM commune et corrélation non certifiée
+
+## Décision
+
+`src/runtime/g175-browser-progress.ts` fournit `g175BrowserProgress`, un **adaptateur de lecture manuel** et borné qui relie les vrais lecteurs CDP déjà présents : `G157ChatgptCdpObserver` (ChatGPT), `G160OtherProviderObserver` (DeepSeek, Gemini, Mistral) et `G169QwenRead` (Qwen). Le contrat exige une URL CDP locale explicitement choisie, un identifiant d'onglet exact, le fournisseur, un identifiant de tour hôte, une clé de message assistant sélectionnée par l'utilisateur/l'hôte, le signal d'annulation et un accord de lecture hôte vérifiable et révocable. Aucun ajout au plugin racine, aucun nouveau modèle annoncé et aucun effet d'envoi de prompt. Les envois restent exclusivement dans G159/G166, avec approbation humaine indépendante pour **chaque** action.
+
+La progression est émise en fragments append-only de 4096 caractères au maximum, dans un budget de 1–32 lectures et un intervalle de 20–2000 ms. Chaque `candidate` porte `turnID`, `tabID`, `provider`, `messageKey`, numéro de séquence et `correlation: 'unverified-dom'`. L'association avec `turnID` est **une étiquette choisie par l'hôte**, jamais une preuve que le fournisseur répond au prompt de ce tour. Même à texte stable, la fin est toujours `{status:'uncertain',reason:'provider-finality-unverified'}`. Absence, substitution de message, réécriture, révocation, changement d'onglet/document ou annulation provoquent un état incertain ou un refus, sans transformer un DOM silencieux en succès.
+
+La voie Qwen réutilise **réellement** le contrôle de cible, d'origine, de génération, d'époque documentaire et de permission de G169 par `G169QwenRead.attach().probe()`. Elle n'effectue aucune lecture de réponse Qwen, y compris quand une page de test affiche des marqueurs de fixture : `status:'no-go'`, `reason:'qwen-unverified-live-dom'`. L'existence d'un sélecteur HTML simulé ne le rend pas applicable au site réel.
+
+## Validation, limites et non-déploiement
+
+Le test Linux ouvre un seul Chromium temporaire et intercepte les origines HTTPS des cinq fournisseurs, sans connexion commerciale. Pour quatre fournisseurs, il exécute l'attach CDP, les fragments, une mise à jour progressive, révocation en cours de lecture, annulation, sélection erronée, changement d'époque même URL et non-divulgation des prompts, secrets et éléments de raisonnement. Pour Qwen, il démontre l'observation du bon onglet et son absence explicite de readiness. CI additive uniquement ; aucun accès à un profil personnel, à OpenCode distribué, à `main` ou à l'upstream.
+
+Les conventions DOM restent des hypothèses de compatibilité, non validées sur des comptes commerciaux authentifiés. `g175BrowserProgress` n'est **pas** un `LanguageModelV3`, ne peut attester l'autorisation OS/Desktop ni la finalité fournisseur et n'incrémente pas le nombre de fournisseurs réellement opérationnels : **0/5 certifiés**. Pour une future activation native, exiger une association authentifiée prompt/réponse et un acquittement final propre au fournisseur.
