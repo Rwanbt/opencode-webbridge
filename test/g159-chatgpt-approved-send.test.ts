@@ -105,7 +105,13 @@ test('G159 existing Linux Chrome CDP: approved one click, denied/revoked/ambiguo
       await page.locator('#prompt-textarea').fill('');
 
       const outcome = await g159SendChatgptOnce({
-        ...base, turnID: 'turn_approved', consent: consent(),
+        ...base, turnID: 'turn_approved', consent: consent(async (action, displayed) => {
+          assert.equal(action.tabID, tabID);
+          assert.equal(action.turnID, 'turn_approved');
+          assert.equal(action.sessionID, base.sessionID);
+          assert.equal(action.promptSHA256.length, 64);
+          assert.equal(displayed, base.prompt); return true;
+        }),
       });
       assert.deepEqual(outcome, { status: 'uncertain', turnID: 'turn_approved' });
       assert.deepEqual(await sent(), ['G159 approved fixture only']);

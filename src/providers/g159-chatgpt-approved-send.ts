@@ -17,7 +17,8 @@ export interface G159SendAction {
 }
 export interface G159SendConsent extends CdpConsent {
   /** Must be a separate human decision for THIS exact prompt, tab and turn. */
-  readonly approveSend: (action: Readonly<G159SendAction>) => Promise<boolean>;
+  /** Display prompt text to the operator; it is never persisted by the journal. */
+  readonly approveSend: (action: Readonly<G159SendAction>, promptToDisplay: string) => Promise<boolean>;
   /** Synchronous, host-owned revocation check; never trust page-authored data. */
   readonly isStillApproved: (action: Readonly<G159SendAction>) => boolean;
 }
@@ -126,7 +127,7 @@ export async function g159SendChatgptOnce(request: G159SendRequest): Promise<{
       });
       if (!blank) return deny('nonempty user draft cannot be replaced');
       await recheck();
-      if (await consent.approveSend(action) !== true) return deny('operator declined this send');
+      if (await consent.approveSend(action, prompt) !== true) return deny('operator declined this send');
       await recheck();
       if (!await composer.evaluate((element) => {
         const value = element instanceof HTMLTextAreaElement ? element.value : element.textContent;
