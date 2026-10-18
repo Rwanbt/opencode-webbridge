@@ -10,7 +10,7 @@ const progress = JSON.parse(readFileSync(resolve(root, 'planning/progress.json')
 const ensure = (valid, reason) => { if (!valid) throw new Error(`Acceptance matrix: ${reason}`); };
 
 ensure(matrix.schemaVersion === 1, 'unsupported schema');
-ensure(matrix.observedAt === '2026-10-17', 'observation requires a new review');
+ensure(matrix.observedAt === '2026-10-18', 'observation requires a new review');
 ensure(Object.keys(matrix).sort().join(',') === 'accepted,gate,levels,observedAt,schemaVersion,stories', 'unexpected fields');
 
 const levels = matrix.levels;
