@@ -66,6 +66,10 @@ jobs:
       - run: npm run smoke:e2e
       - name: Install isolated headless Chromium
         run: npx playwright install --with-deps --only-shell chromium
+      - name: G156 attached ChatGPT legacy and Chat/Work DOM real Chromium offline observation
+        run: npm run build && node --test dist/test/g156-chatgpt-dom.test.js
+        env:
+          WEBBRIDGE_G156_BROWSER: '1'
       - name: G99/G100 installed plugin local Chromium DOM and fail-closed tab-change
         run: npm run smoke:g99-page
       - name: G113 installed plugin local Chromium actual page close is terminal uncertain
@@ -188,6 +192,10 @@ jobs:
         run: node --test dist/test/offline-tool-turn-orchestrator.test.js
       - name: G152 independent personal provider opt-in, verified capabilities, source isolation
         run: node --test dist/test/personal-provider-activation.test.js dist/test/provider-policy.test.js dist/test/adapter-contract.test.js
+      - name: G156 origin attach and hostile read-only snapshot (Windows no Chromium)
+        run: node --test dist/test/g156-chatgpt-dom.test.js
+      - name: G157 explicit CDP composition refuses missing consent (Windows no Chromium)
+        run: node --test dist/test/g157-chatgpt-cdp-observer.test.js
       - name: G141 G135 Windows file-read closed + untrusted proposals (no Windows Git sandbox claim)
         run: node --test '--test-name-pattern=file.read opens real regular Linux inode|malformed provenance/unknown or mutable actions' dist/test/offline-readonly-tool-executor.test.js
       - name: G141 G138 bounded JSON hostile input and G139 authority snapshots
@@ -248,6 +256,28 @@ jobs:
         run: npm run build && node --test scripts/test-g153-host.mjs
       - name: G153 actual root native selected model DOM RPC Git effects read-only before SSE
         run: npm run smoke:g153-root-git
+
+  g155-explicit-cdp-readonly:
+    name: G155 explicit user CDP discovery and read-only heading transport
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - name: Real Chromium CDP permitted tab and replaced/hostile negative checks
+        run: node --test dist/test/g155-explicit-cdp-read.test.js
+        env:
+          G155_REAL_CDP: '1'
+      - name: G157 composed existing Chromium CDP target + selected ChatGPT DOM response stream
+        run: node --test dist/test/g157-chatgpt-cdp-observer.test.js
+        env:
+          G157_REAL_CDP: '1'
 
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
