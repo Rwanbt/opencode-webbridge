@@ -21,6 +21,12 @@ export class G157ChatgptCdpObserver {
     private readonly observer: G156ChatgptObserver,
   ) {}
 
+  /** Attached target identity: a caller may persist it and later refuse to
+   *  resume onto a different tab or a replaced generation. */
+  get scope(): { readonly tabID: string; readonly generation: number } {
+    return Object.freeze({ tabID: this.tab.tabID, generation: this.tab.generation });
+  }
+
   static async attach(endpoint: string, tabID: string, consent: G157Consent): Promise<G157ChatgptCdpObserver> {
     if (typeof tabID !== 'string' || !/^[A-Za-z0-9_-]{4,128}$/.test(tabID) ||
         typeof consent?.allowAssistantText !== 'function') throw new Error('G157 explicit tab and read consent required');

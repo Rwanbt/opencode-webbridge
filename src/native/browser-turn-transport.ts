@@ -50,6 +50,8 @@ export class BrowserTurnUncertainError extends Error {
 
 /** Consent-gated browser primitives for one attached, explicitly authorized tab. */
 export interface BrowserTurnAttachment {
+  /** Identity of the tab this attachment is bound to (generation included). */
+  readonly identity: BrowserTurnScope;
   /** Last assistant bubble present BEFORE any send; never adopted as our answer. */
   readonly baseline: BrowserTurnObservation | null;
   /** Exactly one UI submission for this turn, after the durable one-shot consume. */
@@ -63,13 +65,23 @@ export interface BrowserTurnAttachment {
 
 export interface AttemptRecord {
   readonly turnID: string;
-  readonly state: "inflight" | "complete" | "uncertain";
+  /** `abandoned` is an explicit OPERATOR attestation: this provisional attempt
+   *  must never be reconciled again. It claims no completion. */
+  readonly state: "inflight" | "complete" | "uncertain" | "abandoned";
   readonly at: number;
   /** Candidate selected by this attempt; absent when none was observed yet. */
   readonly messageKey?: string;
   /** Exact delivered prefix already acknowledged durably. Only the length and a
    * digest of that prefix are persisted: the assistant text itself never is. */
   readonly progress?: AttemptProgress;
+  /** Browser scope the attempt was sent on; a resumed attempt must match it. */
+  readonly scope?: BrowserTurnScope;
+}
+
+/** Identity of the attached browser target the turn was authorized on. */
+export interface BrowserTurnScope {
+  readonly tabID: string;
+  readonly generation: number;
 }
 
 /** Durable delivery cursor: the consumer provably received exactly this prefix. */
@@ -106,6 +118,13 @@ export interface BrowserTurnTransportConfig {
 const promptKey = (providerID: string, modelID: string, prompt: string) => createHash("sha256")
   .update(providerID + "\0" + modelID + "\0" + prompt).digest("hex");
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
+const SCOPE_ID = /^[A-Za-z0-9_-]{4,128}$/;
+const requireScope = (scope: BrowserTurnScope): BrowserTurnScope => {
+  if (!scope || typeof scope.tabID !== "string" || !SCOPE_ID.test(scope.tabID) ||
+      !Number.isSafeInteger(scope.generation) || scope.generation < 0)
+    throw new Error("WebBridge browser turn: invalid attached tab identity");
+  return Object.freeze({ tabID: scope.tabID, generation: scope.generation });
+};
 const bounded = (value: number | undefined, fallback: number, min: number, max: number) => {
   if (value === undefined) return fallback;
   if (!Number.isSafeInteger(value) || value < min || value > max)
@@ -125,7 +144,10 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
         throw new Error("WebBridge browser turn: empty prompt refused");
       const key = promptKey(request.providerID, request.modelID, request.prompt);
       const existing = await config.store.read(key);
-      const reconcilable = existing !== undefined && existing.state !== "complete"
+      // Only a provisional attempt (inflight/uncertain) may be reconciled; a
+      // completed or operator-abandoned attempt is never resumed onto.
+      const reconcilable = existing !== undefined
+        && (existing.state === "inflight" || existing.state === "uncertain")
         && now() - existing.at < reconcileWindowMs;
       const turnID = reconcilable ? existing.turnID : randomBytes(16).toString("hex");
       let selected: string | undefined = reconcilable ? existing.messageKey : undefined;
@@ -135,6 +157,9 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
       const resumed = reconcilable ? existing?.progress : undefined;
       let acked: AttemptProgress = resumed ?? { seq: 0, length: 0, hash: digest("") };
       let prefixVerified = resumed === undefined;
+      // The browser scope recorded for this turn: reused on resume and asserted
+      // identical before any read, so another tab/generation is never adopted.
+      let recordedScope: BrowserTurnScope | undefined = reconcilable ? existing?.scope : undefined;
       // Persist BEFORE any UI effect: a crash leaves a durable attempt record.
       await config.store.write(key, reconcilable
         ? existing
@@ -145,6 +170,7 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
           turnID, state: state === "complete" ? "complete" : "uncertain",
           at: now(), ...(selected === undefined ? {} : { messageKey: selected }),
           progress: acked,
+          ...(recordedScope === undefined ? {} : { scope: recordedScope }),
         });
         return { kind: "terminal" as const, state, reason };
       };
@@ -160,6 +186,21 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
         throw error;
       }
       try {
+        const scope = requireScope(browser.identity);
+        if (reconcilable) {
+          // A different tab or a replaced generation can never be resumed onto:
+          // the text we would read belongs to another browser turn.
+          if (recordedScope !== undefined &&
+              (recordedScope.tabID !== scope.tabID || recordedScope.generation !== scope.generation)) {
+            yield await settle("uncertain", "scope-changed");
+            return;
+          }
+        } else {
+          recordedScope = scope;
+          // Scope is durable before any UI effect (attach precedes the send).
+          await config.store.write(key,
+            { turnID, state: "inflight", at: now(), scope: recordedScope });
+        }
         if (!reconcilable) {
           try {
             await browser.send(request.prompt, turnID);
@@ -207,7 +248,8 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
               selected = answer.messageKey;
               previous = "";
               await config.store.write(key,
-                { turnID, state: "inflight", at: now(), messageKey: selected });
+                { turnID, state: "inflight", at: now(), messageKey: selected,
+                  ...(recordedScope === undefined ? {} : { scope: recordedScope }) });
             }
           }
           if (selected !== undefined && answer !== null && answer.messageKey === selected) {

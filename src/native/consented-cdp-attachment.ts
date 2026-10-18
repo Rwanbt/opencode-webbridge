@@ -69,6 +69,7 @@ export async function attachDeclaredChatgptTab(
       : Object.freeze({ messageKey: sample.messageKey, text: sample.text });
   };
   return Object.freeze({
+    identity: observer.scope,
     baseline: await read(),
     async send(prompt: string, turnID: string): Promise<void> {
       stillDeclared();
