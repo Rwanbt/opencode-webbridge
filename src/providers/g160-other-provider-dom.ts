@@ -14,6 +14,8 @@ const KEY = /^[\w:.-]{1,256}$/;
 
 /** Runs within a selected provider page; NEVER reads prompts or reasoning panels. */
 export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | null {
+  // Browser page.evaluate serializes this function alone: NO module-scope closure.
+  const documentKey = /^[\w:.-]{1,256}$/;
   let nodes: Element[];
   if (provider === 'deepseek') {
     nodes = [...document.querySelectorAll('.ds-assistant-message-main-content')];
@@ -34,7 +36,7 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
     key = keyNode.getAttribute('data-message-id') ?? keyNode.getAttribute('data-turn-id') ??
       keyNode.getAttribute('data-response-id') ?? keyNode.id ?? null;
   }
-  if (!key || !KEY.test(key)) return null; // Indices/text hashes are not stable turn identity.
+  if (!key || !documentKey.test(key)) return null; // No unstable indices/text hashes.
   const text = content[0].textContent ?? '';
   if (!text || text.length > 16_000) return null;
   return { messageKey: key, text };
