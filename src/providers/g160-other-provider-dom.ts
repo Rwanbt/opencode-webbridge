@@ -28,7 +28,7 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
   if (!nodes.length || nodes.length > 128) return null;
   const root = nodes.at(-1)!;
   const content = provider === 'deepseek' ? [root] : provider === 'gemini'
-    ? [...root.querySelectorAll('message-content.model-response-text .markdown')]
+    ? [...root.querySelectorAll('model-response-content')]
     : [...root.querySelectorAll('.markdown')];
   if (content.length !== 1) return null; // No broad text fallback: reasoning/user contamination.
   let keyNode: Element | null = root;

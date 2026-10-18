@@ -36,7 +36,7 @@ test("the adapter registry covers exactly the shared catalog with single-sourced
 
 test("no adapter fabricates a capability", () => {
   const senders = PROVIDER_ADAPTER_IDS.filter((id) => requireProviderAdapter(id).sendPrimitive !== null);
-  assert.deepEqual(senders, ["chatgpt", "deepseek"]);
+  assert.deepEqual(senders, ["chatgpt", "deepseek", "gemini"]);
   for (const id of PROVIDER_ADAPTER_IDS) {
     const adapter = requireProviderAdapter(id);
     assert.equal(adapter.completionProof, "none", id + " must not claim a completion proof");
@@ -46,7 +46,10 @@ test("no adapter fabricates a capability", () => {
   assert.equal(requireProviderAdapter("deepseek").readPrimitive, "g160-other-provider-dom");
   assert.equal(requireProviderAdapter("deepseek").discoverable, true);
   assert.equal(requireProviderAdapter("deepseek").sendPrimitive, "g174-deepseek-one-shot");
-  for (const id of ["gemini", "mistral"] as const) {
+  assert.equal(requireProviderAdapter("gemini").readPrimitive, "g160-other-provider-dom");
+  assert.equal(requireProviderAdapter("gemini").discoverable, true);
+  assert.equal(requireProviderAdapter("gemini").sendPrimitive, "g175-gemini-one-shot");
+  for (const id of ["mistral"] as const) {
     const adapter = requireProviderAdapter(id);
     assert.equal(adapter.readPrimitive, "g160-other-provider-dom");
     assert.equal(adapter.discoverable, true);
@@ -67,7 +70,8 @@ test("unknown adapters are refused and unknown capability lookups fail closed", 
   assert.throws(() => requireProviderAdapter(""), /unknown provider adapter/);
   assert.equal(sendPrimitiveOf("chatgpt"), "g159-chatgpt-one-shot");
   assert.equal(sendPrimitiveOf("deepseek"), "g174-deepseek-one-shot");
-  assert.equal(sendPrimitiveOf("gemini"), null);
+  assert.equal(sendPrimitiveOf("gemini"), "g175-gemini-one-shot");
+  assert.equal(sendPrimitiveOf("mistral"), null);
   assert.equal(sendPrimitiveOf("no-such-provider"), null);
 });
 
