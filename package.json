@@ -31,6 +31,7 @@
     "diagnose:install": "node scripts/diagnose-install.mjs",
     "check:g119": "node scripts/check-g119-cross-stream.mjs",
     "check:d01d02": "node scripts/probe-d01d02-desktop-public-api.mjs",
+    "check:plugin-browser": "node scripts/probe-plugin-browser-capability.mjs",
     "preview:package": "node scripts/offline-package-preview.mjs",
     "preview:rpc-package": "node scripts/offline-rpc-package.mjs",
     "smoke:rpc-package-native": "node scripts/offline-rpc-package.mjs --native",
