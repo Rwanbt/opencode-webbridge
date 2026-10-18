@@ -1,0 +1,21 @@
+# Native V2 one-shot browser read — isolated upstream proposal
+
+Depends on WebBridge Draft [#84](https://github.com/Rwanbt/opencode-webbridge/pull/84) and the unchanged official OpenCode V2 source SHA `4617210822bdbb31e5749751afbfb4584ccedac8`. The patch remains the **single fully replayable** `opencode-v2-4617210-browser-plugin-capability.patch`; this Draft modifies that patch, not the official remote, installed OpenCode or Unifia.
+
+## Implemented, scoped to local read fixtures
+
+`ctx.browser.snapshotOnce({ context: toolContext, tabID })` is an **Effect-plugin-only** API. `Tool.snapshot.execute` marks a specific live `Tool.Context` in a process-local WeakMap, pins its `sessionID`, `messageID` (turn) and tool-call ID, and clears the proof at completion/interruption. Forged/copied/mutated/expired context objects are refused. A synchronous consume allows only **one** dispatch from that context, even when concurrent calls finish permission prompts together; failures do not restore the grant or replay the action. The caller's plugin identity comes from the Core plugin host and becomes invalid on plugin-generation unload.
+
+Before authorizing, Core checks the session's stored location against the host's `directory` and `workspaceID`; then the trusted built-in browser driver binds the **actual Desktop attachment ID, tab ID and tab generation** before any permission prompt. Permission checks require both `browser:*` and the full per-operation resource `browser_plugin:<pluginID>:snapshot.once:<workspaceID>:<sessionID>:<messageID>:<callID>:<attachmentID>:<tabID>:<tabGeneration>`. Location is verified again after prompts. The bound browser connection validates the original attachment and tab generation directly before queuing the snapshot RPC. A retired plugin, closed/replaced browser, moved workspace or updated tab fails closed. Neither credentials nor commercial web providers are accessed in tests.
+
+## What this does **not** establish
+
+This implements a **one-shot read-dispatch primitive**, not a complete atomic permission or browser-write mechanism. `Permission.Service.assert` can yield for user approval and currently lacks an issuance epoch, irrevocable atomic lease and host-side acknowledgment of consumption. A permissions-policy change in the final instant after `assert` may still race with RPC; multiple `ask` rules can prompt more than once. Browser RPC controls the queue, but native Desktop does not receive and consume a verified grant atomically before running an effect. No `navigate`, `click`, `fill`, `submit`, arbitrary script execution or remote site call is added.
+
+The context marker is a **Core runtime convention, not a sandbox boundary against malicious JavaScript already running in-process**: `@opencode/core` imports and the existing plugin/runtime APIs are not an isolation mechanism. The surrounding #84 proposal also retains legacy `tabs`/`snapshot` operations without per-turn one-shot semantics. Do not claim the full browser plugin is transactionally authorized, or expose native writes based solely on this proof. A later hardening phase needs an isolated caller authority, a revocation/consumption epoch and an authenticated Desktop TCB receipt. The Promise plugin adapter deliberately refuses `snapshotOnce`, because it clones tool contexts and cannot preserve the WeakMap identity proof.
+
+## Evidence and reproduction
+
+All tests are offline mock browser/loopback fixtures. Negative tests include forged/copied/mutated/stale tool contexts, a real Core `Tool.snapshot.execute` call, two concurrent reads on the same context, cross-workspace use, plugin-generation retirement, tab generation change and browser disconnect during permission approval. Code Mode tools remain unchanged. Typechecking covers `packages/core`, `packages/plugin` and `packages/plugin-browser`; the CI fetches the **exact upstream SHA**, applies the patch and executes the original #84 regression suites plus `test/plugin/browser-one-shot.test.ts`.
+
+No native Desktop window, real account, provider or production security certification was exercised. A new write-capability Draft would be unsafe without authenticated, one-use Desktop transaction consumption and matching tests; therefore **none is opened**.

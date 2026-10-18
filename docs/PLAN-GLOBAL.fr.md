@@ -24,6 +24,8 @@ L'utilisateur sélectionne un modèle web dans OpenCode, ouvre une session, form
 - **Option C** : fournir un mode assisté/manual-only ou laisser l'adaptateur inactif si l'intégration automatisée est interdite ou techniquement non fiable.
 - **ADR obligatoires** : moteur de fournisseur, navigateur, identité & session, idempotence, gestion des secrets, conformité des fournisseurs. Tout échec de faisabilité est documenté avec preuve et décision, pas caché derrière une promesse.
 
+La première décision est [ADR-0001](ADR/0001-provider-browser-boundary.md) : séparation entre l'API de plugin, le navigateur attaché et le futur runtime du fournisseur web.
+
 ## 4. Contrat commun à tous les adaptateurs
 
 Identité : `providerID`, `accountRef` **opaque**, `sessionID`, `tabID` si disponible, `conversationRef` opaque, `turnID` et `operationID` durables. Un `accountRef` n'est jamais un cookie/token. États : `disabled`, `needs_login`, `ready`, `busy`, `blocked`, `unsupported`, `error`. Capabilities explicites et mesurées (text input/output, image, vision, fichiers, outils structurés, streaming, stop, resume), jamais supposées. Les limites de contexte et de débit inconnues sont étiquetées **inconnues**.

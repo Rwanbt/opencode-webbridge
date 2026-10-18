@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-10-17",
+  "reference": {
+    "upstreamRepo": "https://github.com/anomalyco/opencode",
+    "upstreamSHA": "4617210822bdbb31e5749751afbfb4584ccedac8",
+    "patch": "docs/patches/opencode-v2-4617210-browser-plugin-capability.patch"
+  },
+  "products": [
+    {
+      "id": "opencode-cli",
+      "version": "2.0.29",
+      "scope": "native-fixture",
+      "proven": true,
+      "evidence": "CI run 39060290836 (pull_request) + 39060285170 (push) on exact SHA 46b1b74: job 'Native fixture smoke (OpenCode 2.0.29)' with installed @opencode/cli@2.0.29, installed package, real headless Chromium DOM, progressive SSE, tab change and page close",
+      "limits": "Linux CI only; offline fixture pages only; no Electron Desktop; no commercial provider; CLI experimental scope"
+    },
+    {
+      "id": "opencode-desktop-electron",
+      "version": "2.0.32",
+      "scope": "desktop",
+      "proven": false,
+      "evidence": "NO-GO preflight G111 (PR #188): no official Electron browser API in OpenCode 2.0.29",
+      "limits": "Desktop Electron E2E NOT PROVEN; never inferred from CLI or fixture results"
+    }
+  ],
+  "operatingSystems": [
+    { "id": "linux", "proven": "full-native-fixture", "evidence": "CI 'Native fixture smoke (OpenCode 2.0.29)' on ubuntu-latest" },
+    { "id": "windows", "proven": "bounded-rpc-only", "evidence": "CI 'Windows bounded RPC progress (no Chromium)' on windows-latest" }
+  ],
+  "providers": {
+    "commercial": ["chatgpt", "deepseek", "gemini", "qwen", "mistral"],
+    "operational": 0,
+    "liveAutomationAuthorized": false
+  },
+  "browserWritesEnabled": false
+}
