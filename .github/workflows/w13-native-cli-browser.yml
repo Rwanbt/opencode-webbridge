@@ -1,9 +1,6 @@
 name: W13 raw root official CLI Chromium
 
 on:
-  push:
-    branches:
-      - test/w13-raw-cli-vertical
   pull_request:
     paths:
       - "scripts/w13-*"
