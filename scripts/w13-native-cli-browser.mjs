@@ -276,7 +276,9 @@ test('W13 raw npm root -> unmodified CLI 2.0.32 -> intercepted HTTPS Chromium; a
       host = await launch(temp, plugin, 'restart', selection);
       before = await priorSessions(host);
       command = run(host, PROMPT);
-      await observed(host, 'webbridge-terminal-uncertain', 25_000, before);
+      // Production polling is 64 * 500 ms (~32 s). A shorter timeout can
+      // falsely fail a correct resumed UNCERTAIN while the model still polls.
+      await observed(host, 'webbridge-terminal-uncertain', 48_000, before);
       assert.deepEqual(await sent(browser.page), [PROMPT],
         'native CLI restart replayed a previously clicked prompt');
       assert.equal((await readdir(journal)).filter((file) => file.endsWith('.g159-once')).length, 1);
