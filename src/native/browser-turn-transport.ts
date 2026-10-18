@@ -119,6 +119,10 @@ const promptKey = (providerID: string, modelID: string, prompt: string) => creat
   .update(providerID + "\0" + modelID + "\0" + prompt).digest("hex");
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const SCOPE_ID = /^[A-Za-z0-9_-]{4,128}$/;
+/** Defence in depth: the same reviewed bound the G159 one-shot submission
+ *  enforces. The transport refuses an oversized prompt BEFORE attaching, so an
+ *  over-long prompt can never reach a composer or the browser at all. */
+export const MAX_PROMPT_CHARS = 4000;
 const requireScope = (scope: BrowserTurnScope): BrowserTurnScope => {
   if (!scope || typeof scope.tabID !== "string" || !SCOPE_ID.test(scope.tabID) ||
       !Number.isSafeInteger(scope.generation) || scope.generation < 0)
@@ -142,6 +146,9 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
     async *stream(request: NativeTurnRequest): AsyncIterable<NativeTurnEvent> {
       if (!request || typeof request.prompt !== "string" || !request.prompt.trim())
         throw new Error("WebBridge browser turn: empty prompt refused");
+      if (request.prompt.length > MAX_PROMPT_CHARS)
+        throw new Error("WebBridge browser turn: prompt exceeds the reviewed bound ("
+          + MAX_PROMPT_CHARS + " characters)");
       const key = promptKey(request.providerID, request.modelID, request.prompt);
       const existing = await config.store.read(key);
       // Only a provisional attempt (inflight/uncertain) may be reconciled; a

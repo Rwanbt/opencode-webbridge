@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 import {
-  BrowserTurnRefusedError, BrowserTurnUncertainError, createBrowserTurnTransport,
+  BrowserTurnRefusedError, BrowserTurnUncertainError, MAX_PROMPT_CHARS, createBrowserTurnTransport,
 } from "../src/native/browser-turn-transport.js";
 import type {
   AttemptRecord, AttemptStore, BrowserTurnAttachment, BrowserTurnObservation,
@@ -309,6 +309,37 @@ test("a resumed attempt refuses a replaced tab or generation instead of adopting
   const kept = store.snapshot();
   assert.deepEqual(kept[0]!.scope, { tabID: "tab12345", generation: 1 },
     "the refusal keeps the original recorded scope as evidence");
+});
+
+test("an oversized prompt is refused before any attach, and the exact bound is accepted", async () => {
+  const { transport, calls, store } = build({
+    baseline: null, samples: [{ messageKey: "m2", text: "answer" }],
+  });
+  await assert.rejects(
+    collect(transport, { ...REQUEST, prompt: "x".repeat(MAX_PROMPT_CHARS + 1) }),
+    /prompt exceeds the reviewed bound/);
+  assert.equal(calls.sends.length, 0, "no browser effect may happen for a refused prompt");
+  assert.equal(store.snapshot().length, 0, "a refused prompt leaves no durable attempt");
+
+  const accepted = await collect(transport, {
+    ...REQUEST, prompt: "x".repeat(MAX_PROMPT_CHARS),
+  });
+  assert.equal(terminal(accepted).state, "uncertain");
+  assert.equal(calls.sends.length, 1, "the exact reviewed bound is still a legitimate prompt");
+});
+
+test("time and frequency budgets are explicit and refuse invalid values at construction", () => {
+  for (const extra of [
+    { polls: 0 }, { polls: 65 },
+    { intervalMs: 10 }, { intervalMs: 2_500 },
+    { reconcileWindowMs: 0 }, { reconcileWindowMs: 3_600_001 },
+  ]) {
+    assert.throws(() => build({ baseline: null, samples: [] }, new MemoryStore(), extra),
+      /invalid bounded budget/, JSON.stringify(extra));
+  }
+  const accepted = build({ baseline: null, samples: [] }, new MemoryStore(),
+    { polls: 1, intervalMs: 20, reconcileWindowMs: 1_000 });
+  assert.ok(accepted.transport, "the exact reviewed bounds are accepted");
 });
 
 test("long answers are chunked and an empty prompt is refused", async () => {
