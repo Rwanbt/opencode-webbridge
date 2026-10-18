@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "observedAt": "2026-10-17",
+  "observedAt": "2026-10-18",
   "decision": "NO-GO-PRODUCTION",
   "allowedClaims": {
-    "scope": "CLI experimental (linux fixture smoke, installed OpenCode CLI 2.0.29)",
+    "scope": "CLI experimental (raw npm tarball verticals on the official OpenCode CLI 2.0.32: install/lifecycle Windows+Linux; dormant native web models; no live provider session)",
     "desktop": false,
     "commercialProviders": 0,
     "browserWrites": false,
@@ -13,7 +13,7 @@
     {
       "id": "desktop-electron-e2e",
       "status": "NOT-PROVEN",
-      "evidence": "G111 preflight NO-GO (PR #188): no official Electron browser API in 2.0.29; Desktop E2E never inferred from lower levels"
+      "evidence": "G111 preflight NO-GO (PR #188) + public-CLI authority probe on 2.0.32 (PR #226): no official Electron browser API; Desktop E2E never inferred from lower levels"
     },
     {
       "id": "atomic-core-chromium-revocation",
@@ -23,12 +23,12 @@
     {
       "id": "native-effect-wiring",
       "status": "BLOCKED-UPSTREAM",
-      "evidence": "NativeEffectAuthority interface absent from official OpenCode 2.0.29; the plugin refuses every execution (no-native-authority)"
+      "evidence": "NativeEffectAuthority interface absent from the official OpenCode public API; 2.0.32 language hook carries no session identity either (upstream proposal PR #260); un-attested effects refused (no-native-authority)"
     },
     {
       "id": "five-live-web-provider-sessions",
       "status": "NOT-PROVEN",
-      "evidence": "no authenticated browser-session and real inference transport proven for any of the five web providers, offline fixtures only"
+      "evidence": "no authenticated browser-session turn proven for any of the five providers; consented declared-tab transport wired with CI-proven refusal paths (PR #262/#263), no real provider conversation demonstrated (0/5)"
     },
     {
       "id": "production-acceptance",
