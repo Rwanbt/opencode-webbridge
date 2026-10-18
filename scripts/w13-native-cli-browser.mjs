@@ -117,6 +117,10 @@ async function request(host, path) {
   assert.equal(response.ok, true, path + ': HTTP ' + response.status);
   return response.json();
 }
+async function priorSessions(host) {
+  return new Set((await request(host, '/api/session?limit=100')).data?.map(
+    (session) => session.id) ?? []);
+}
 function run(host, prompt) {
   const child = spawn(CLI, ['run', '--server', host.url, '--model', MODEL,
     '--format', 'json', prompt], { cwd: ROOT, env: host.env, shell: false,
@@ -133,13 +137,16 @@ function run(host, prompt) {
       await Promise.race([finished, pause(2500)]);
     } };
 }
-async function observed(host, fragment, timeout = 35_000) {
+async function observed(host, fragment, timeout = 35_000, exclude = new Set()) {
   const deadline = Date.now() + timeout;
   let last = '';
   while (Date.now() < deadline) {
     try {
       const sessions = await request(host, '/api/session?limit=20');
       for (const session of sessions.data ?? []) {
+        // The same official data directory intentionally survives restart;
+        // an old persisted turn may never satisfy a NEW invocation's checks.
+        if (exclude.has(session.id)) continue;
         const messages = await request(host, '/api/session/' +
           encodeURIComponent(session.id) + '/message?limit=30');
         const data = JSON.stringify(messages.data ?? []);
@@ -211,8 +218,9 @@ test('W13 raw npm root -> unmodified CLI 2.0.32 -> intercepted HTTPS Chromium; a
 
       // Registered native model without declared tab is selectable but cannot attach/send.
       host = await launch(temp, plugin, 'preconsent', {});
+      let before = await priorSessions(host);
       command = run(host, PROMPT + '_NO_CONSENT');
-      const refusal = await observed(host, 'no attached authorized browser session', 25_000);
+      const refusal = await observed(host, 'no attached authorized browser session', 25_000, before);
       assert.doesNotMatch(refusal, /W13_VISIBLE_|PRIOR_PRIVATE_ANSWER|W13_DO_NOT_LEAK/);
       assert.deepEqual(await sent(browser.page), []);
       await command.stop(); command = undefined;
@@ -222,8 +230,9 @@ test('W13 raw npm root -> unmodified CLI 2.0.32 -> intercepted HTTPS Chromium; a
       host = await launch(temp, plugin, 'bad-tab', {
         ...selection, WEBBRIDGE_NATIVE_TAB_CHATGPT: browser.endpoint + '#nonexistent_12345',
       });
+      before = await priorSessions(host);
       command = run(host, PROMPT + '_BAD_TAB');
-      const badTab = await observed(host, 'no attached authorized browser session', 25_000);
+      const badTab = await observed(host, 'no attached authorized browser session', 25_000, before);
       assert.doesNotMatch(badTab, /W13_VISIBLE_|PRIOR_PRIVATE_ANSWER|W13_DO_NOT_LEAK/);
       assert.deepEqual(await sent(browser.page), []);
       await command.stop(); command = undefined;
@@ -231,12 +240,13 @@ test('W13 raw npm root -> unmodified CLI 2.0.32 -> intercepted HTTPS Chromium; a
 
       // Real packaged root model -> CDP selected synthetic HTTPS page -> one UI click.
       host = await launch(temp, plugin, 'approved', selection);
+      before = await priorSessions(host);
       command = run(host, PROMPT);
-      const progress = await observed(host, CANDIDATE, 35_000);
+      const progress = await observed(host, CANDIDATE, 35_000, before);
       assert.deepEqual(await sent(browser.page), [PROMPT]);
       assert.doesNotMatch(progress, /PRIOR_PRIVATE_ANSWER|W13_DO_NOT_LEAK/);
       // We must never claim a provider's actual completion on a DOM-only fixture.
-      const uncertain = await observed(host, 'webbridge-terminal-uncertain', 48_000);
+      const uncertain = await observed(host, 'webbridge-terminal-uncertain', 48_000, before);
       assert.match(uncertain, /"finish"\s*:\s*"error"|webbridge-terminal-uncertain/);
       assert.doesNotMatch(uncertain, /webbridge-dom-completion-observed/);
       assert.deepEqual(await sent(browser.page), [PROMPT]);
@@ -248,8 +258,9 @@ test('W13 raw npm root -> unmodified CLI 2.0.32 -> intercepted HTTPS Chromium; a
 
       // Same prompt with persisted journal after official daemon restart: no re-send.
       host = await launch(temp, plugin, 'restart', selection);
+      before = await priorSessions(host);
       command = run(host, PROMPT);
-      await observed(host, 'webbridge-terminal-uncertain', 25_000);
+      await observed(host, 'webbridge-terminal-uncertain', 25_000, before);
       assert.deepEqual(await sent(browser.page), [PROMPT],
         'native CLI restart replayed a previously clicked prompt');
       assert.equal((await readdir(journal)).filter((file) => file.endsWith('.g159-once')).length, 1);
