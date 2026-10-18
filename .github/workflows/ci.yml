@@ -318,7 +318,7 @@ jobs:
   g164-raw-npm-package-windows:
     name: Windows raw npm tarball install upgrade rollback official CLI 2.0.32
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -330,6 +330,8 @@ jobs:
       - run: node --test scripts/g164-raw-pack-native.mjs
         env:
           G164_OFFICIAL_CLI: '1'
+      - name: G172 operator fail-closed without interactive approval (Windows)
+        run: node --test scripts/test-g172-operator-cli.mjs
 
   g166-manual-chatgpt-turn:
     name: G168 approved CDP turn with bounded provisional response

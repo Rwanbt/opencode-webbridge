@@ -37,7 +37,8 @@ const execNpm = (args, cwd, timeout = 120_000) => {
   const result = cli
     ? spawnSync(process.execPath, [cli, ...args], options)
     : spawnSync('npm', args, options);
-  assert.equal(result.status, 0, 'npm ' + args[0] + ' failed: ' +
+  assert.equal(result.status, 0, 'npm ' + args[0] + ' failed (' +
+    (result.error?.code ?? result.signal ?? 'status ' + result.status) + '): ' +
     (result.stderr ?? '').slice(-900));
   return result.stdout;
 };
@@ -208,7 +209,7 @@ test('G164 RAW npm pack, official CLI 2.0.32, upgrade and rollback without dist 
         ['rollback', first.path, '0.0.0'],
       ]) {
         execNpm(['install', archive, '--prefix', prefix, '--ignore-scripts',
-          '--no-save', '--no-package-lock', '--no-audit', '--no-fund'], temp, 120_000);
+          '--no-save', '--no-package-lock', '--no-audit', '--no-fund'], temp, 360_000);
         const proof = await nativeProof(prefix, temp, stage);
         assert.equal(proof.version, version, stage + ' did not install specified tarball');
         if (stage === 'initial') initialHash = proof.rootHash;
