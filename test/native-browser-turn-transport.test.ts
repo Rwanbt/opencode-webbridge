@@ -311,6 +311,26 @@ test("a resumed attempt refuses a replaced tab or generation instead of adopting
     "the refusal keeps the original recorded scope as evidence");
 });
 
+test("crash after the first durable fragment retains tab generation and refuses cross-tab resume", async () => {
+  const store = new MemoryStore();
+  const first = build({ identity: { tabID: "tab12345", generation: 7 }, baseline: null,
+    samples: [{ messageKey: "m2", text: "in-progress" }] }, store);
+  // Simulate a consumer process disappearing directly after receiving its first fragment:
+  // no terminal settle() may repair the intermediate checkpoint.
+  const stream = first.transport.stream(REQUEST)[Symbol.asyncIterator]();
+  const emitted = await stream.next();
+  assert.deepEqual(emitted.value, { kind: "fragment", text: "in-progress" });
+  assert.deepEqual(store.snapshot()[0]!.scope, { tabID: "tab12345", generation: 7 },
+    "each durable fragment must retain the original authorized browser scope");
+  await stream.return?.();
+  const resumed = build({ identity: { tabID: "tab99999", generation: 8 }, baseline: null,
+    samples: [{ messageKey: "m2", text: "in-progress forged" }] }, store);
+  const events = await collect(resumed.transport);
+  assert.deepEqual(fragments(events), []);
+  assert.deepEqual(terminal(events), { kind: "terminal", state: "uncertain", reason: "scope-changed" });
+  assert.equal(resumed.calls.sends.length, 0);
+});
+
 test("an oversized prompt is refused before any attach, and the exact bound is accepted", async () => {
   const { transport, calls, store } = build({
     baseline: null, samples: [{ messageKey: "m2", text: "answer" }],
@@ -326,6 +346,22 @@ test("an oversized prompt is refused before any attach, and the exact bound is a
   });
   assert.equal(terminal(accepted).state, "uncertain");
   assert.equal(calls.sends.length, 1, "the exact reviewed bound is still a legitimate prompt");
+});
+
+test("a forged provider/model request cannot split the durable one-shot namespace", async () => {
+  const { transport, store, calls } = build({ baseline: null,
+    samples: [{ messageKey: "m2", text: "response" }] });
+  for (const request of [
+    { ...REQUEST, providerID: "different-provider" },
+    { ...REQUEST, modelID: "another-model" },
+  ]) {
+    await assert.rejects(collect(transport, request), /provider\/model mismatch/);
+  }
+  assert.equal(calls.sends.length, 0);
+  assert.equal(store.snapshot().length, 0);
+  const accepted = await collect(transport);
+  assert.deepEqual(fragments(accepted), ["response"]);
+  assert.equal(calls.sends.length, 1);
 });
 
 test("time and frequency budgets are explicit and refuse invalid values at construction", () => {

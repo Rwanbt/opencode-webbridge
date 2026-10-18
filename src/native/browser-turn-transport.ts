@@ -144,6 +144,8 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
 
   return Object.freeze({
     async *stream(request: NativeTurnRequest): AsyncIterable<NativeTurnEvent> {
+      if (request?.providerID !== config.providerID || request?.modelID !== config.modelID)
+        throw new Error("WebBridge browser turn: provider/model mismatch");
       if (!request || typeof request.prompt !== "string" || !request.prompt.trim())
         throw new Error("WebBridge browser turn: empty prompt refused");
       if (request.prompt.length > MAX_PROMPT_CHARS)
@@ -286,6 +288,7 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
               await config.store.write(key, {
                 turnID, state: "inflight", at: now(),
                 ...(selected === undefined ? {} : { messageKey: selected }), progress: acked,
+                ...(recordedScope === undefined ? {} : { scope: recordedScope }),
               });
               yield { kind: "fragment", text };
             }
