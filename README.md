@@ -105,6 +105,12 @@ claims finality, and Qwen ends `NO-GO` after a real readiness probe. Per-provide
 single-sourced in `src/providers/provider-adapters.ts` (read primitive, discovery, send, completion
 proof, notes); see `docs/OBSERVE-PROVIDER.fr.md`.
 
+The durable attempt journal (`WEBBRIDGE_NATIVE_JOURNAL_DIR`) is operator-inspectable and explicitly
+reconcilable: `webbridge-journal` lists every attempt (state, turn, selected message, acknowledged
+cursor, tab scope, age — never assistant text) and `--abandon <turnID|key-prefix>` closes a
+provisional attempt so a later identical prompt becomes a new turn instead of being reconciled onto a
+possibly-stale browser turn. It never claims a completion; see `docs/JOURNAL-OPERATOR.fr.md`.
+
 The browser transport used by the CLI test is a token-gated fixture that labels itself
 `[WebBridge test fixture - NOT a provider answer]`; it cannot activate without a 64-hex token and
 it is never a substitute for a real authenticated session.

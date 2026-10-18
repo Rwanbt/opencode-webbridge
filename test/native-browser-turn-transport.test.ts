@@ -41,6 +41,7 @@ interface Calls {
 
 interface FakeOptions {
   readonly baseline?: BrowserTurnObservation | null;
+  readonly identity?: { readonly tabID: string; readonly generation: number };
   readonly samples: ReadonlyArray<BrowserTurnObservation | null | Error>;
   readonly completion?: (observation: BrowserTurnObservation) => boolean;
   readonly onSend?: () => Promise<void> | void;
@@ -49,6 +50,7 @@ interface FakeOptions {
 function fakeAttachment(options: FakeOptions, calls: Calls) {
   let index = 0;
   const attachment: BrowserTurnAttachment = {
+    identity: options.identity ?? { tabID: "tab12345", generation: 1 },
     baseline: options.baseline ?? null,
     get completion() { return options.completion; },
     async send(prompt: string, turnID: string) {
@@ -107,6 +109,7 @@ test("a streaming answer becomes fragments and an honest uncertain terminal", as
   assert.deepEqual(store.snapshot(), [{
     turnID: calls.sends[0]!.turnID, state: "uncertain", at: store.writes.at(-1)!.at,
     messageKey: "m2", progress: { seq: 2, length: 5, hash: digest("Hello") },
+    scope: { tabID: "tab12345", generation: 1 },
   }]);
 });
 
@@ -280,6 +283,32 @@ test("completion requires an explicit proof; a present proof is the only path to
     kind: "terminal", state: "complete", reason: "dom-completion-proven",
   });
   assert.equal(seen.length, 1, "the proof is asked about the concrete observation only");
+});
+
+test("a resumed attempt refuses a replaced tab or generation instead of adopting its text", async () => {
+  const store = new MemoryStore();
+  const first = build({
+    baseline: null, identity: { tabID: "tab12345", generation: 1 },
+    samples: [{ messageKey: "m2", text: "Hello" }],
+  }, store);
+  await collect(first.transport);
+  assert.deepEqual(first.store.snapshot()[0]!.scope, { tabID: "tab12345", generation: 1 });
+
+  for (const identity of [{ tabID: "tab99999", generation: 1 }, { tabID: "tab12345", generation: 2 }]) {
+    const moved = build({
+      baseline: null, identity,
+      samples: [{ messageKey: "m2", text: "Hello world" }],
+    }, store);
+    const events = await collect(moved.transport);
+    assert.deepEqual(fragments(events), [], JSON.stringify(identity));
+    assert.deepEqual(terminal(events), {
+      kind: "terminal", state: "uncertain", reason: "scope-changed",
+    }, JSON.stringify(identity));
+    assert.equal(moved.calls.sends.length, 0, "a refused scope must never send again");
+  }
+  const kept = store.snapshot();
+  assert.deepEqual(kept[0]!.scope, { tabID: "tab12345", generation: 1 },
+    "the refusal keeps the original recorded scope as evidence");
 });
 
 test("long answers are chunked and an empty prompt is refused", async () => {

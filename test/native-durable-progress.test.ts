@@ -43,10 +43,12 @@ interface FakeBrowser {
   baseline: BrowserTurnObservation | null;
   answer: BrowserTurnObservation | null;
   sends: number;
+  identity?: { readonly tabID: string; readonly generation: number };
   completion?: (observation: BrowserTurnObservation) => boolean;
 }
 
 const attachmentOf = (state: FakeBrowser): BrowserTurnAttachment => ({
+  identity: state.identity ?? { tabID: "tab12345", generation: 1 },
   get baseline() { return state.baseline; },
   async send() { state.sends += 1; },
   async sample() { return state.answer; },
@@ -153,8 +155,8 @@ test("the durable cursor advances fragment by fragment across growing answers", 
     { seq: 2, length: 2, hash: digest("AB") });
   await iterator.return?.(undefined);
   const sequences = store.writes.map((record) => record.progress?.seq ?? null);
-  assert.deepEqual(sequences, [null, null, 1, 2],
-    "attempt record + adopted candidate key precede strictly increasing cursors");
+  assert.deepEqual(sequences, [null, null, null, 1, 2],
+    "attempt record + attached scope + adopted candidate key precede strictly increasing cursors");
 });
 
 test("a proven completion is persisted with its durable cursor, never a false one", async () => {

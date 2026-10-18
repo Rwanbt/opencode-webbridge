@@ -57,11 +57,13 @@ function packageContract(meta) {
     'dist/src/index.d.ts', 'dist/src/runtime/g163-root-read.js',
     'dist/src/browser/explicit-cdp-read.js', 'dist/src/runtime/g166-chatgpt-manual-turn.js',
     'dist/src/providers/provider-adapters.js', 'dist/src/runtime/observe-provider.js',
-    'bin/webbridge-manual-chatgpt.mjs', 'bin/webbridge-manual-observe.mjs']) {
+    'dist/src/native/journal-operator.js',
+    'bin/webbridge-manual-chatgpt.mjs', 'bin/webbridge-manual-observe.mjs',
+    'bin/webbridge-journal.mjs']) {
     assert.ok(paths.includes(required), 'raw tarball misses ' + required);
   }
   assert.ok(paths.every((path) => path === 'package.json' || path === 'index.mjs' ||
-    /^bin\/webbridge-manual-(chatgpt|observe)\.mjs$/.test(path) ||
+    /^bin\/webbridge-(manual-(chatgpt|observe)|journal)\.mjs$/.test(path) ||
     /^(README.md|LICENSE|SECURITY.md|THIRD-PARTY-NOTICES.md)$/.test(path) ||
     path.startsWith('dist/src/')), 'release tarball leaked source/tests/fixtures');
   assert.ok(!paths.some((path) => path.startsWith('dist/src/testing/') ||
