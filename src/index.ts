@@ -1,11 +1,16 @@
 import { Plugin } from "@opencode/plugin";
 
-/** Real distribution: inert by default. The single opt-in path below runs a
- * localhost SYNTHETIC TEST model/RPC, never a commercial web adapter. */
+/** Real root: dormant unless user opts into read-only attached CDP sessions.
+ * Native model registration is intentionally withheld until an authorized
+ * send + terminal inference contract exists (not merely a browser DOM reader). */
 export default Plugin.define({
   id: "opencode.webbridge",
   async setup(ctx) {
-    if (process.env.WEBBRIDGE_G150_LOCAL_FIXTURE !== "1") return;
+    if (process.env.WEBBRIDGE_G150_LOCAL_FIXTURE !== "1") {
+      if (process.env.WEBBRIDGE_PERSONAL_CDP_READONLY !== "1") return;
+      const { registerG163PersonalRead } = await import("./runtime/g163-root-read.js");
+      return registerG163PersonalRead(ctx, process.env);
+    }
     if (process.env.WEBBRIDGE_G81_TEST_ONLY !== "1" ||
         !/^[a-f0-9]{64}$/.test(process.env.WEBBRIDGE_G81_SECRET ?? "") ||
         !/^[a-f0-9]{64}$/.test(process.env.WEBBRIDGE_FIXTURE_TOKEN ?? "")) {
