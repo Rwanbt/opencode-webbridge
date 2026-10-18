@@ -1,0 +1,15 @@
+# ADR 0119 — G166 : tour ChatGPT CDP manuel, finalité non certifiée
+
+## Décision et résultat
+
+Le module `dist/src/runtime/g166-chatgpt-manual-turn.js` expose `g166ChatgptManualTurn(request)` : appel **manuel par un hôte de confiance**, sur un Chromium déjà ouvert avec CDP `http://127.0.0.1:<port>` et un onglet exact `https://chatgpt.com`. Le demandeur fournit `sessionID`, `turnID` unique, `tabID`, `prompt`, dossier de journal privé, et quatre callbacks hôte : `approve` (attachement), `allowAssistantText` (chaque lecture), `approveSend(action, prompt)` (décision humaine pour cette action exacte) et `isStillApproved` (révocation synchrone). Le module réutilise **sans les modifier** G159 (journal à consommation unique avant effet et un clic maximal) et G157 (observateur CDP lié au document initial, avant et après le clic). Il n'inspecte ni session de connexion, ni cookies, ni mot de passe, et n'effectue jamais de rejeu. Les appels `approveSend` doivent être implémentés comme une réelle interaction utilisateur indépendante; retourner systématiquement `true` est uniquement acceptable en fixture locale isolée.
+
+Des événements `candidate` portent les fragments DOM strictement append-only, `turnID` hôte, clé de message visible et **`attribution: 'unverified'`**. Même avec texte complet et clé stable, l'événement terminal porte toujours **`status: 'uncertain'`**, car une nouvelle bulle DOM ne démontre ni qu'elle répond à cette requête, ni que le fournisseur a terminé, ni que le clic a été accepté. Un retour tardif, un remplacement, une révocation ou une annulation ne déclenche aucun second clic. Les budgets sont limités à 1–32 lectures et 20–2000 ms par intervalle. Un refus avant consommation remonte comme erreur; une panne après consommation reste incertaine.
+
+## NO-GO modèle OpenCode natif
+
+Le SDK public `@opencode/plugin@2.0.29` expose `ctx.permission.assert`, `tool.transform`, `provider` et `model`, mais aucune preuve d'identité OS/Desktop attachée au navigateur et aucun acquittement de finalité par ChatGPT Web. Exposer cet adapter comme modèle natif ou envoyer automatiquement depuis l'outil de lecture G163 reviendrait à transformer une observation DOM en preuve d'inférence. **Aucun modèle ChatGPT n'est enregistré**, aucun tour authentifié dans OpenCode CLI/Desktop officiel n'est démontré : le G166 vérifie seulement l'appel manuel, le clic et des candidats DOM sur **Chromium Linux à HTTPS intercepté**, sans connexion commerciale. État : **0/5 fournisseurs web qualifiés**.
+
+## Limites et suite
+
+Le test Linux utilise une page HTML locale servie sur une URL HTTPS `chatgpt.com` interceptée par Playwright, et vérifie refus, mauvaise cible, rechargement de document à URL identique, texte ambigu ou tardif, révocation, annulation, unicité du clic et absence de finalité inventée. Un vrai modèle natif devra obtenir une autorité d'envoi prouvable par l'hôte ainsi qu'un événement de fin attribué au tour; les sélecteurs et la connexion réelle doivent être qualifiés séparément. Aucune modification de l'application OpenCode officielle, aucune fusion ni installation sur le profil utilisateur.

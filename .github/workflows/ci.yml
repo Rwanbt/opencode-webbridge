@@ -296,6 +296,10 @@ jobs:
         run: node --test dist/test/g159-chatgpt-approved-send.test.js
         env:
           G159_REAL_CDP: '1'
+      - name: G166 manual real Chromium one-shot send plus provisional progressive DOM and uncertain terminal
+        run: node --test dist/test/g166-chatgpt-manual-turn.test.js
+        env:
+          G166_REAL_CDP: '1'
 
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
