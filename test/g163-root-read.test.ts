@@ -143,9 +143,14 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
     const staging = join(temp, 'real-root');
     await mkdir(join(staging, 'dist'), { recursive: true });
     await cp(join(process.cwd(), 'dist/src'), join(staging, 'dist/src'), { recursive: true });
+    // OpenCode native loader's proven packaged plugin contract uses index.mjs;
+    // this wrapper ONLY re-exports the actual unmodified compiled src/index.js.
+    await writeFile(join(staging, 'index.mjs'),
+      'export { default } from "./dist/src/index.js";\n');
     const sourceManifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8'));
     await writeFile(join(staging, 'package.json'), JSON.stringify({
-      ...sourceManifest, files: ['dist/src'], devDependencies: {},
+      ...sourceManifest, main: 'index.mjs', files: ['index.mjs', 'dist/src'],
+      devDependencies: {},
     }));
     const archive = JSON.parse(invokeNpm(['pack', staging, '--ignore-scripts', '--json',
       '--pack-destination', temp]))[0].filename;
@@ -159,6 +164,9 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
     const imported = await import(pathToFileURL(entry).href);
     assert.equal(imported.default?.id, 'opencode.webbridge',
       'actual packed root module is not loadable by Node');
+    const packageEntrypoint = await import(pathToFileURL(join(installedRoot, 'index.mjs')).href);
+    assert.equal(packageEntrypoint.default, imported.default,
+      'packaged loader entry must re-export the real root identity');
     const configDir = join(temp, 'config');
     await mkdir(configDir);
     await Promise.all(['home', 'data', 'cache'].map((dir) => mkdir(join(temp, dir))));
