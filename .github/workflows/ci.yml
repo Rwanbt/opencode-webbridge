@@ -198,6 +198,8 @@ jobs:
         run: node --test dist/test/g157-chatgpt-cdp-observer.test.js
       - name: G160 other providers lack silent origin, tab or reading opt-in (Windows no Chromium)
         run: node --test dist/test/g160-other-provider-dom.test.js
+      - name: G161 same-target same-URL document epoch anti-reload gate (Windows no Chromium)
+        run: node --test dist/test/g161-document-epoch.test.js
       - name: G141 G135 Windows file-read closed + untrusted proposals (no Windows Git sandbox claim)
         run: node --test '--test-name-pattern=file.read opens real regular Linux inode|malformed provenance/unknown or mutable actions' dist/test/offline-readonly-tool-executor.test.js
       - name: G141 G138 bounded JSON hostile input and G139 authority snapshots

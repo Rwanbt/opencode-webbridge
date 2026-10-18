@@ -2,6 +2,7 @@
  * All selectors are tentative until verified against an authenticated UI. */
 import { chromium, type Browser, type Page } from 'playwright';
 import { ExplicitCdpReadBridge, type CdpConsent, type CdpTab } from '../browser/explicit-cdp-read.js';
+import { readCdpDocumentEpoch, assertCdpDocumentEpoch, type CdpDocumentEpoch } from '../browser/cdp-document-epoch.js';
 import { readPlainFields } from '../core/adapter-contract.js';
 import { assertOpaqueID, type TurnEvent } from '../core/browser-port.js';
 
@@ -52,6 +53,7 @@ export class G160OtherProviderObserver {
     private readonly tab: CdpTab,
     private readonly provider: OtherProviderID,
     private readonly consent: OtherReadConsent,
+    private readonly documentEpoch: CdpDocumentEpoch,
   ) {}
 
   static async attach(endpoint: string, tabID: string, provider: OtherProviderID,
@@ -80,7 +82,10 @@ export class G160OtherProviderObserver {
       }
       if (!selected || selected.url() !== tab.url) throw new Error('G160 target identity mismatch');
       await discovery.verify(tab);
-      return new G160OtherProviderObserver(discovery, connection, selected, tab, provider, consent);
+      const documentEpoch = await readCdpDocumentEpoch(selected, tab.url);
+      await discovery.verify(tab);
+      return new G160OtherProviderObserver(discovery, connection, selected, tab, provider, consent,
+        documentEpoch);
     } catch (error) {
       await connection?.close();
       discovery.close();
@@ -91,9 +96,11 @@ export class G160OtherProviderObserver {
   private async authorize(): Promise<void> {
     if (this.closed) throw new Error('G160 attachment closed');
     await this.discovery.verify(this.tab);
+    assertCdpDocumentEpoch(await readCdpDocumentEpoch(this.page, this.tab.url), this.documentEpoch);
     if (await this.consent.allowAssistantText(this.tab) !== true)
       throw new Error('G160 assistant reading revoked');
     await this.discovery.verify(this.tab);
+    assertCdpDocumentEpoch(await readCdpDocumentEpoch(this.page, this.tab.url), this.documentEpoch);
   }
 
   async sample(): Promise<OtherResponse | null> {

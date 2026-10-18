@@ -2,6 +2,7 @@
  * The CDP port is user-declared, NOT Core/OS/Desktop attestation. No input or writes. */
 import { chromium, type Browser, type Page } from 'playwright';
 import { ExplicitCdpReadBridge, type CdpConsent, type CdpTab } from './explicit-cdp-read.js';
+import { readCdpDocumentEpoch, assertCdpDocumentEpoch } from './cdp-document-epoch.js';
 import {
   G156ChatgptObserver, g156ChatgptReadDOM, type G156Attachment,
 } from '../providers/g156-chatgpt-dom.js';
@@ -47,27 +48,37 @@ export class G157ChatgptCdpObserver {
       if (!selected || selected.url() !== tab.url) throw new Error('G157 target identity/URL mismatch');
       await discovery.verify(tab);
       const page = selected;
+      const documentEpoch = await readCdpDocumentEpoch(page, tab.url);
+      await discovery.verify(tab);
+      const verifyDocument = async () => {
+        assertCdpDocumentEpoch(await readCdpDocumentEpoch(page, tab.url), documentEpoch);
+      };
       const current = async () => {
         const latest = (await discovery.tabs()).find((t) => t.tabID === tab.tabID);
         if (!latest || latest.generation !== tab.generation || latest.url !== tab.url)
           throw new Error('G157 tab replaced or revoked');
+        await verifyDocument();
         return { tabID: latest.tabID, generation: 'gen_' + latest.generation, url: latest.url };
       };
       const host: G156Attachment = {
         current,
         authorizeRead: async () => {
           await discovery.verify(tab);
+          await verifyDocument();
           if (await consent.allowAssistantText(tab) !== true)
             throw new Error('G157 assistant text permission revoked');
           await discovery.verify(tab);
+          await verifyDocument();
         },
         evaluate: async <R>(reader: () => R): Promise<R> => {
           // Never accept page-authored or caller-provided functions. This fixed
           // audited reader uses DOM selectors only and has no write operations.
           if (reader !== g156ChatgptReadDOM) throw new Error('G157 unsupported CDP evaluation');
           await discovery.verify(tab);
+          await verifyDocument();
           const result = await page.evaluate(g156ChatgptReadDOM);
           await discovery.verify(tab);
+          await verifyDocument();
           return result as R;
         },
       };

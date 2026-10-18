@@ -89,6 +89,8 @@ test('G160 real existing CDP Chromium provider-specific bodies, exact identity a
         allowed = false;
         await assert.rejects(observer.sample(), /revoked/);
         allowed = true;
+        await page.reload(); // unchanged origin/URL/target ID, changed loader ID
+        await assert.rejects(observer.sample(), /document replaced/);
         await page.goto('about:blank');
         await assert.rejects(observer.sample(), /replaced|changed/);
       } finally { await observer.close(); }

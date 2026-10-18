@@ -76,6 +76,9 @@ test('G157 real CDP existing Chromium ChatGPT DOM read, progressive delta and re
     readAllowed = false;
     await assert.rejects(attached.sample(), /revoked/);
     readAllowed = true;
+    // Same URL + same CDP tab ID but a DIFFERENT full document is not authority.
+    await page.reload();
+    await assert.rejects(attached.sample(), /document replaced/);
     await page.goto('about:blank');
     await assert.rejects(attached.sample(), /replaced|changed|revoked/);
     await attached.close();
