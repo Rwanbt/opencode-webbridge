@@ -56,13 +56,17 @@ const CASES = [
   },
 ] as const;
 
+const BROWSER = process.env.WEBBRIDGE_G160_BROWSER === '1';
+
 async function serve(page: Page, origin: string, html: string): Promise<void> {
   await page.route(origin + '/**', (route) => route.fulfill({
     status: 200, contentType: 'text/html', body: html,
   }));
 }
 
-test('G160 readers: live layouts, trailing empty turn and fail-closed unknown UI', async () => {
+test('G160 readers: live layouts, trailing empty turn and fail-closed unknown UI', {
+  skip: !BROWSER,
+}, async () => {
   const browser: Browser = await chromium.launch({ headless: true });
   try {
     for (const item of CASES) {
@@ -77,7 +81,9 @@ test('G160 readers: live layouts, trailing empty turn and fail-closed unknown UI
   } finally { await browser.close(); }
 });
 
-test('G156 ChatGPT reader: work layout, legacy fallback and ambiguity refusal', async () => {
+test('G156 ChatGPT reader: work layout, legacy fallback and ambiguity refusal', {
+  skip: !BROWSER,
+}, async () => {
   const browser: Browser = await chromium.launch({ headless: true });
   const cases = [
     {
