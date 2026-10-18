@@ -74,3 +74,20 @@ test('the upstream proposal states the capability, the mapping and no fake suppo
   assert.doesNotMatch(doc, /ctx\.browser\s*est\s*(disponible|présent|fourni)/i);
   assert.match(doc, /Statut\s*:\s*\*\*proposition\*\*/);
 });
+
+test('the upstream issue draft is ready to file and stays honest', async () => {
+  const issue = await readFile(join(ROOT, 'docs/proposals/upstream/browser-capability-issue.md'), 'utf8');
+  for (const anchor of [
+    'ctx.browser', 'BrowserCapability', 'BrowserTab', 'plugin_browser',
+    'Acceptance criteria', 'Non-goals', 'ready to file', 'check:d01d02',
+    'generation', 'release()',
+  ]) {
+    assert.ok(issue.includes(anchor), 'the issue draft must state: ' + anchor);
+  }
+  // It is a draft, never presented as already filed, and never claims availability.
+  assert.match(issue, /Not filed/i);
+  assert.doesNotMatch(issue, /ctx\.browser\s+is\s+(available|implemented|shipped)/i);
+  // It names the workaround honestly.
+  assert.match(issue, /remote-debugging-port/);
+});
+
