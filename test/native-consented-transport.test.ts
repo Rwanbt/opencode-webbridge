@@ -21,6 +21,7 @@ import type { NativeTurnEvent, NativeTurnRequest } from "../src/native/turn-tran
 
 const CHATGPT = NATIVE_WEB_PROVIDERS.find((provider) => provider.id === "chatgpt")!;
 const DEEPSEEK = NATIVE_WEB_PROVIDERS.find((provider) => provider.id === "deepseek")!;
+const GEMINI = NATIVE_WEB_PROVIDERS.find((provider) => provider.id === "gemini")!;
 const TAB = "ABCDEFGH_1234567890abcdef";
 const KEY = "a".repeat(64);
 
@@ -66,15 +67,15 @@ test("a provider without a consented send primitive refuses per turn, never fake
   const { dir, drop } = await temp("webbridge-consent-");
   try {
     const env = {
-      [DEEPSEEK.tabEnv]: `http://127.0.0.1:9222#${TAB}`,
+      [GEMINI.tabEnv]: `http://127.0.0.1:9222#${TAB}`,
       WEBBRIDGE_NATIVE_JOURNAL_DIR: dir,
     };
     // Per-provider degradation: the plugin stays usable for providers that ARE
     // implemented; the unimplemented one refuses each turn with the precise state.
-    const transport = await consentedTransport(env, DEEPSEEK);
+    const transport = await consentedTransport(env, GEMINI);
     assert.ok(transport, "a valid declaration must not take the whole plugin down at setup");
     const request: NativeTurnRequest = {
-      providerID: DEEPSEEK.providerID, modelID: DEEPSEEK.modelID,
+      providerID: GEMINI.providerID, modelID: GEMINI.modelID,
       prompt: "explain the failing test", signal: new AbortController().signal,
     };
     const stream = async () => {

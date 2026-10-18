@@ -102,8 +102,8 @@ export async function consentedTransport(
     polls: PRODUCTION_POLLS,
     intervalMs: PRODUCTION_INTERVAL_MS,
     attach: async () => {
-      const { attachDeclaredChatgptTab } = await import("./consented-cdp-attachment.js");
-      return attachDeclaredChatgptTab({ provider, consent, env });
+      const { attachDeclaredTab } = await import("./consented-cdp-attachment.js");
+      return attachDeclaredTab({ provider, consent, env });
     },
   });
 }

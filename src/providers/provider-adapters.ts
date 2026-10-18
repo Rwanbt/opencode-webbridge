@@ -14,7 +14,7 @@ export type ProviderReadPrimitive =
   | "g157-chatgpt-cdp-observer"
   | "g160-other-provider-dom"
   | "g169-qwen-probe";
-export type ProviderSendPrimitive = "g159-chatgpt-one-shot";
+export type ProviderSendPrimitive = "g159-chatgpt-one-shot" | "g174-deepseek-one-shot";
 
 export interface ProviderAdapter {
   readonly id: WebProviderID;
@@ -48,9 +48,9 @@ const CAPABILITIES: Readonly<
   deepseek: {
     readPrimitive: "g160-other-provider-dom",
     discoverable: true,
-    sendPrimitive: null,
+    sendPrimitive: "g174-deepseek-one-shot",
     completionProof: "none",
-    notes: "read-only observer with tentative selectors (unverified against the authenticated UI); no send primitive",
+    notes: "consented one-shot send (composer + primary send control observed on the authenticated UI) + read-only observer; response finality stays UNCERTAIN",
   },
   gemini: {
     readPrimitive: "g160-other-provider-dom",

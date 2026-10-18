@@ -37,6 +37,15 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
     key = keyNode.getAttribute('data-message-id') ?? keyNode.getAttribute('data-turn-id') ??
       keyNode.getAttribute('data-response-id') ?? keyNode.id ?? null;
   }
+  if (!key && provider === 'deepseek') {
+    // Observed on the real authenticated UI (2026-10-18): DeepSeek exposes no
+    // per-message id. The app's virtual-list item key paired with the
+    // conversation id from the URL is the stable pair (never a text hash).
+    const item = root.closest('[data-virtual-list-item-key]')
+      ?.getAttribute('data-virtual-list-item-key') ?? null;
+    const conversation = /\/a\/chat\/s\/([A-Za-z0-9-]{8,64})/.exec(location.pathname)?.[1] ?? null;
+    if (item && /^\d{1,6}$/.test(item) && conversation) key = conversation + ':' + item;
+  }
   if (!key || !documentKey.test(key)) return null; // No unstable indices/text hashes.
   const text = content[0].textContent ?? '';
   if (!text || text.length > 16_000) return null;
@@ -91,6 +100,12 @@ export class G160OtherProviderObserver {
       discovery.close();
       throw error;
     }
+  }
+
+  /** Attached target identity, mirroring G157: a caller may persist it and later
+   *  refuse to resume onto a different tab or a replaced generation. */
+  get scope(): { readonly tabID: string; readonly generation: number } {
+    return Object.freeze({ tabID: this.tab.tabID, generation: this.tab.generation });
   }
 
   private async authorize(): Promise<void> {
