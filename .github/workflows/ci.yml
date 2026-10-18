@@ -279,6 +279,24 @@ jobs:
         env:
           G157_REAL_CDP: '1'
 
+  g159-approved-chatgpt-send:
+    name: G159 explicit one-shot ChatGPT composer UI send on isolated Chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - name: Native CDP approved once, denied first, revocation, navigation, uncertain durable journal
+        run: node --test dist/test/g159-chatgpt-approved-send.test.js
+        env:
+          G159_REAL_CDP: '1'
+
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
     runs-on: ubuntu-latest
