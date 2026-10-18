@@ -289,3 +289,42 @@ test("long answers are chunked and an empty prompt is refused", async () => {
     await collect(transport, { ...REQUEST, prompt: "   " });
   }, /empty prompt refused/);
 });
+
+test("an unreachable browser discards a fresh attempt so a later call may still send", async () => {
+  const store = new MemoryStore();
+  const calls: Calls = { sends: [], samples: 0, closes: 0 };
+  let attaches = 0;
+  const transport = createBrowserTurnTransport({
+    providerID: REQUEST.providerID, modelID: REQUEST.modelID,
+    store, intervalMs: 20, polls: 4,
+    attach: async () => {
+      attaches += 1;
+      if (attaches === 1) throw new Error("declared endpoint unreachable");
+      return fakeAttachment({ baseline: null, samples: [{ messageKey: "m2", text: "answer" }] }, calls);
+    },
+  });
+  await assert.rejects(async () => { await collect(transport); }, /unreachable/);
+  assert.equal(store.discards, 1, "attach precedes every UI effect: the fresh attempt is discarded");
+  assert.equal(store.snapshot().length, 0, "no attempt record may outlive an attach that sent nothing");
+  const second = await collect(transport);
+  assert.equal(calls.sends.length, 1, "the later call really sends");
+  assert.deepEqual(fragments(second), ["answer"]);
+  assert.equal(terminal(second).state, "uncertain");
+});
+
+test("a reconciled attempt keeps its record when the browser is gone", async () => {
+  const store = new MemoryStore();
+  const { transport, calls } = build({
+    baseline: null, samples: [{ messageKey: "m2", text: "answer" }],
+  }, store);
+  await collect(transport); // records the attempt (it really sent once)
+  assert.equal(calls.sends.length, 1);
+  const gone = createBrowserTurnTransport({
+    providerID: REQUEST.providerID, modelID: REQUEST.modelID,
+    store, intervalMs: 20, polls: 4,
+    attach: async () => { throw new Error("browser closed"); },
+  });
+  await assert.rejects(async () => { await collect(gone); }, /browser closed/);
+  assert.equal(store.discards, 0, "a reconciled attempt must never be discarded: its send may have landed");
+  assert.equal(store.snapshot().length, 1);
+});

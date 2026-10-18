@@ -9,7 +9,9 @@
  *     browser turn (the core's auxiliary title call never reaches a browser);
  *  3. an unproven DOM terminal is recorded as an error finish, never a completion;
  *  4. with no attached authorized browser session the model refuses explicitly and
- *     never produces text (no simulated answer).
+ *     never produces text (no simulated answer);
+ *  5. a declared loopback tab whose browser is unreachable refuses explicitly
+ *     before any UI effect and leaves no attempt record behind.
  *
  * The browser transport used here is an explicitly labeled, token-gated test
  * fixture; it is NOT a provider answer. Real authenticated sessions stay behind
@@ -21,7 +23,7 @@ import { strict as assert } from 'node:assert';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, cp, copyFile, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, cp, copyFile, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -179,7 +181,8 @@ function spawnRun(launched: Launched, model: string, prompt: string) {
 }
 
 /** Bounded session read: the latest session's messages, whatever the outcome. */
-async function sessionJson(launched: Launched, predicate: RegExp, budgetMs: number): Promise<string> {
+async function sessionJson(launched: Launched,
+  predicate: RegExp | ((seen: string) => boolean), budgetMs: number): Promise<string> {
   let seen = '';
   const deadline = Date.now() + budgetMs;
   while (Date.now() < deadline) {
@@ -191,7 +194,7 @@ async function sessionJson(launched: Launched, predicate: RegExp, budgetMs: numb
         const messages = await (await fetch(launched.url + `/api/session/${id}/message?limit=10`,
           { headers: launched.headers, signal: AbortSignal.timeout(700) })).json();
         seen = JSON.stringify(messages);
-        if (predicate.test(seen)) return seen;
+        if (typeof predicate === 'function' ? predicate(seen) : predicate.test(seen)) return seen;
       }
     } catch { /* keep polling inside the budget */ }
     await new Promise<void>((done) => setTimeout(done, 250));
@@ -276,7 +279,11 @@ test('native web models: an unproven terminal is recorded as error, never as com
     });
     await waitReady(launched, [PROVIDER], [{ providerID: PROVIDER, modelID: MODEL }]);
     const run = spawnRun(launched, `${PROVIDER}/${MODEL}`, 'native web models uncertain prompt');
-    const recorded = await sessionJson(launched, new RegExp(FIXTURE_MARKER), 30_000);
+    // Poll until BOTH the observed text and the recorded terminal are present:
+    // the text can land before the finish metadata is persisted.
+    const recorded = await sessionJson(launched, (seen) =>
+      seen.includes(FIXTURE_MARKER) && /webbridge-terminal-uncertain|"finish"\s*:\s*"error"/.test(seen),
+    30_000);
     run.child.kill();
     await run.finished;
     assert.ok(recorded.includes(FIXTURE_MARKER), 'observed text was not preserved: ' + recorded.slice(-500));
@@ -314,6 +321,44 @@ test('native web models: without an attached session the model refuses and inven
     assert.match(evidence, new RegExp(refusal), 'explicit refusal missing: ' + evidence.slice(-500));
     assert.notEqual(exit, 0, 'a detached session must never complete a turn successfully');
     assert.doesNotMatch(run.stdout(), new RegExp(FIXTURE_MARKER), 'no text may be invented without a session');
+  } finally {
+    launched?.close();
+    await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('native web models: a declared tab without a reachable browser refuses before any send', {
+  skip,
+}, async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'web-models-tab-absent-'));
+  let launched: Launched | undefined;
+  try {
+    const journal = join(temp, 'journal');
+    await mkdir(journal, { recursive: true, mode: 0o700 });
+    const port = await freePort(); // closed again: the declared endpoint has no listener
+    const pluginDir = await installRawPackage(temp);
+    launched = await launch(temp, pluginDir, 'tab-absent', {
+      WEBBRIDGE_NATIVE_WEB_MODELS: 'chatgpt',
+      WEBBRIDGE_NATIVE_TAB_CHATGPT: `http://127.0.0.1:${port}#native-tab-absent-probe`,
+      WEBBRIDGE_NATIVE_JOURNAL_DIR: journal,
+    });
+    await waitReady(launched, [PROVIDER], [{ providerID: PROVIDER, modelID: MODEL }]);
+    const run = spawnRun(launched, `${PROVIDER}/${MODEL}`, 'native web models declared tab prompt');
+    const refusal = 'no attached authorized browser session';
+    const recorded = await sessionJson(launched, new RegExp(refusal), 30_000);
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline && run.child.exitCode === null) {
+      await new Promise<void>((done) => setTimeout(done, 250));
+    }
+    if (run.child.exitCode === null) run.child.kill();
+    await run.finished;
+    const evidence = `${recorded}\n${run.stdout()}\n${run.stderr()}`;
+    assert.match(evidence, new RegExp(refusal),
+      'an unreachable declared browser must refuse explicitly: ' + evidence.slice(-500));
+    assert.doesNotMatch(run.stdout(), new RegExp(FIXTURE_MARKER), 'no text may be invented');
+    assert.doesNotMatch(evidence, new RegExp(COMPLETION_RAW), 'no completion may be observed');
+    assert.deepEqual(await readdir(journal), [],
+      'an attach that never sent must leave no attempt record behind');
   } finally {
     launched?.close();
     await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
