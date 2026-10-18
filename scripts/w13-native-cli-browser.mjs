@@ -238,6 +238,19 @@ test('W13 raw npm root -> unmodified CLI 2.0.32 -> intercepted HTTPS Chromium; a
       await command.stop(); command = undefined;
       await host.stop(); host = undefined;
 
+      // Even an authorized tab cannot be written while the human has a draft.
+      const privateDraft = 'W13_HUMAN_DRAFT_KEEP_UNMODIFIED';
+      await browser.page.locator('#prompt-textarea').fill(privateDraft);
+      host = await launch(temp, plugin, 'existing-draft', selection);
+      before = await priorSessions(host);
+      command = run(host, PROMPT + '_DRAFT_REFUSAL');
+      await observed(host, 'nonempty user draft', 25_000, before);
+      assert.deepEqual(await sent(browser.page), []);
+      assert.equal(await browser.page.locator('#prompt-textarea').textContent(), privateDraft);
+      await command.stop(); command = undefined;
+      await host.stop(); host = undefined;
+      await browser.page.locator('#prompt-textarea').fill('');
+
       // Real packaged root model -> CDP selected synthetic HTTPS page -> one UI click.
       host = await launch(temp, plugin, 'approved', selection);
       before = await priorSessions(host);

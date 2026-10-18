@@ -20,7 +20,7 @@ are used. The selected CDP tab, its origin and the private journal directory
 are explicitly declared for the real WebBridge native model.
 
 Assertions span the official model inventory, no-tab consent refusal,
-nonexistent target refusal, zero preapproval clicks, exactly one approved
+nonexistent target refusal, user-draft preservation, zero preapproval clicks, exactly one approved
 browser UI click, persisted progressive candidate, absence of old/private
 page text, UNCERTAIN/error terminal (never provider completion), and
 exact-prompt retry after stopping and restarting the official server with
