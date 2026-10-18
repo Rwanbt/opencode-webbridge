@@ -315,6 +315,24 @@ jobs:
         env:
           G166_REAL_CDP: '1'
 
+  g170-official-cli-provider-probe:
+    name: G170 actual OpenCode 2.0.32 CLI external provider and bounded offline model
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: npm run build
+      - name: Real native plugin directory, provider/model inventory, CLI selected SSE and personal NO-GO
+        run: node --test dist/test/g170-native-registration.test.js
+        env:
+          G170_NATIVE_CLI: '1'
+
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
     runs-on: ubuntu-latest
