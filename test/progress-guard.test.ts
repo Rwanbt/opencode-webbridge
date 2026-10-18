@@ -23,7 +23,7 @@ function attempt(change?: (input: Record<string, any>) => void) {
 test('verified partial evidence and zero production acceptance pass', () => {
   const result = attempt();
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /111 partial PRs \+ 11 superseded reds accounted; 0\/5 commercial, 0 accepted/);
+  assert.match(result.stdout, /125 partial PRs \+ 11 superseded reds accounted; 0\/5 commercial, 0 accepted/);
 });
 test('partial CI cannot silently certify a commercial provider or enable writes', () => {
   for (const modify of [
@@ -53,7 +53,8 @@ test('fabricated SHA/checks or changed mapping cannot become evidence', () => {
     (p: any) => { p.epicEvidence[0].acceptedStories = 1; },
     (p: any) => { p.epicEvidence[2].verifiedPartialPRs = [233]; },
     (p: any) => { p.epicEvidence[6].stories = 5; },
-    (p: any) => { p.evidence.push({ pr: 264, sha: 'a'.repeat(40), checks: 38, scope: 'future-partial' }); },
+    (p: any) => { p.evidence.push({ pr: 300, sha: 'a'.repeat(40), checks: 38, scope: 'future-partial' }); },
+    (p: any) => { const entry = p.evidence.find((item: any) => item.pr === 264); entry.sha = 'f'.repeat(40); },
     (p: any) => { p.unverified.pop(); },
     (p: any) => { p.unverified[0].sha = 'f'.repeat(40); },
     (p: any) => { p.unverified[0].reason = 'short'; },

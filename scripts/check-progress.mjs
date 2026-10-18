@@ -26,7 +26,7 @@ for (const name of ['nativeDesktopElectronE2E', 'atomicCoreChromiumRevocation', 
   ensure(a[name] === false, `unsafe production gate ${name}`);
 
 const firstPR = 142;
-const lastVerifiedPR = 263;
+const lastVerifiedPR = 277;
 // Independently transcribed from exact-SHA GitHub CI runs at review time; never
 // queried from GitHub by this guard, so local evidence substitution is refused.
 // Evidence = head SHA with zero failing gh-pr-checks rows when transcribed
@@ -126,6 +126,20 @@ const lockedRecentHeads = new Map([
   [261, '45f1b4f2ea054c1f62cd6c45a9f1c0145d8ec29a'],
   [262, 'f79fb05a0adef8261ac643855d6b8179b759da33'],
   [263, '34e30ba0f85e9aabdc7992fa9610b716c7ad0a97'],
+  [264, 'cbbb7363a4fa6f70f6716796db5c11c22af1f2f0'],
+  [265, '2632298780b554604f6a5926c724aa9ab8e43d6c'],
+  [266, '800fdeb303ae09317dcd3a57e2e5b6861e3450c8'],
+  [267, '5b0c7c0936d8ee4f3db3d441d07964087be95c3a'],
+  [268, 'a3eff15acaa68826fcf8a9313621d81d52dc4285'],
+  [269, '9ac0ccac7c820b37f077964f905148a820cc0b2f'],
+  [270, 'dab42454719010594d0fedddcd30163a5259aeb1'],
+  [271, 'c38e32aa27fdef39816032c1163d2c95fc7a5e35'],
+  [272, 'f170a5485f7922156f3f019f44b79bca3702da91'],
+  [273, '9cabb5862a4ceff60202f501ccd7c6b026226348'],
+  [274, '795c7aec3b5771923921622280979c9ae055bb11'],
+  [275, 'df05d70593ef603ba0764784e2737b05629535b1'],
+  [276, '631567b28c8b1d0baa1bc7a7df015d39ec10fd9f'],
+  [277, '2fb7334a6106fd84668d8becbf1e51101a011d4e'],
 ]);
 ensure(Array.isArray(progress.evidence), 'missing evidence');
 ensure(Array.isArray(progress.unverified), 'missing unverified accounting');
