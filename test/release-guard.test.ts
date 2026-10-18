@@ -31,7 +31,7 @@ test('the release decision can never be inflated in the posture', () => {
   for (const modify of [
     (p: any) => { p.decision = 'GO-PRODUCTION'; },
     (p: any) => { p.allowedClaims.desktop = true; },
-    (p: any) => { p.allowedClaims.commercialProviders = 5; },
+    (p: any) => { p.allowedClaims.commercialProviders = 6; },
     (p: any) => { p.allowedClaims.browserWrites = true; },
     (p: any) => { p.allowedClaims.productionAccepted = true; },
     (p: any) => { p.allowedClaims.scope = 'Desktop and commercial release'; },

@@ -51,7 +51,7 @@ test('windows coverage cannot claim the Linux full native fixture', () => {
 
 test('commercial providers or browser writes can never activate through the matrix', () => {
   for (const modify of [
-    (c: any) => { c.providers.operational = 5; },
+    (c: any) => { c.providers.operational = 6; },
     (c: any) => { c.providers.liveAutomationAuthorized = true; },
     (c: any) => { c.providers.commercial.shift(); },
     (c: any) => { c.browserWritesEnabled = true; },

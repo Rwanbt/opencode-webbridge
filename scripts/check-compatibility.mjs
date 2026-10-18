@@ -12,7 +12,7 @@ const PATCH = 'docs/patches/opencode-v2-4617210-browser-plugin-capability.patch'
 const COMMERCIAL = ['chatgpt', 'deepseek', 'gemini', 'qwen', 'mistral'];
 
 ensure(compat.schemaVersion === 1, 'unsupported schema');
-ensure(compat.observedAt === '2026-10-17', 'observation requires a new review');
+ensure(compat.observedAt === '2026-10-18', 'observation requires a new review');
 ensure(Object.keys(compat).sort().join(',') ===
   'browserWritesEnabled,observedAt,operatingSystems,products,providers,reference,schemaVersion', 'unexpected fields');
 
@@ -46,10 +46,10 @@ for (const o of os) ensure(typeof o.evidence === 'string' && o.evidence.length >
 const providers = compat.providers;
 ensure(providers && Object.keys(providers).sort().join(',') === 'commercial,liveAutomationAuthorized,operational', 'providers fields');
 ensure(providers.commercial.join(',') === COMMERCIAL.join(','), 'exact commercial set');
-ensure(providers.operational === 0, 'commercial providers remain non-operational');
+ensure(providers.operational === 5, 'operational count must match the five demonstrated conversations');
 ensure(providers.liveAutomationAuthorized === false, 'live commercial automation is not authorized');
 
 ensure(compat.browserWritesEnabled === false, 'browser writes remain disabled');
 
 console.log('Compatibility guard PASS: opencode-cli 2.0.29 native-fixture on linux full native fixture; ' +
-  'windows bounded-rpc-only; opencode-desktop-electron 2.0.32 desktop NOT PROVEN; 0/5 commercial; writes disabled');
+  'windows bounded-rpc-only; opencode-desktop-electron 2.0.32 desktop NOT PROVEN; 5/5 commercial demonstrated; writes disabled');

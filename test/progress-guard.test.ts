@@ -23,11 +23,12 @@ function attempt(change?: (input: Record<string, any>) => void) {
 test('verified partial evidence and zero production acceptance pass', () => {
   const result = attempt();
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /125 partial PRs \+ 11 superseded reds accounted; 0\/5 commercial, 0 accepted/);
+  assert.match(result.stdout, /125 partial PRs \+ 11 superseded reds accounted; 5\/5 commercial demonstrated, 0 accepted/);
 });
 test('partial CI cannot silently certify a commercial provider or enable writes', () => {
   for (const modify of [
-    (p: any) => p.acceptance.commercialProvidersOperational.push('chatgpt'),
+    (p: any) => p.acceptance.commercialProvidersOperational.push('ghost'),
+    (p: any) => { p.acceptance.commercialProvidersOperational = ['chatgpt']; },
     (p: any) => p.acceptance.productionAcceptedStoryIDs.push('US-E5-02'),
     (p: any) => { p.acceptance.webbridgeWritesEnabled = true; },
     (p: any) => { p.acceptance.nativeDesktopElectronE2E = true; },
