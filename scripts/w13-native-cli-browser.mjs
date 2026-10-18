@@ -255,7 +255,18 @@ test('W13 raw npm root -> unmodified CLI 2.0.32 -> intercepted HTTPS Chromium; a
       host = await launch(temp, plugin, 'approved', selection);
       before = await priorSessions(host);
       command = run(host, PROMPT);
-      const first = await observed(host, 'W13_VISIBLE_', 35_000, before);
+      let first;
+      try {
+        first = await observed(host, 'W13_VISIBLE_', 35_000, before);
+      } catch (error) {
+        const displayed = await browser.page.locator('[data-turn-id="candidate1"] .markdown')
+          .textContent().catch(() => null);
+        throw new Error('W13 progressive native failure: clicks=' +
+          JSON.stringify(await sent(browser.page)) + ' browserText=' +
+          JSON.stringify(displayed) + ' journalFiles=' +
+          JSON.stringify(await readdir(journal)) + ' CLI=' +
+          command.output().slice(-600), { cause: error });
+      }
       assert.doesNotMatch(first, /W13_VISIBLE_PROVISIONAL_REPLY/,
         'only final DOM text was persisted; no progressive model event was proved');
       const progress = await observed(host, CANDIDATE, 25_000, before);
