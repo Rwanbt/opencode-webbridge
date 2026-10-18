@@ -161,10 +161,13 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
         OPENCODE_DISABLE_PROJECT_CONFIG: 'true', OPENCODE_SERVER_PASSWORD: password,
         ...env(9333) },
     });
-    child.stdout?.resume(); child.stderr?.resume();
+    let logs = '';
+    child.stdout?.on('data', (value: Buffer) => { logs = (logs + value.toString()).slice(-3000); });
+    child.stderr?.on('data', (value: Buffer) => { logs = (logs + value.toString()).slice(-3000); });
     const headers = { Authorization: 'Basic ' +
       Buffer.from('opencode:' + password).toString('base64') };
     let active = false;
+    let observed = 'none';
     for (let i = 0; i < 100 && child.exitCode === null; i++) {
       try {
         const response = await fetch(endpoint + '/api/plugin', {
@@ -172,6 +175,7 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
         });
         if (response.ok) {
           const result = await response.json() as { data?: { id: string; state?: { status: string } }[] };
+          observed = JSON.stringify(result.data?.map((item) => [item.id, item.state?.status]));
           active = Boolean(result.data?.some((item) =>
             item.id === 'opencode.webbridge' && item.state?.status === 'active'));
           if (active) break;
@@ -179,7 +183,10 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
       } catch { /* expected startup attempts */ }
       await new Promise((done) => setTimeout(done, 150));
     }
-    assert.equal(active, true, 'ACTUAL npm-packed opt-in root was not loaded in CLI');
+    assert.equal(active, true, 'ACTUAL npm-packed opt-in root was not loaded in CLI' +
+      ` (exit=${child.exitCode}, inventory=${observed.slice(0, 500)},` +
+      ` missingModule=${/ERR_MODULE_NOT_FOUND|Cannot find module/.test(logs)},` +
+      ` pluginError=${/plugin.*error|failed to load/i.test(logs)})`);
     const providers = await fetch(endpoint + '/api/provider', {
       headers, signal: AbortSignal.timeout(3000),
     });
