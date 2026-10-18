@@ -4,6 +4,7 @@
  *  behind explicit user consent. */
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import {
   BrowserTurnRefusedError, BrowserTurnUncertainError, createBrowserTurnTransport,
 } from "../src/native/browser-turn-transport.js";
@@ -16,6 +17,7 @@ const REQUEST: NativeTurnRequest = {
   providerID: "webbridge-chatgpt", modelID: "chatgpt-web",
   prompt: "explain the failing test", signal: new AbortController().signal,
 };
+const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 
 class MemoryStore implements AttemptStore {
   private readonly records = new Map<string, AttemptRecord>();
@@ -104,7 +106,7 @@ test("a streaming answer becomes fragments and an honest uncertain terminal", as
   assert.equal(calls.closes, 1);
   assert.deepEqual(store.snapshot(), [{
     turnID: calls.sends[0]!.turnID, state: "uncertain", at: store.writes.at(-1)!.at,
-    messageKey: "m2",
+    messageKey: "m2", progress: { seq: 2, length: 5, hash: digest("Hello") },
   }]);
 });
 
@@ -139,8 +141,8 @@ test("a retry re-observes the same browser turn instead of sending again", async
   const retry = await collect(transport);
   assert.equal(sentBefore, 1);
   assert.equal(calls.sends.length, 1, "a retry must never issue a second browser send");
-  assert.deepEqual(fragments(retry), ["Hello world", "!"],
-    "the retry re-observes the same recorded key and streams its current text");
+  assert.deepEqual(fragments(retry), ["!"],
+    "the retry resumes after the durably acknowledged prefix instead of replaying it");
   assert.deepEqual(terminal(retry), {
     kind: "terminal", state: "uncertain", reason: "provider-finality-unverified",
   });

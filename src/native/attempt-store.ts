@@ -13,13 +13,14 @@
 import { randomBytes } from "node:crypto";
 import { lstat, open, readFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import type { AttemptRecord, AttemptStore } from "./browser-turn-transport.js";
+import type { AttemptProgress, AttemptRecord, AttemptStore } from "./browser-turn-transport.js";
 
 export const NATIVE_JOURNAL_DIR_OPT = "WEBBRIDGE_NATIVE_JOURNAL_DIR";
 export const ATTEMPT_FILE_PREFIX = "attempt-";
 const ATTEMPT_KEY = /^[a-f0-9]{64}$/;
 const TURN_ID = /^[a-f0-9]{32}$/;
 const MESSAGE_KEY = /^[\w:.-]{1,256}$/;
+const DIGEST = /^[a-f0-9]{64}$/;
 
 const corrupt = () => new Error(
   "WebBridge native journal: corrupt attempt record; refusing to guess "
@@ -45,17 +46,30 @@ function parseRecord(raw: string): AttemptRecord {
   try { parsed = JSON.parse(raw); } catch { throw corrupt(); }
   if (typeof parsed !== "object" || parsed === null) throw corrupt();
   const record = parsed as Record<string, unknown>;
-  const { turnID, state, at, messageKey } = record;
+  const { turnID, state, at, messageKey, progress } = record;
   if (typeof turnID !== "string" || !TURN_ID.test(turnID)) throw corrupt();
   if (state !== "inflight" && state !== "complete" && state !== "uncertain") throw corrupt();
   if (typeof at !== "number" || !Number.isSafeInteger(at) || at < 0) throw corrupt();
   if (messageKey !== undefined && (typeof messageKey !== "string" || !MESSAGE_KEY.test(messageKey)))
     throw corrupt();
+  let cursor: AttemptProgress | undefined;
+  if (progress !== undefined) {
+    if (typeof progress !== "object" || progress === null || Array.isArray(progress)) throw corrupt();
+    const fields = progress as Record<string, unknown>;
+    const { seq, length, hash } = fields;
+    if (!Number.isSafeInteger(seq) || (seq as number) < 0) throw corrupt();
+    if (!Number.isSafeInteger(length) || (length as number) < 0) throw corrupt();
+    if (typeof hash !== "string" || !DIGEST.test(hash)) throw corrupt();
+    if (Object.keys(fields).some((field) => !["seq", "length", "hash"].includes(field)))
+      throw corrupt();
+    cursor = Object.freeze({ seq: seq as number, length: length as number, hash: hash as string });
+  }
   return Object.freeze({
     turnID: turnID as string,
     state: state as AttemptRecord["state"],
     at: at as number,
     ...(messageKey === undefined ? {} : { messageKey: messageKey as string }),
+    ...(cursor === undefined ? {} : { progress: cursor }),
   });
 }
 

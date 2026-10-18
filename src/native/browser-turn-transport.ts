@@ -67,6 +67,19 @@ export interface AttemptRecord {
   readonly at: number;
   /** Candidate selected by this attempt; absent when none was observed yet. */
   readonly messageKey?: string;
+  /** Exact delivered prefix already acknowledged durably. Only the length and a
+   * digest of that prefix are persisted: the assistant text itself never is. */
+  readonly progress?: AttemptProgress;
+}
+
+/** Durable delivery cursor: the consumer provably received exactly this prefix. */
+export interface AttemptProgress {
+  /** Number of fragments durably acknowledged so far (strictly increasing). */
+  readonly seq: number;
+  /** Length of the delivered prefix. */
+  readonly length: number;
+  /** SHA-256 of the delivered prefix, to refuse resuming onto changed text. */
+  readonly hash: string;
 }
 
 /** Durable per-prompt attempt index. Implementations must persist atomically. */
@@ -92,6 +105,7 @@ export interface BrowserTurnTransportConfig {
 
 const promptKey = (providerID: string, modelID: string, prompt: string) => createHash("sha256")
   .update(providerID + "\0" + modelID + "\0" + prompt).digest("hex");
+const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const bounded = (value: number | undefined, fallback: number, min: number, max: number) => {
   if (value === undefined) return fallback;
   if (!Number.isSafeInteger(value) || value < min || value > max)
@@ -116,6 +130,11 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
       const turnID = reconcilable ? existing.turnID : randomBytes(16).toString("hex");
       let selected: string | undefined = reconcilable ? existing.messageKey : undefined;
       let previous = "";
+      // Durable delivery cursor: a reconciled attempt resumes after the exact
+      // prefix the consumer already acknowledged instead of replaying it.
+      const resumed = reconcilable ? existing?.progress : undefined;
+      let acked: AttemptProgress = resumed ?? { seq: 0, length: 0, hash: digest("") };
+      let prefixVerified = resumed === undefined;
       // Persist BEFORE any UI effect: a crash leaves a durable attempt record.
       await config.store.write(key, reconcilable
         ? existing
@@ -125,6 +144,7 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
         await config.store.write(key, {
           turnID, state: state === "complete" ? "complete" : "uncertain",
           at: now(), ...(selected === undefined ? {} : { messageKey: selected }),
+          progress: acked,
         });
         return { kind: "terminal" as const, state, reason };
       };
@@ -191,6 +211,17 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
             }
           }
           if (selected !== undefined && answer !== null && answer.messageKey === selected) {
+            // A resumed attempt must still match the acknowledged prefix; changed
+            // or shortened text can never be silently re-delivered or skipped.
+            if (!prefixVerified) {
+              const prefix = answer.text.slice(0, acked.length);
+              if (answer.text.length < acked.length || digest(prefix) !== acked.hash) {
+                yield await settle("uncertain", "checkpoint-mismatch");
+                return;
+              }
+              previous = prefix;
+              prefixVerified = true;
+            }
             if (!answer.text.startsWith(previous)) {
               yield await settle("uncertain", "candidate-rewritten");
               return;
@@ -198,7 +229,16 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
             const pending = answer.text.slice(previous.length);
             previous = answer.text;
             for (let offset = 0; offset < pending.length; offset += 4096) {
-              yield { kind: "fragment", text: pending.slice(offset, offset + 4096) };
+              const text = pending.slice(offset, offset + 4096);
+              const length = acked.length + text.length;
+              // Storage-first ACK: the fragment is delivered only after its exact
+              // prefix is durable; a crash can only replay from this cursor.
+              acked = { seq: acked.seq + 1, length, hash: digest(answer.text.slice(0, length)) };
+              await config.store.write(key, {
+                turnID, state: "inflight", at: now(),
+                ...(selected === undefined ? {} : { messageKey: selected }), progress: acked,
+              });
+              yield { kind: "fragment", text };
             }
             if (browser.completion?.(answer) === true) {
               yield await settle("complete", "dom-completion-proven");
