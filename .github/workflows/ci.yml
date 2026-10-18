@@ -384,6 +384,10 @@ jobs:
       - run: node --test dist/test/g170-native-registration.test.js
         env:
           G170_NATIVE_CLI: '1'
+      - name: Native provider module and uncertain-terminal evidence through official CLI
+        run: node --test dist/test/native-provider-module.test.js
+        env:
+          NATIVE_PROVIDER_MODULE_CLI: '1'
 
   g177-packed-interactive-operator:
     name: G177 tarball-installed operator terminal approved Chromium one-shot
