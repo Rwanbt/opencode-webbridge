@@ -129,7 +129,16 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
         return { kind: "terminal" as const, state, reason };
       };
 
-      const browser = await config.attach();
+      // Attach precedes every UI effect: a failed attach cannot have sent
+      // anything. A fresh attempt is discarded so a later call may send again;
+      // a reconciled attempt keeps its record (its earlier send may have landed).
+      let browser: BrowserTurnAttachment;
+      try {
+        browser = await config.attach();
+      } catch (error) {
+        if (!reconcilable) await config.store.discard(key);
+        throw error;
+      }
       try {
         if (!reconcilable) {
           try {

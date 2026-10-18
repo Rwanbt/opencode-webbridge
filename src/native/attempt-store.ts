@@ -1,0 +1,96 @@
+/** Durable per-prompt attempt index for the consented browser transport.
+ *
+ * This store is the anti-replay memory: an attempt is written BEFORE any UI
+ * effect, so a crash or a model-call retry can never re-submit the same prompt
+ * (the retry re-observes the recorded turn instead).
+ *
+ * The directory rule matches the G159 one-shot journal: it must be an existing,
+ * private, operator-owned directory. A shared directory, a symlink or a
+ * world-readable directory is refused instead of silently accepted. A corrupt
+ * record refuses the turn (it is never treated as "no record", which would
+ * allow a second send).
+ */
+import { randomBytes } from "node:crypto";
+import { lstat, open, readFile, rename, unlink } from "node:fs/promises";
+import { join } from "node:path";
+import type { AttemptRecord, AttemptStore } from "./browser-turn-transport.js";
+
+export const NATIVE_JOURNAL_DIR_OPT = "WEBBRIDGE_NATIVE_JOURNAL_DIR";
+export const ATTEMPT_FILE_PREFIX = "attempt-";
+const ATTEMPT_KEY = /^[a-f0-9]{64}$/;
+const TURN_ID = /^[a-f0-9]{32}$/;
+const MESSAGE_KEY = /^[\w:.-]{1,256}$/;
+
+const corrupt = () => new Error(
+  "WebBridge native journal: corrupt attempt record; refusing to guess "
+  + "(remove the file manually to proceed)");
+
+/** Private directory rule shared with the G159 one-shot journal. */
+export async function requirePrivateDirectory(dir: string): Promise<void> {
+  if (typeof dir !== "string" || !dir.trim())
+    throw new Error(`WebBridge native journal: directory required (${NATIVE_JOURNAL_DIR_OPT})`);
+  let info;
+  try { info = await lstat(dir); } catch {
+    throw new Error(`WebBridge native journal: directory missing (${NATIVE_JOURNAL_DIR_OPT}=${dir})`);
+  }
+  if (!info.isDirectory() || info.isSymbolicLink() ||
+      (process.platform !== "win32" && (info.mode & 0o077) !== 0) ||
+      (process.getuid && info.uid !== process.getuid()))
+    throw new Error("WebBridge native journal: private operator-owned directory required "
+      + `(${NATIVE_JOURNAL_DIR_OPT}=${dir})`);
+}
+
+function parseRecord(raw: string): AttemptRecord {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw corrupt(); }
+  if (typeof parsed !== "object" || parsed === null) throw corrupt();
+  const record = parsed as Record<string, unknown>;
+  const { turnID, state, at, messageKey } = record;
+  if (typeof turnID !== "string" || !TURN_ID.test(turnID)) throw corrupt();
+  if (state !== "inflight" && state !== "complete" && state !== "uncertain") throw corrupt();
+  if (typeof at !== "number" || !Number.isSafeInteger(at) || at < 0) throw corrupt();
+  if (messageKey !== undefined && (typeof messageKey !== "string" || !MESSAGE_KEY.test(messageKey)))
+    throw corrupt();
+  return Object.freeze({
+    turnID: turnID as string,
+    state: state as AttemptRecord["state"],
+    at: at as number,
+    ...(messageKey === undefined ? {} : { messageKey: messageKey as string }),
+  });
+}
+
+/** File-backed store: one JSON file per prompt key, atomic replace on write. */
+export function createFileAttemptStore(dir: string): AttemptStore {
+  const path = (key: string) => join(dir, ATTEMPT_FILE_PREFIX + key + ".json");
+  const key = (value: string) => {
+    if (!ATTEMPT_KEY.test(value)) throw new Error("WebBridge native journal: invalid attempt key");
+    return value;
+  };
+  return Object.freeze({
+    async read(promptKey: string): Promise<AttemptRecord | undefined> {
+      await requirePrivateDirectory(dir);
+      let raw: string;
+      try { raw = await readFile(path(key(promptKey)), "utf8"); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw error;
+      }
+      return parseRecord(raw);
+    },
+    async write(promptKey: string, record: AttemptRecord): Promise<void> {
+      await requirePrivateDirectory(dir);
+      const target = path(key(promptKey));
+      const temp = target + "." + randomBytes(8).toString("hex") + ".tmp";
+      const file = await open(temp, "wx", 0o600);
+      try {
+        await file.writeFile(JSON.stringify(record) + "\n");
+        await file.sync();
+      } finally { await file.close(); }
+      await rename(temp, target); // atomic replace: a crash leaves the old record, never a gap
+    },
+    async discard(promptKey: string): Promise<void> {
+      try { await unlink(path(key(promptKey))); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    },
+  });
+}

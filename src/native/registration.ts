@@ -4,9 +4,13 @@
  * scoped `ctx.aisdk.hook('language')` supplies the real LanguageModelV3
  * in-process (the anchor module in the tarball only satisfies the core loader).
  * Activation is individual (`WEBBRIDGE_NATIVE_WEB_MODELS=chatgpt,...`) and
- * dormant by default; no model is ever a fixture or a simulated answer. */
+ * dormant by default; the consented browser transport additionally requires an
+ * explicitly declared loopback tab per provider (`WEBBRIDGE_NATIVE_TAB_<ID>`
+ * plus a private `WEBBRIDGE_NATIVE_JOURNAL_DIR`). No model is ever a fixture or
+ * a simulated answer. */
 import { Model, Plugin, Provider } from "@opencode/plugin";
 import { WEB_PROVIDER_CATALOG, type WebProviderID } from "../catalog.js";
+import { consentedTransport } from "./consented-transport.js";
 import { fixtureTransport } from "./fixture-transport.js";
 import type { NativeTurnTransport } from "./turn-transport.js";
 import { createWebLanguageModel } from "./web-model.js";
@@ -56,20 +60,19 @@ export function nativeWebModelConfig(env: NodeJS.ProcessEnv): NativeWebModelConf
   return { providers, fixture: env.WEBBRIDGE_NATIVE_MODEL_FIXTURE === "1" };
 }
 
-/** No consented browser transport is wired in this increment: the models remain
- * selectable and refuse with an explicit state instead of simulating an answer.
- * The consented CDP send/read transport is the next increment. */
-function productionTransport(): NativeTurnTransport | null {
-  return null;
-}
-
 export async function registerNativeWebModels(
   ctx: Plugin.Context,
   env: NodeJS.ProcessEnv,
 ): Promise<(() => Promise<void>) | undefined> {
   const config = nativeWebModelConfig(env);
   if (!config) return undefined;
-  const transport = config.fixture ? fixtureTransport(env) : productionTransport();
+  // One transport per activated provider: a declared loopback tab
+  // (`WEBBRIDGE_NATIVE_TAB_<PROVIDER>`) enables the consented browser transport,
+  // otherwise the model stays selectable and refuses with an explicit state.
+  const fixture = config.fixture ? fixtureTransport(env) : null;
+  const transports = new Map<WebProviderID, NativeTurnTransport | null>();
+  for (const provider of config.providers)
+    transports.set(provider.id, fixture ?? await consentedTransport(env, provider));
   const registration = await ctx.provider.transform((editor) => {
     for (const provider of config.providers) {
       const providerID = Provider.ID.make(provider.providerID);
@@ -98,7 +101,7 @@ export async function registerNativeWebModels(
         modelID: provider.modelID,
         providerName: provider.label,
         origin: provider.origin,
-        transport,
+        transport: transports.get(provider.id) ?? null,
         fixture: config.fixture,
       });
     },
