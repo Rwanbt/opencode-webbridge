@@ -69,24 +69,42 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
   // cannot borrow them. DOM silence is never used as proof.
   const labelOf = (el: Element): string =>
     el.getAttribute('aria-label') ?? el.getAttribute('title') ?? el.getAttribute('data-testid') ?? '';
-  const FINAL = provider === 'deepseek'
-    // Observed: DeepSeek exposes only "Lire à voix haute" — not a finality bar.
-    ? /(?!)/ // never: stays honest, no completion claim
-    : provider === 'gemini'
-      ? /^copier$|^écouter$|^partager et exporter$|bonne réponse|mauvaise réponse|afficher plus d'options/i
-      : provider === 'qwen'
-        ? /^copier$|^régénérer$|^partager$|bonne réponse|mauvaise réponse|plus d'actions/i
-        : /copy to clipboard|^rewrite$|^like$|^dislike$|lire à voix haute/i; // mistral
+  const FINAL = provider === 'gemini'
+    ? /^copier$|^écouter$|^partager et exporter$|bonne réponse|mauvaise réponse|afficher plus d'options/i
+    : provider === 'qwen'
+      ? /^copier$|^régénérer$|^partager$|bonne réponse|mauvaise réponse|plus d'actions/i
+      : /copy to clipboard|^rewrite$|^like$|^dislike$|lire à voix haute/i; // mistral
+  // Observed on the real authenticated DeepSeek UI (2026-10-19): its finalized
+  // answer DOES expose an action bar, but it is entirely ICON-ONLY — no
+  // aria-label, no title, no data-* — so labels can never identify it. The bar
+  // lives on the turn container (the answer body itself carries no controls) and
+  // is recognised by the first path of its SVG icons.
+  const DEEPSEEK_ICONS = ['M6.14929 4.02032', 'M7.92136 0.349152', 'M8.27868 0.811572',
+    'M7.72451 15.1086', 'M9.31006 14.8936', 'M7.95889 1.52285'];
+  const iconPrefix = (el: Element): string =>
+    el.querySelector('svg path')?.getAttribute('d')?.slice(0, 20) ?? '';
+  const finalToken = (el: Element): string | null => {
+    if (provider === 'deepseek') {
+      const prefix = iconPrefix(el);
+      if (!prefix) return null;
+      return DEEPSEEK_ICONS.find((icon) => prefix.startsWith(icon)) ?? null;
+    }
+    const label = labelOf(el);
+    return label && FINAL.test(label) ? label : null;
+  };
   const STOPPING = /stop|arr[êe]ter|abort|interrupt/i;
+  // DeepSeek needs more distinct controls than a labelled bar: an icon-only bar
+  // is easier to match by accident, so it must look like a complete action bar.
+  const needed = provider === 'deepseek' ? 4 : 2;
   let finalControls = 0;
   let bar: Element | null = root;
-  for (let i = 0; i < 3 && bar; i++, bar = bar.parentElement) {
-    const labels = new Set<string>();
+  for (let i = 0; i < 4 && bar; i++, bar = bar.parentElement) {
+    const tokens = new Set<string>();
     for (const b of bar.querySelectorAll('button,[role="button"]')) {
-      const l = labelOf(b);
-      if (l && FINAL.test(l)) labels.add(l);
+      const token = finalToken(b);
+      if (token) tokens.add(token);
     }
-    finalControls = Math.max(finalControls, labels.size);
+    finalControls = Math.max(finalControls, tokens.size);
   }
   let generating = false;
   let seen = 0;
@@ -94,7 +112,7 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
     if (++seen > 4000) break;
     if (STOPPING.test(labelOf(b))) { generating = true; break; }
   }
-  const finalized = finalControls >= 2 && !generating;
+  const finalized = finalControls >= needed && !generating;
   return { messageKey: key, text, finalized };
 }
 
