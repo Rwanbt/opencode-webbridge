@@ -128,10 +128,8 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
 }, async () => {
   const temp = await mkdtemp(join(tmpdir(), 'g163-actual-'));
   const cli = join(process.cwd(), 'node_modules/.bin/opencode');
-  const npm = process.env.npm_execpath;
-  assert.ok(npm?.endsWith('npm-cli.js'), 'repository npm invocation required');
   const invokeNpm = (args: string[]) => {
-    const out = spawnSync(process.execPath, [npm!, ...args], {
+    const out = spawnSync('npm', args, {
       cwd: process.cwd(), encoding: 'utf8', timeout: 100_000,
       env: { ...process.env, npm_config_audit: 'false' }, maxBuffer: 400_000,
     });
