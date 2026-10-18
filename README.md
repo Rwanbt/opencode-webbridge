@@ -9,9 +9,9 @@ Gemini, Qwen and Mistral Le Chat.
 > **Status: experimental pre-release (`0.0.0`, unpublished).** The plugin installs from its raw
 > npm archive into the official OpenCode CLI and serves the five providers as native models.
 > A real authenticated conversation with a verified answer has been demonstrated for each of the
-> five. It is **not production-ready**: the DOM has no proven completion signal, so every turn
-> ends `UNCERTAIN` (OpenCode shows it as an error), and production acceptance is `0/54`. See
-> *Honest limits* below.
+> five. Four of the five also expose a provider-final signal, so those turns end `stop`; DeepSeek
+> exposes none and ends `UNCERTAIN` rather than being guessed. It is **not production-ready**:
+> production acceptance is `0/54`. See *Honest limits* below.
 
 ## Quickstart (about 10 minutes)
 
@@ -29,7 +29,9 @@ chromium --remote-debugging-port=9222 --user-data-dir=/tmp/webbridge-profile
 webbridge-doctor --journal ~/.webbridge/journal
 
 # 4. Paste the printed export lines, then run one turn
-opencode run --model webbridge-chatgpt/chatgpt-web "combien font 2 + 2 ?"
+#    `--standalone` is REQUIRED: the activation variables are read when the
+#    server starts, and the long-lived background service predates them.
+opencode run --standalone --model webbridge-chatgpt/chatgpt-web "combien font 2 + 2 ?"
 
 # 5. Or verify every configured provider with one prompt each
 webbridge-selftest --provider chatgpt --yes
@@ -38,15 +40,19 @@ webbridge-selftest --provider chatgpt --yes
 `webbridge-doctor` is read-only: it lists the open tabs per provider origin and prints the
 environment lines. It never reads cookies, tokens or passwords and never sends anything.
 
+Without `--standalone`, OpenCode talks to a background service that was started before your
+`WEBBRIDGE_*` variables existed: the plugin loads, but stays dormant and the model is reported
+unavailable. Use `--standalone`, or set the variables before that service starts.
+
 ## Providers
 
 | Adapter | Website | Native model | Live conversation |
 | --- | --- | --- | --- |
-| `chatgpt` | https://chatgpt.com | `webbridge-chatgpt/chatgpt-web` | verified (one turn) |
-| `deepseek` | https://chat.deepseek.com | `webbridge-deepseek/deepseek-web` | verified (one turn) |
-| `gemini` | https://gemini.google.com | `webbridge-gemini/gemini-web` | verified (one turn) |
-| `qwen` | https://chat.qwen.ai | `webbridge-qwen/qwen-web` | verified (one turn) |
-| `mistral` | https://chat.mistral.ai | `webbridge-mistral/mistral-web` | verified (one turn) |
+| `chatgpt` | https://chatgpt.com | `webbridge-chatgpt/chatgpt-web` | verified (one turn, ends `stop`) |
+| `deepseek` | https://chat.deepseek.com | `webbridge-deepseek/deepseek-web` | verified (one turn, ends `UNCERTAIN`) |
+| `gemini` | https://gemini.google.com | `webbridge-gemini/gemini-web` | verified (one turn, ends `stop`) |
+| `qwen` | https://chat.qwen.ai | `webbridge-qwen/qwen-web` | verified (one turn, ends `stop`) |
+| `mistral` | https://chat.mistral.ai | `webbridge-mistral/mistral-web` | verified (one turn, ends `stop`) |
 
 "Verified" means one authenticated conversation produced a real, streamed answer persisted in an
 official OpenCode session. It does **not** mean production acceptance, and it does not survive a
@@ -70,13 +76,17 @@ provider UI redesign.
 
 ## Honest limits
 
-- **No completion proof.** No provider DOM exposes a trustworthy "finished" signal, so turns end
-  `finish: "error"` with `webbridge-terminal-uncertain`. The answer still arrives and is persisted;
-  OpenCode merely reports the turn as unfinished. A fabricated `stop` is never emitted.
+- **Completion is proven per provider, not globally.** Four of the five providers expose a
+  provider-final signal (the answer's own action bar, vetoed while a generation control is active),
+  so those turns end `finish: "stop"` with `webbridge-dom-completion-observed`. **DeepSeek exposes no
+  such signal**, so its turns end `finish: "error"` with `webbridge-terminal-uncertain` — the answer
+  still arrives and is persisted, OpenCode merely reports the turn as unfinished. A fabricated `stop`
+  is never emitted.
 - **Deliberate, not an oversight:** emitting an optimistic `stop` after DOM silence was considered
   and rejected. A false completion silently corrupts agent loops, whereas an honest `UNCERTAIN`
-  only costs a retry decision. The upstream fix (a first-class `uncertain` terminal) is proposed in
-  `docs/proposals/`.
+  only costs a retry decision. Completion is therefore claimed only on a signal the provider UI
+  itself emits, and DeepSeek is left `UNCERTAIN` rather than guessed. The upstream fix (a
+  first-class `uncertain` terminal) is proposed in `docs/proposals/`.
 - **Not production-accepted.** `productionAcceptedStoryIDs` is `[]` (0/54): login/logout, completion
   and error coverage are not demonstrated. Release posture is `NO-GO-PRODUCTION`.
 - **No per-turn native permission.** Authorization is the declared tab, not a native prompt, because
