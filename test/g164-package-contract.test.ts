@@ -26,8 +26,12 @@ test('G164 pack main must be emitted, not raw TS and never the test harness', as
     // so it is never reachable through imports and must be packaged explicitly.
     'src/native/provider-anchor.ts',
     'src/runtime/g166-chatgpt-manual-turn.ts',
+    // The observe operator loads this runtime by name from the tarball; it is never
+    // reachable through imports either.
+    'src/runtime/observe-provider.ts',
   ]);
   assert.equal(manifest.bin['webbridge-manual-chatgpt'], './bin/webbridge-manual-chatgpt.mjs');
+  assert.equal(manifest.bin['webbridge-manual-observe'], './bin/webbridge-manual-observe.mjs');
   assert.ok(manifest.files.includes('bin/'));
   assert.ok(tsconfig.exclude.includes('test'));
   assert.ok(tsconfig.exclude.includes('src/testing'));

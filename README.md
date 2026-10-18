@@ -98,6 +98,13 @@ Honest state rules that are enforced by construction:
 - only ChatGPT has a reviewed send primitive today; declaring a tab for another provider is
   refused loudly instead of half-working.
 
+The read-only side is provider-wide: `webbridge-manual-observe` attaches one already-open declared
+tab (every provider), discovers the latest assistant message, displays it for confirmation
+(`--message` skips discovery) and streams bounded `[UNVERIFIED]` fragments. It never sends, never
+claims finality, and Qwen ends `NO-GO` after a real readiness probe. Per-provider capabilities are
+single-sourced in `src/providers/provider-adapters.ts` (read primitive, discovery, send, completion
+proof, notes); see `docs/OBSERVE-PROVIDER.fr.md`.
+
 The browser transport used by the CLI test is a token-gated fixture that labels itself
 `[WebBridge test fixture - NOT a provider answer]`; it cannot activate without a 64-hex token and
 it is never a substitute for a real authenticated session.
