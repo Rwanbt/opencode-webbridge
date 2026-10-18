@@ -286,6 +286,7 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
               await config.store.write(key, {
                 turnID, state: "inflight", at: now(),
                 ...(selected === undefined ? {} : { messageKey: selected }), progress: acked,
+                ...(recordedScope === undefined ? {} : { scope: recordedScope }),
               });
               yield { kind: "fragment", text };
             }
