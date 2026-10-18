@@ -36,7 +36,7 @@ test("the adapter registry covers exactly the shared catalog with single-sourced
 
 test("no adapter fabricates a capability", () => {
   const senders = PROVIDER_ADAPTER_IDS.filter((id) => requireProviderAdapter(id).sendPrimitive !== null);
-  assert.deepEqual(senders, ["chatgpt", "deepseek", "gemini", "qwen"]);
+  assert.deepEqual(senders, ["chatgpt", "deepseek", "gemini", "qwen", "mistral"]);
   for (const id of PROVIDER_ADAPTER_IDS) {
     const adapter = requireProviderAdapter(id);
     assert.equal(adapter.completionProof, "none", id + " must not claim a completion proof");
@@ -49,12 +49,10 @@ test("no adapter fabricates a capability", () => {
   assert.equal(requireProviderAdapter("gemini").readPrimitive, "g160-other-provider-dom");
   assert.equal(requireProviderAdapter("gemini").discoverable, true);
   assert.equal(requireProviderAdapter("gemini").sendPrimitive, "g175-gemini-one-shot");
-  for (const id of ["mistral"] as const) {
-    const adapter = requireProviderAdapter(id);
-    assert.equal(adapter.readPrimitive, "g160-other-provider-dom");
-    assert.equal(adapter.discoverable, true);
-    assert.equal(adapter.sendPrimitive, null);
-  }
+  assert.equal(requireProviderAdapter("qwen").sendPrimitive, "g176-qwen-one-shot");
+  assert.equal(requireProviderAdapter("mistral").readPrimitive, "g160-other-provider-dom");
+  assert.equal(requireProviderAdapter("mistral").discoverable, true);
+  assert.equal(requireProviderAdapter("mistral").sendPrimitive, "g177-mistral-one-shot");
   const qwen = requireProviderAdapter("qwen");
   assert.equal(qwen.readPrimitive, "g160-other-provider-dom");
   assert.equal(qwen.discoverable, true);
@@ -72,7 +70,7 @@ test("unknown adapters are refused and unknown capability lookups fail closed", 
   assert.equal(sendPrimitiveOf("deepseek"), "g174-deepseek-one-shot");
   assert.equal(sendPrimitiveOf("gemini"), "g175-gemini-one-shot");
   assert.equal(sendPrimitiveOf("qwen"), "g176-qwen-one-shot");
-  assert.equal(sendPrimitiveOf("mistral"), null);
+  assert.equal(sendPrimitiveOf("mistral"), "g177-mistral-one-shot");
   assert.equal(sendPrimitiveOf("no-such-provider"), null);
 });
 

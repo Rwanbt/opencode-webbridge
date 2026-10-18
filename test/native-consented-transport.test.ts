@@ -67,16 +67,21 @@ test("a malformed tab declaration is refused with the expected shape", () => {
 test("a provider without a consented send primitive refuses per turn, never faked", async () => {
   const { dir, drop } = await temp("webbridge-consent-");
   try {
+    // Every shipped provider now has a reviewed primitive, so the refusal path is
+    // exercised with an undeclared provider id: the plugin stays usable, and the
+    // unknown one refuses each turn with the precise state (no invented answer).
+    const GHOST = {
+      id: "ghost", providerID: "webbridge-ghost", modelID: "ghost-web", label: "Ghost",
+      origin: "https://ghost.example", tabEnv: "WEBBRIDGE_NATIVE_TAB_GHOST",
+    } as const;
     const env = {
-      [MISTRAL.tabEnv]: `http://127.0.0.1:9222#${TAB}`,
+      [GHOST.tabEnv]: `http://127.0.0.1:9222#${TAB}`,
       WEBBRIDGE_NATIVE_JOURNAL_DIR: dir,
     };
-    // Per-provider degradation: the plugin stays usable for providers that ARE
-    // implemented; the unimplemented one refuses each turn with the precise state.
-    const transport = await consentedTransport(env, MISTRAL);
+    const transport = await consentedTransport(env, GHOST as never);
     assert.ok(transport, "a valid declaration must not take the whole plugin down at setup");
     const request: NativeTurnRequest = {
-      providerID: MISTRAL.providerID, modelID: MISTRAL.modelID,
+      providerID: GHOST.providerID, modelID: GHOST.modelID,
       prompt: "explain the failing test", signal: new AbortController().signal,
     };
     const stream = async () => {
