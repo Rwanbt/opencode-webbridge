@@ -181,8 +181,19 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
       Buffer.from('opencode:' + password).toString('base64') };
     let active = false;
     let observed = 'none';
+    let configFound = false, responseOk = false;
     for (let i = 0; i < 100 && child.exitCode === null; i++) {
       try {
+        if (!configFound) {
+          const configReply = await fetch(endpoint + '/api/config', {
+            headers, signal: AbortSignal.timeout(700),
+          });
+          if (configReply.ok) {
+            responseOk = true;
+            const publicConfig = JSON.stringify(await configReply.json());
+            configFound = publicConfig.includes(pathToFileURL(entry).href);
+          }
+        }
         const response = await fetch(endpoint + '/api/plugin', {
           headers, signal: AbortSignal.timeout(700),
         });
@@ -203,6 +214,7 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
         .replace(/(secret|token|key)\s*[:=]\s*\S+/ig, '$1=[REDACTED]'));
     assert.equal(active, true, 'ACTUAL npm-packed opt-in root was not loaded in CLI' +
       ` (exit=${child.exitCode}, inventory=${observed.slice(0, 500)},` +
+      ` configReadable=${responseOk}, configuredRoot=${configFound},` +
       ` missingModule=${/ERR_MODULE_NOT_FOUND|Cannot find module/.test(logs)},` +
       ` pluginError=${/plugin.*error|failed to load/i.test(logs)},` +
       ` logStates=${JSON.stringify(logStates)})`);
