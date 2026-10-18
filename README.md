@@ -9,9 +9,9 @@ Gemini, Qwen and Mistral Le Chat.
 > **Status: experimental pre-release (`0.0.0`, unpublished).** The plugin installs from its raw
 > npm archive into the official OpenCode CLI and serves the five providers as native models.
 > A real authenticated conversation with a verified answer has been demonstrated for each of the
-> five. Four of the five also expose a provider-final signal, so those turns end `stop`; DeepSeek
-> exposes none and ends `UNCERTAIN` rather than being guessed. It is **not production-ready**:
-> production acceptance is `0/54`. See *Honest limits* below.
+> five. Each of the five also exposes a provider-final signal, so those turns end `stop` — including
+> DeepSeek, whose action bar is icon-only and is matched by SVG fingerprint rather than by label.
+> It is **not production-ready**: production acceptance is `0/54`. See *Honest limits* below.
 
 ## Quickstart (about 10 minutes)
 
@@ -49,7 +49,7 @@ unavailable. Use `--standalone`, or set the variables before that service starts
 | Adapter | Website | Native model | Live conversation |
 | --- | --- | --- | --- |
 | `chatgpt` | https://chatgpt.com | `webbridge-chatgpt/chatgpt-web` | verified (one turn, ends `stop`) |
-| `deepseek` | https://chat.deepseek.com | `webbridge-deepseek/deepseek-web` | verified (one turn, ends `UNCERTAIN`) |
+| `deepseek` | https://chat.deepseek.com | `webbridge-deepseek/deepseek-web` | verified (one turn, ends `stop`) |
 | `gemini` | https://gemini.google.com | `webbridge-gemini/gemini-web` | verified (one turn, ends `stop`) |
 | `qwen` | https://chat.qwen.ai | `webbridge-qwen/qwen-web` | verified (one turn, ends `stop`) |
 | `mistral` | https://chat.mistral.ai | `webbridge-mistral/mistral-web` | verified (one turn, ends `stop`) |
@@ -76,16 +76,17 @@ provider UI redesign.
 
 ## Honest limits
 
-- **Completion is proven per provider, not globally.** Four of the five providers expose a
-  provider-final signal (the answer's own action bar, vetoed while a generation control is active),
-  so those turns end `finish: "stop"` with `webbridge-dom-completion-observed`. **DeepSeek exposes no
-  such signal**, so its turns end `finish: "error"` with `webbridge-terminal-uncertain` — the answer
-  still arrives and is persisted, OpenCode merely reports the turn as unfinished. A fabricated `stop`
-  is never emitted.
+- **Completion is proven per provider.** Each of the five providers exposes a provider-final signal,
+  so their turns end `finish: "stop"` with `webbridge-dom-completion-observed`. Four expose a
+  labelled action bar; DeepSeek's is **icon-only** (no aria-label, title or data-*), so it is
+  matched by the first path of its SVG icons on the turn container, and only when at least four of
+  the six known icons are present. Every provider is additionally vetoed while a generation control
+  is active. A fabricated `stop` is never emitted.
 - **Deliberate, not an oversight:** emitting an optimistic `stop` after DOM silence was considered
   and rejected. A false completion silently corrupts agent loops, whereas an honest `UNCERTAIN`
   only costs a retry decision. Completion is therefore claimed only on a signal the provider UI
-  itself emits, and DeepSeek is left `UNCERTAIN` rather than guessed. The upstream fix (a
+  itself emits, and each signal is verified in BOTH directions against a real turn (present when
+  finalized, absent while the answer streams) before being enabled. The upstream fix (a
   first-class `uncertain` terminal) is proposed in `docs/proposals/`.
 - **Not production-accepted.** `productionAcceptedStoryIDs` is `[]` (0/54): login/logout, completion
   and error coverage are not demonstrated. Release posture is `NO-GO-PRODUCTION`.
