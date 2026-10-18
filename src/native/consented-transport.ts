@@ -17,7 +17,7 @@
  */
 import { createFileAttemptStore, NATIVE_JOURNAL_DIR_OPT, requirePrivateDirectory } from "./attempt-store.js";
 import { createBrowserTurnTransport } from "./browser-turn-transport.js";
-import type { NativeTurnTransport } from "./turn-transport.js";
+import { WebBridgeSessionStateError, type NativeTurnTransport } from "./turn-transport.js";
 
 /** Structural shape of a registered provider (registration.ts owns the catalog). */
 export interface DeclaredTabTarget {
@@ -75,10 +75,24 @@ export async function consentedTransport(
 ): Promise<NativeTurnTransport | null> {
   const consent = nativeTabConsent(env, provider);
   if (!consent) return null;
-  if (provider.id !== "chatgpt")
-    throw new Error(`WebBridge native models: "${provider.id}" has no consented send primitive yet; `
-      + "only chatgpt is implemented (never inventing one)");
   await requirePrivateDirectory(consent.journalDir); // loud configuration error at setup
+  if (provider.id !== "chatgpt") {
+    // The declaration itself is valid; the capability is not implemented yet. The
+    // turn refuses with the precise state instead of taking the whole plugin down
+    // (per-provider degradation, never a global veto or an invented answer).
+    return createBrowserTurnTransport({
+      providerID: provider.providerID,
+      modelID: provider.modelID,
+      store: createFileAttemptStore(consent.journalDir),
+      polls: PRODUCTION_POLLS,
+      intervalMs: PRODUCTION_INTERVAL_MS,
+      attach: async () => {
+        throw new WebBridgeSessionStateError(provider.label,
+          '"' + provider.id + '" has no consented send primitive yet '
+          + "(only chatgpt is implemented; never inventing one)");
+      },
+    });
+  }
   return createBrowserTurnTransport({
     providerID: provider.providerID,
     modelID: provider.modelID,

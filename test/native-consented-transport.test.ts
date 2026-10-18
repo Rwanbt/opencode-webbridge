@@ -61,13 +61,27 @@ test("a malformed tab declaration is refused with the expected shape", () => {
   assert.deepEqual(consent, { endpoint: "http://127.0.0.1:9222", tabID: TAB, journalDir: journal });
 });
 
-test("a provider without a consented send primitive is refused, never faked", async () => {
+test("a provider without a consented send primitive refuses per turn, never faked", async () => {
   const { dir, drop } = await temp("webbridge-consent-");
   try {
-    await assert.rejects(consentedTransport({
+    const env = {
       [DEEPSEEK.tabEnv]: `http://127.0.0.1:9222#${TAB}`,
       WEBBRIDGE_NATIVE_JOURNAL_DIR: dir,
-    }, DEEPSEEK), /no consented send primitive yet/);
+    };
+    // Per-provider degradation: the plugin stays usable for providers that ARE
+    // implemented; the unimplemented one refuses each turn with the precise state.
+    const transport = await consentedTransport(env, DEEPSEEK);
+    assert.ok(transport, "a valid declaration must not take the whole plugin down at setup");
+    const request: NativeTurnRequest = {
+      providerID: DEEPSEEK.providerID, modelID: DEEPSEEK.modelID,
+      prompt: "explain the failing test", signal: new AbortController().signal,
+    };
+    const stream = async () => {
+      for await (const event of transport.stream(request)) void event;
+    };
+    await assert.rejects(stream(), /no consented send primitive yet/);
+    assert.deepEqual(await readdir(dir), [],
+      "a refused capability must leave no attempt record");
   } finally { await drop(); }
 });
 
