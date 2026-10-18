@@ -12,6 +12,7 @@ import { Model, Plugin, Provider } from "@opencode/plugin";
 import { WEB_PROVIDER_CATALOG, type WebProviderID } from "../catalog.js";
 import { consentedTransport } from "./consented-transport.js";
 import { fixtureTransport } from "./fixture-transport.js";
+import { governedNativeTransport } from "./governed-transport.js";
 import type { NativeTurnTransport } from "./turn-transport.js";
 import { createWebLanguageModel } from "./web-model.js";
 
@@ -71,8 +72,14 @@ export async function registerNativeWebModels(
   // otherwise the model stays selectable and refuses with an explicit state.
   const fixture = config.fixture ? fixtureTransport(env) : null;
   const transports = new Map<WebProviderID, NativeTurnTransport | null>();
-  for (const provider of config.providers)
-    transports.set(provider.id, fixture ?? await consentedTransport(env, provider));
+  for (const provider of config.providers) {
+    // The fixture transport is the test harness and stays ungoverned; a real
+    // consented transport is always wrapped so a runaway model cannot hammer a
+    // browser and no refusal message can leak a secret.
+    if (fixture) { transports.set(provider.id, fixture); continue; }
+    const consented = await consentedTransport(env, provider);
+    transports.set(provider.id, consented === null ? null : governedNativeTransport(consented));
+  }
   const registration = await ctx.provider.transform((editor) => {
     for (const provider of config.providers) {
       const providerID = Provider.ID.make(provider.providerID);
