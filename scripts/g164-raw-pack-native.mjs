@@ -153,7 +153,7 @@ test('G164 SOURCE-only npm pack without prepack is RED; production manifest is c
   const manifest = JSON.parse(await readFile(join(repo, 'package.json'), 'utf8'));
   assert.equal(manifest.main, './index.mjs');
   assert.equal(manifest.scripts.prepack, 'node scripts/g164-prepare-package.mjs');
-  assert.deepEqual(manifest.files.slice(0, 1), ['dist/src/']);
+  assert.ok(manifest.files.includes('index.mjs') && manifest.files.includes('dist/src/'));
   assert.equal(manifest.dependencies.playwright, '1.64.1');
   assert.equal(manifest.dependencies.effect, '4.0.1');
 });
