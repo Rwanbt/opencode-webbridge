@@ -55,7 +55,8 @@
     "smoke:dom-rpc": "npm run build && node scripts/smoke-dom-rpc-progress.mjs",
     "journal:operator": "npm run build && node scripts/reconcile-relay.mjs",
     "issues:dry-run": "node scripts/sync-github-issues.mjs",
-    "issues:sync": "node scripts/sync-github-issues.mjs --apply"
+    "issues:sync": "node scripts/sync-github-issues.mjs --apply",
+    "docs:traceability": "node scripts/generate-traceability.mjs --write"
   },
   "dependencies": {
     "@opencode/plugin": "2.0.29",
