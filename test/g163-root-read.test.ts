@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { createServer } from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, cp, readFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -138,13 +138,23 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
   };
   let child: ReturnType<typeof spawn> | undefined;
   try {
-    const archive = JSON.parse(invokeNpm(['pack', '--ignore-scripts', '--json',
+    // npm ignores the repository's dist/ directory. Stage the EXACT emitted
+    // root module tree, not a synthetic G97 plugin or freshly authored stub.
+    const staging = join(temp, 'real-root');
+    await mkdir(join(staging, 'dist'), { recursive: true });
+    await cp(join(process.cwd(), 'dist/src'), join(staging, 'dist/src'), { recursive: true });
+    const sourceManifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8'));
+    await writeFile(join(staging, 'package.json'), JSON.stringify({
+      ...sourceManifest, files: ['dist/src'], devDependencies: {},
+    }));
+    const archive = JSON.parse(invokeNpm(['pack', staging, '--ignore-scripts', '--json',
       '--pack-destination', temp]))[0].filename;
     const profile = join(temp, 'profile');
     await mkdir(profile);
     invokeNpm(['install', join(temp, archive), '--prefix', profile, '--ignore-scripts',
       '--no-save', '--no-package-lock', '--no-audit', '--no-fund']);
     const entry = join(profile, 'node_modules/opencode-webbridge/dist/src/index.js');
+    await access(entry); // A missing compiled root is a hard packaging error.
     const configDir = join(temp, 'config');
     await mkdir(configDir);
     await Promise.all(['home', 'data', 'cache'].map((dir) => mkdir(join(temp, dir))));
@@ -175,7 +185,9 @@ test('G163 actual npm-packed ROOT loads opt-in tool through official CLI 2.0.32,
         });
         if (response.ok) {
           const result = await response.json() as { data?: { id: string; state?: { status: string } }[] };
-          observed = JSON.stringify(result.data?.map((item) => [item.id, item.state?.status]));
+          observed = JSON.stringify(result.data?.filter((item) =>
+            item.id.includes('webbridge') || item.state?.status !== 'active')
+            .map((item) => [item.id, item.state?.status]));
           active = Boolean(result.data?.some((item) =>
             item.id === 'opencode.webbridge' && item.state?.status === 'active'));
           if (active) break;
