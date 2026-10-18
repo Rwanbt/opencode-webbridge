@@ -20,7 +20,7 @@ function git(dir, ...args) {
   });
   if (r.status !== 0) throw new Error('G153 fixture Git setup failed: ' + r.status);
 }
-export async function createG153GitToolHost({ temp, sessionID, turnID }) {
+export async function createG153GitToolHost({ temp, sessionID, turnID, stage = () => {} }) {
   if (process.platform !== 'linux') throw new Error('G153 native Git read fixtures Linux-only');
   if (!/^ses_[A-Za-z0-9_-]+$/.test(sessionID) || !/^[a-f0-9]{32}$/.test(turnID))
     throw new Error('G153 official native session identity invalid');
@@ -33,6 +33,7 @@ export async function createG153GitToolHost({ temp, sessionID, turnID }) {
     load('core/tool-proposal-json-ingress.js'),
   ]);
   const workspace = join(temp, 'g153-repo-' + turnID);
+  stage('git.setup');
   const journalRoot = join(temp, 'g153-journal-' + turnID);
   const witnessRoot = join(temp, 'g153-witness-' + turnID);
   await Promise.all([workspace,journalRoot,witnessRoot].map((dir) => mkdir(dir)));
@@ -76,15 +77,18 @@ export async function createG153GitToolHost({ temp, sessionID, turnID }) {
       if (attempted) throw new Error('G153 duplicate native tool dispatch denied');
       attempted = true;
       for (const test of cases) {
+        stage(test.action);
         const result = await executor.run(test.wire, scope);
         assert.equal(result.action, test.action);
         assert.match(result.output, test.check);
         assert.equal(result.phase, 'confirmed');
         results.push(result);
       }
+      stage('git.verify-unchanged');
       assert.deepEqual(await readFile(join(workspace, '.git/index')), indexBefore,
         'read-only tools modified Git index');
       assert.equal(await readFile(join(workspace, 'proof.txt'), 'utf8'), 'after\n');
+      stage('git.receipts-complete');
     },
     async verifyRestored(kinds) {
       const ack = await sink.verifyRestored(kinds);
