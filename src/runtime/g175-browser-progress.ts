@@ -4,6 +4,7 @@ import type { CdpConsent, CdpTab, CdpProviderID } from '../browser/explicit-cdp-
 import { G157ChatgptCdpObserver } from '../browser/g157-chatgpt-cdp-observer.js';
 import { G160OtherProviderObserver } from '../providers/g160-other-provider-dom.js';
 import { G169QwenRead } from '../providers/g169-qwen-read.js';
+import { emptyProgressState, nextProgressStep } from './progress-step.js';
 
 export interface G175Consent extends CdpConsent {
   readonly allowAssistantText: (tab: CdpTab) => Promise<boolean>;
@@ -106,13 +107,13 @@ export async function* g175BrowserProgress(input: G175Request): AsyncGenerator<G
     ? await G157ChatgptCdpObserver.attach(input.endpoint, input.tabID, consent)
     : await G160OtherProviderObserver.attach(input.endpoint, input.tabID, input.provider, consent);
   try {
-    let previous = '', seq = 0, found = false;
+    let state = emptyProgressState;
     for (let i = 0; i < polls; i++) {
       if (input.signal.aborted) { yield terminal('uncertain', 'cancelled'); return; }
       if (input.consent.isStillApproved(input.provider, input.tabID) !== true) {
         yield terminal('uncertain', 'permission-or-document-changed'); return;
       }
-      let snapshot;
+      let snapshot: { readonly messageKey: string; readonly text: string } | null;
       try { snapshot = await observer.sample(); }
       catch {
         yield terminal('uncertain', input.signal.aborted ? 'cancelled' : 'permission-or-document-changed');
@@ -122,27 +123,20 @@ export async function* g175BrowserProgress(input: G175Request): AsyncGenerator<G
       if (input.consent.isStillApproved(input.provider, input.tabID) !== true) {
         yield terminal('uncertain', 'permission-or-document-changed'); return;
       }
-      if (snapshot && snapshot.messageKey !== input.messageKey || found && !snapshot) {
-        yield terminal('uncertain', 'message-replaced'); return;
-      }
-      if (snapshot) {
-        if (!snapshot.text.startsWith(previous)) {
-          yield terminal('uncertain', 'answer-rewritten'); return;
+      const step = nextProgressStep(input.messageKey, state, snapshot);
+      if (step.kind === 'terminal') { yield terminal('uncertain', step.reason); return; }
+      for (let index = 0; index < step.fragments.length; index++) {
+        if (input.signal.aborted || !input.consent.isStillApproved(input.provider, input.tabID)) {
+          yield terminal('uncertain', input.signal.aborted ? 'cancelled' : 'permission-or-document-changed'); return;
         }
-        const remaining = snapshot.text.slice(previous.length);
-        for (let offset = 0; offset < remaining.length; offset += 4096) {
-          if (input.signal.aborted || !input.consent.isStillApproved(input.provider, input.tabID)) {
-            yield terminal('uncertain', input.signal.aborted ? 'cancelled' : 'permission-or-document-changed'); return;
-          }
-          yield { kind: 'candidate', turnID: input.turnID, provider: input.provider,
-            tabID: input.tabID, messageKey: input.messageKey, seq: ++seq,
-            text: remaining.slice(offset, offset + 4096), correlation: 'unverified-dom' };
-        }
-        previous = snapshot.text;
-        found = true;
+        yield { kind: 'candidate', turnID: input.turnID, provider: input.provider,
+          tabID: input.tabID, messageKey: input.messageKey,
+          seq: step.state.seq - step.fragments.length + index + 1,
+          text: step.fragments[index], correlation: 'unverified-dom' };
       }
+      state = step.state;
       if (i + 1 < polls) await pause(interval, input.signal);
     }
-    yield terminal('uncertain', found ? 'provider-finality-unverified' : 'no-message');
+    yield terminal('uncertain', state.found ? 'provider-finality-unverified' : 'no-message');
   } finally { await observer.close(); }
 }
