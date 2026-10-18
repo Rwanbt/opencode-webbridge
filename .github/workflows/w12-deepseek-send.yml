@@ -1,0 +1,28 @@
+name: W12 DeepSeek explicit send
+on:
+  push:
+    branches: ['feat/w12-deepseek-approved-send']
+  pull_request:
+    paths:
+      - 'src/providers/w12-*'
+      - 'test/w12-*'
+      - '.github/workflows/w12-deepseek-send.yml'
+      - 'docs/ADR/0129-w12-deepseek-one-shot.fr.md'
+jobs:
+  chromium-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run typecheck
+      - run: npm run build
+      - name: One-shot on isolated Chromium intercepted DeepSeek HTTPS
+        run: node --test dist/test/w12-deepseek-one-shot.test.js
+        env:
+          W12_REAL_CDP: '1'
