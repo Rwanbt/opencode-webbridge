@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isolatedEnvironment } from './offline-package-preview.mjs';
 import { runCLI } from './smoke-packaged-model.mjs';
@@ -18,13 +18,98 @@ const id = 'opencode.webbridge';
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const integrity = (bytes) => 'sha512-' + createHash('sha512').update(bytes).digest('base64');
 
-export function actualManifest(version) {
+/** Runtime-loaded modules that are never reached through a static import: the core
+ *  imports the anchor by name (provider `package: 'aisdk:file://…'`), so the graph
+ *  walker cannot discover it and it is listed here explicitly. */
+const RUNTIME_ENTRYPOINTS = ['native/provider-anchor.js'];
+/** Supplied by the repository (not emitted under dist/src) and packed as-is. */
+const PROVIDED_AT_ROOT = ['g97-local.mjs'];
+const MAX_GRAPH_FILES = 48;
+const MAX_GRAPH_BYTES = 1_048_576;
+const RELATIVE_MODULE = /(?:from\s*|import\(\s*)["'](\.{1,2}\/[^"']+)["']/g;
+
+export function actualManifest(version, runtimeFiles = []) {
   if (!/^0\.0\.[1-9][0-9]*$/.test(version)) throw new Error('invalid disposable package version');
   return Object.freeze({
     name, version, type: 'module', main: 'index.mjs',
-    license: 'MIT', files: ['index.mjs', 'g97-local.mjs', 'LICENSE'],
+    license: 'MIT', files: ['index.mjs', 'g97-local.mjs', 'LICENSE', ...runtimeFiles],
     dependencies: { '@opencode/plugin': '2.0.29' },
     description: 'Real root: inert by default; explicit localhost fixture only, commercial providers disabled',
+  });
+}
+
+/** The distributed root ships its REAL relative module graph (bounded, reviewed
+ *  closure of dist/src/index.js) plus the runtime-loaded anchor. No stale or extra
+ *  file may enter the archive, and nothing may escape the compiled root. */
+async function rootModuleGraph(entryText) {
+  const distSrc = resolve(root, 'dist', 'src');
+  const entryAbs = join(distSrc, 'index.js');
+  const files = new Map();
+  const seen = new Set();
+  const pending = [{ abs: entryAbs, pkg: 'index.mjs' }];
+  let bytes = 0;
+  while (pending.length) {
+    const item = pending.shift();
+    if (seen.has(item.abs)) continue;
+    seen.add(item.abs);
+    const text = item.abs === entryAbs ? entryText : await readFile(item.abs, 'utf8');
+    bytes += Buffer.byteLength(text);
+    files.set(item.pkg, text);
+    if (files.size > MAX_GRAPH_FILES || bytes > MAX_GRAPH_BYTES)
+      throw new Error('root module graph exceeded the reviewed bound');
+    for (const match of text.matchAll(RELATIVE_MODULE)) {
+      const abs = resolve(dirname(item.abs), match[1]);
+      const pkg = relative(distSrc, abs).split(sep).join('/');
+      if (pkg.startsWith('..') || resolve(distSrc, pkg) !== abs)
+        throw new Error('root module graph escaped the compiled root: ' + match[1]);
+      if (PROVIDED_AT_ROOT.includes(pkg)) continue;
+      if (!pkg.endsWith('.js')) throw new Error('unsupported module in root graph: ' + pkg);
+      pending.push({ abs, pkg });
+    }
+  }
+  for (const pkg of RUNTIME_ENTRYPOINTS) {
+    if (files.has(pkg)) continue;
+    const abs = join(distSrc, pkg);
+    const text = await readFile(abs, 'utf8');
+    bytes += Buffer.byteLength(text);
+    if (bytes > MAX_GRAPH_BYTES) throw new Error('root module graph exceeded the reviewed bound');
+    files.set(pkg, text);
+  }
+  return files;
+}
+
+/** The reviewed contract of the packaged native modules: the root itself only
+ *  lazily imports the registration module, which alone owns the provider
+ *  transform, the scoped language hook and the explicit activation list; the
+ *  anchor refuses every call when that hook is inactive. */
+export function reviewNativeGraph(files) {
+  const at = (pkg) => {
+    const text = files.get(pkg);
+    if (typeof text !== 'string') throw new Error('reviewed native module missing from the archive: ' + pkg);
+    return text;
+  };
+  const entry = at('index.mjs');
+  if (!entry.includes('import("./native/registration.js")'))
+    throw new Error('actual root no longer loads the reviewed native registration module');
+  if (/WEBBRIDGE_NATIVE_WEB_MODELS|WEBBRIDGE_NATIVE_TAB_/.test(entry))
+    throw new Error('activation list/tab configuration must stay inside the reviewed native module');
+  const registration = at('native/registration.js');
+  if (!registration.includes('ctx.provider.transform') || !registration.includes('ctx.aisdk.hook') ||
+      !registration.includes('WEBBRIDGE_NATIVE_WEB_MODELS'))
+    throw new Error('native registration module no longer owns provider.transform + scoped hook + opt-in list');
+  const webModel = at('native/web-model.js');
+  if (!webModel.includes('webbridge-dom-completion-observed') ||
+      !webModel.includes('webbridge-terminal-uncertain'))
+    throw new Error('native model terminal markers changed');
+  const anchor = at('native/provider-anchor.js');
+  if (!/export function create[A-Za-z]*\(/.test(anchor) || !anchor.includes('refusing to fabricate'))
+    throw new Error('anchor module no longer offers a fail-closed create* factory');
+  if (/\bimport\b[^("]*["'][^."']/.test(anchor))
+    throw new Error('anchor module must stay dependency-free for the core loader');
+  return Object.freeze({
+    graphFiles: files.size,
+    nativeRegistrationShipped: true,
+    nativeAnchorShipped: true,
   });
 }
 
@@ -34,8 +119,14 @@ export function sourceContract(text) {
       !text.includes('id: "opencode.webbridge"') ||
       !text.includes('setup(ctx)') ||
       !text.includes('WEBBRIDGE_G150_LOCAL_FIXTURE') ||
-      /provider\.transform|rpc\.register|browser\.navigate|browser\.click|child_process|WEBBRIDGE_FIXTURE_ENABLE/.test(text))
+      /provider\.transform|aisdk\.hook|rpc\.register|browser\.navigate|browser\.click|child_process|WEBBRIDGE_FIXTURE_ENABLE/.test(text))
     throw new Error('actual root plugin changed: re-review public entrypoint and release gates');
+  // Reviewed 2026-10-18: the root lazily loads the opt-in native models module;
+  // the graph contract below pins what that module may own.
+  if (!text.includes('import("./native/registration.js")'))
+    throw new Error('actual root no longer loads the reviewed native registration module');
+  if (/WEBBRIDGE_NATIVE_WEB_MODELS|WEBBRIDGE_NATIVE_TAB_/.test(text))
+    throw new Error('activation list/tab configuration must stay inside the reviewed native module');
   return Object.freeze({ entrySHA256: hash(Buffer.from(text)), id, transportActive: false });
 }
 
@@ -57,22 +148,30 @@ async function packageActual(temp, label, version, entry, env) {
   const source = join(temp, 'package-' + label);
   const output = join(temp, 'archives-' + label);
   await Promise.all([mkdir(source), mkdir(output)]);
+  const graph = await rootModuleGraph(entry);
+  const reviewed = reviewNativeGraph(graph);
+  const runtimeFiles = [...graph.keys()].filter((p) => p !== 'index.mjs').sort();
   await Promise.all([
-    writeFile(join(source, 'index.mjs'), entry),
+    ...[...graph].map(async ([pkg, text]) => {
+      const target = join(source, ...pkg.split('/'));
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, text);
+    }),
     copyFile(join(root, 'fixtures/g97-combined-preview.mjs'), join(source, 'g97-local.mjs')),
-    writeFile(join(source, 'package.json'), JSON.stringify(actualManifest(version)) + '\n'),
+    writeFile(join(source, 'package.json'), JSON.stringify(actualManifest(version, runtimeFiles)) + '\n'),
     copyFile(join(root, 'LICENSE'), join(source, 'LICENSE')),
   ]);
+  const expected = new Set(['index.mjs', 'g97-local.mjs', 'package.json', 'LICENSE', ...runtimeFiles]);
   const [meta] = JSON.parse(npm(['pack', source, '--pack-destination', output,
     '--ignore-scripts', '--json', '--offline'], env, temp));
   if (meta?.name !== name || meta.version !== version ||
-      meta.files?.length !== 4 ||
-      meta.files.some((f) => !['index.mjs', 'g97-local.mjs', 'package.json', 'LICENSE'].includes(f.path)))
+      meta.files?.length !== expected.size ||
+      meta.files.some((f) => !expected.has(f.path)))
     throw new Error('distribution archive contains an unexpected entry');
   const path = join(output, meta.filename);
   const bytes = await readFile(path);
   if (meta.integrity !== integrity(bytes)) throw new Error('npm archive SHA512 mismatch');
-  return Object.freeze({ path, sha256: hash(bytes), version });
+  return Object.freeze({ path, sha256: hash(bytes), version, graph: reviewed });
 }
 
 async function install(item, env, temp, prefix) {
@@ -149,6 +248,8 @@ async function nativeProof(temp, env, entry, bin, fixture) {
     let models = await inventory();
     if (!fixture && /webbridge-fixture|webbridge-native-fixture|webbridge-g99-page/i.test(models))
       throw new Error('inert distributed entrypoint unexpectedly advertised fixture model');
+    if (!fixture && /webbridge-(chatgpt|deepseek|gemini|qwen|mistral)/i.test(models))
+      throw new Error('dormant distributed entrypoint advertised a web provider without the activation list');
     if (fixture) {
       // /api/provider lists provider *info*, not nested model IDs. A selected
       // native model turn below is the actual proof of model availability.
@@ -240,7 +341,11 @@ export async function proveActualEntrypoint({ native = false, localFactory } = {
     if (!rejected) throw new Error('tampered package accepted');
     const restored = await install(first, env, temp, profile);
     if (restored.entry !== entry) throw new Error('rollback failed source parity');
-    const nativeBin = join(root, 'node_modules', '.bin', 'opencode');
+    // Official CLI executable: packaged binary on Windows (npm shims are not
+    // spawnable there), npm shim elsewhere.
+    const packagedWin = join(root, 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe');
+    const nativeBin = process.platform === 'win32' && existsSync(packagedWin)
+      ? packagedWin : join(root, 'node_modules', '.bin', 'opencode');
     const proof = await nativeProof(temp, env, restored.location, nativeBin);
     const { openFixtureServer } = await import(pathToFileURL(
       join(root, 'dist/src/testing/fixture-inference.js')).href);
@@ -270,6 +375,7 @@ export async function proveActualEntrypoint({ native = false, localFactory } = {
       '--ignore-scripts','--no-package-lock','--no-audit','--no-fund'], env, temp);
     if (existsSync(restored.location)) throw new Error('real plugin uninstall left package behind');
     return { ...source, ...proof, localOptIn: local, reproducible: true,
+      rootGraph: first.graph,
       upgraded: true, rolledBack: true, tamperDenied: true, uninstalled: true };
   } finally {
     await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });

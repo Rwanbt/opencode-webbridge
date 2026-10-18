@@ -1,15 +1,23 @@
 import { Plugin } from "@opencode/plugin";
 
-/** Real root: dormant unless user opts into read-only attached CDP sessions.
- * Native model registration is intentionally withheld until an authorized
- * send + terminal inference contract exists (not merely a browser DOM reader). */
+/** Real root: dormant unless the user individually opts in.
+ *  - native web models (opt-in list) are registered through public SDK hooks only;
+ *  - read-only attached CDP sessions stay available under their own consent flag;
+ *  - native model registration never fabricates an answer: without an attached
+ *    authorized browser session the model refuses with an explicit state. */
 export default Plugin.define({
   id: "opencode.webbridge",
   async setup(ctx) {
+    const { registerNativeWebModels } = await import("./native/registration.js");
+    const nativeCleanup = await registerNativeWebModels(ctx, process.env);
     if (process.env.WEBBRIDGE_G150_LOCAL_FIXTURE !== "1") {
-      if (process.env.WEBBRIDGE_PERSONAL_CDP_READONLY !== "1") return;
+      if (process.env.WEBBRIDGE_PERSONAL_CDP_READONLY !== "1") return nativeCleanup;
       const { registerG163PersonalRead } = await import("./runtime/g163-root-read.js");
-      return registerG163PersonalRead(ctx, process.env);
+      const readCleanup = await registerG163PersonalRead(ctx, process.env);
+      return async () => {
+        if (readCleanup) await readCleanup();
+        if (nativeCleanup) await nativeCleanup();
+      };
     }
     if (process.env.WEBBRIDGE_G81_TEST_ONLY !== "1" ||
         !/^[a-f0-9]{64}$/.test(process.env.WEBBRIDGE_G81_SECRET ?? "") ||

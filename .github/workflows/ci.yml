@@ -388,6 +388,10 @@ jobs:
         run: node --test dist/test/native-provider-module.test.js
         env:
           NATIVE_PROVIDER_MODULE_CLI: '1'
+      - name: "Raw package native web models: activation, one honest turn, uncertain terminal, detached refusal"
+        run: node --test dist/test/native-web-models-cli.test.js
+        env:
+          NATIVE_WEB_MODELS_CLI: '1'
 
   g177-packed-interactive-operator:
     name: G177 tarball-installed operator terminal approved Chromium one-shot

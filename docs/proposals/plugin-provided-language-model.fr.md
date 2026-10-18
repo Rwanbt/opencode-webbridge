@@ -46,6 +46,11 @@ sans quoi ses hooks ne sont jamais atteints.
   effectif. Le texte du modèle est streamé dans la session officielle, en un tour unique,
   avec `finish: "stop"` et un code de sortie 0, sans transport HTTP.
 - `finishReason.raw` et `providerMetadata` sont conservés dans les parties de session.
+- Le module d'ancrage est chargé **paresseusement, à l'initialisation du modèle** : il doit être
+  un point d'entrée du paquet publié. Un `tsconfig` de publication qui ne compile que le graphe
+  d'imports l'omet (fichier jamais atteint par un `import`) et l'initialisation échoue alors avec
+  `provider.no-route — Cannot initialize <provider>/<model>: Cannot find module …`. Constat
+  reproductible sur Linux et Windows ; ce n'est pas une différence de plateforme.
 
 ## Limite démontrée (NO-GO exécutable)
 
@@ -63,8 +68,9 @@ métadonnées permettent de conserver la trace, mais pas de terminer proprement.
 ## Demandes minimales
 
 1. **Contrat « provider module ».** Documenter et garantir : préfixe `aisdk:`, résolution
-   (`file://`, specifier npm, chemin), export `create*`, et ordre d'exécution (chargement
-   avant les hooks). Alternative : une API publique dédiée
+   (`file://`, specifier npm, chemin), export `create*`, ordre d'exécution (chargement
+   avant les hooks), et chargement paresseux à l'initialisation du modèle (le module doit donc
+   être livré comme point d'entrée du paquet). Alternative : une API publique dédiée
    (`ctx.aisdk.provider({ factory })`).
 2. **Terminal non autoritaire.** Accepter `unified: 'other'` sans le convertir en
    `unknown`/erreur, ou ajouter une raison de fin explicite (`uncertain` /
@@ -83,6 +89,11 @@ métadonnées permettent de conserver la trace, mais pas de terminer proprement.
 
 ## Preuves exécutables
 
+- `test/native-web-models-cli.test.ts` (paquet npm brut de ce dépôt, CLI officiel 2.0.32) :
+  dormant par défaut sans activation ; provider + modèle natifs sélectionnables ; un tour servi
+  par le modèle du plugin avec **un seul** tour navigateur (l'appel auxiliaire de titre ne part
+  jamais) ; terminal non prouvé enregistré comme **erreur** (jamais `stop`) ; absence de session
+  => refus explicite, aucune sortie inventée.
 - `test/native-provider-module.test.ts` (job CI Linux, CLI officiel 2.0.32) :
   GREEN — module d'ancrage + hook `language`, tour propre `finish: "stop"` ;
   RED — `finishReason: 'other'` refusé comme flux incomplet, reprise constatée.

@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["src/index.ts", "src/runtime/g166-chatgpt-manual-turn.ts"],
+  "include": ["src/index.ts", "src/native/provider-anchor.ts", "src/runtime/g166-chatgpt-manual-turn.ts"],
   "exclude": ["test", "src/testing"]
 }
