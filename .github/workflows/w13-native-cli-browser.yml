@@ -1,0 +1,37 @@
+name: W13 raw root official CLI Chromium
+
+on:
+  push:
+    branches:
+      - test/w13-raw-cli-vertical
+  pull_request:
+    paths:
+      - "scripts/w13-*"
+      - "docs/ADR/W13-*"
+      - ".github/workflows/w13-native-cli-browser.yml"
+      - "src/**"
+      - "index.mjs"
+      - "package.json"
+      - "package-lock.json"
+
+jobs:
+  w13-raw-native-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Install unmodified official CLI 2.0.32 in disposable CI tree
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - name: Install isolated Linux Chromium
+        run: npx playwright install --with-deps --only-shell chromium
+      - name: W13 raw npm root, real native model, CDP synthetic HTTPS, consent and restart
+        run: node --test scripts/w13-native-cli-browser.mjs
+        env:
+          W13_NATIVE_CLI: "1"
