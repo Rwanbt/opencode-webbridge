@@ -348,6 +348,24 @@ jobs:
       - run: node --test dist/test/g169-qwen-read.test.js
         env:
           G169_REAL_CDP: '1'
+
+  g175-common-browser-progress:
+    name: G175 unified browser progress real Chromium five-provider fail-closed probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - name: Exact CDP observers G157 G160 G169, bounded deltas, revoked/epoch/cancel and Qwen no-go
+        run: node --test dist/test/g175-browser-progress.test.js
+        env:
+          G175_REAL_CDP: '1'
           G169_INTERCEPTED_FIXTURE: '1'
 
   g170-official-cli-provider-probe:
