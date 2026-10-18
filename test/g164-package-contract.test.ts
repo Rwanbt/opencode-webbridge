@@ -20,7 +20,9 @@ test('G164 pack main must be emitted, not raw TS and never the test harness', as
   assert.equal(manifest.devDependencies.playwright, undefined);
   assert.equal(manifest.private, true, 'do not publish unqualified commercial integration');
   const tsconfig = JSON.parse(await readFile(join(base, 'tsconfig.pack.json'), 'utf8'));
-  assert.deepEqual(tsconfig.include, ['src/index.ts']);
+  assert.deepEqual(tsconfig.include, ['src/index.ts', 'src/runtime/g166-chatgpt-manual-turn.ts']);
+  assert.equal(manifest.bin['webbridge-manual-chatgpt'], './bin/webbridge-manual-chatgpt.mjs');
+  assert.ok(manifest.files.includes('bin/'));
   assert.ok(tsconfig.exclude.includes('test'));
   assert.ok(tsconfig.exclude.includes('src/testing'));
 });

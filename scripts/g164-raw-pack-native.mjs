@@ -35,10 +35,12 @@ function packageContract(meta) {
   const paths = meta.files.map((item) => item.path);
   for (const required of ['package.json', 'index.mjs', 'dist/src/index.js',
     'dist/src/index.d.ts', 'dist/src/runtime/g163-root-read.js',
-    'dist/src/browser/explicit-cdp-read.js']) {
+    'dist/src/browser/explicit-cdp-read.js', 'dist/src/runtime/g166-chatgpt-manual-turn.js',
+    'bin/webbridge-manual-chatgpt.mjs']) {
     assert.ok(paths.includes(required), 'raw tarball misses ' + required);
   }
   assert.ok(paths.every((path) => path === 'package.json' || path === 'index.mjs' ||
+    path === 'bin/webbridge-manual-chatgpt.mjs' ||
     /^(README.md|LICENSE|SECURITY.md|THIRD-PARTY-NOTICES.md)$/.test(path) ||
     path.startsWith('dist/src/')), 'release tarball leaked source/tests/fixtures');
   assert.ok(!paths.some((path) => path.startsWith('dist/src/testing/') ||
@@ -54,6 +56,7 @@ async function sourceVariant(temp) {
     await cp(join(repo, name), join(work, name));
   }
   await cp(join(repo, 'index.mjs'), join(work, 'index.mjs'));
+  await cp(join(repo, 'bin'), join(work, 'bin'), { recursive: true });
   await cp(join(repo, 'tsconfig.pack.json'), join(work, 'tsconfig.pack.json'));
   await mkdir(join(work, 'scripts'));
   await cp(join(repo, 'scripts/g164-prepare-package.mjs'),
