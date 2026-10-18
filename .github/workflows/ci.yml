@@ -262,6 +262,8 @@ jobs:
       - run: npx playwright install --with-deps --only-shell chromium
       - name: G153 real temporary FS Git status/diff/log and durable restart negatives
         run: npm run build && node --test scripts/test-g153-host.mjs
+      - name: G165 inherited G158 native model stream race protections
+        run: node --test scripts/test-g158-model-gate.mjs
       - name: G153 actual root native selected model DOM RPC Git effects read-only before SSE
         run: npm run smoke:g153-root-git
 
@@ -290,6 +292,10 @@ jobs:
         run: node --test dist/test/g160-other-provider-dom.test.js
         env:
           G160_REAL_CDP: '1'
+      - name: G165 inherited G159 guarded one-shot send on actual isolated Chromium
+        run: node --test dist/test/g159-chatgpt-approved-send.test.js
+        env:
+          G159_REAL_CDP: '1'
 
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
