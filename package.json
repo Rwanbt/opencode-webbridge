@@ -8,9 +8,9 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "main": "./dist/src/index.js",
+  "main": "./index.mjs",
   "types": "./dist/src/index.d.ts",
-  "files": ["dist/src/", "README.md", "LICENSE", "SECURITY.md", "THIRD-PARTY-NOTICES.md"],
+  "files": ["index.mjs", "dist/src/", "README.md", "LICENSE", "SECURITY.md", "THIRD-PARTY-NOTICES.md"],
   "scripts": {
     "prepack": "node scripts/g164-prepare-package.mjs",
     "build": "tsc -p tsconfig.json",

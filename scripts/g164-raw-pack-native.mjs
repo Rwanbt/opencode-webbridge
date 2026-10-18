@@ -33,12 +33,12 @@ async function pack(directory, destination, version, scripts = true) {
 }
 function packageContract(meta) {
   const paths = meta.files.map((item) => item.path);
-  for (const required of ['package.json', 'dist/src/index.js',
+  for (const required of ['package.json', 'index.mjs', 'dist/src/index.js',
     'dist/src/index.d.ts', 'dist/src/runtime/g163-root-read.js',
     'dist/src/browser/explicit-cdp-read.js']) {
     assert.ok(paths.includes(required), 'raw tarball misses ' + required);
   }
-  assert.ok(paths.every((path) => path === 'package.json' ||
+  assert.ok(paths.every((path) => path === 'package.json' || path === 'index.mjs' ||
     /^(README.md|LICENSE|SECURITY.md|THIRD-PARTY-NOTICES.md)$/.test(path) ||
     path.startsWith('dist/src/')), 'release tarball leaked source/tests/fixtures');
   assert.ok(!paths.some((path) => path.startsWith('dist/src/testing/') ||
@@ -53,6 +53,7 @@ async function sourceVariant(temp) {
   for (const name of ['tsconfig.json', 'package-lock.json']) {
     await cp(join(repo, name), join(work, name));
   }
+  await cp(join(repo, 'index.mjs'), join(work, 'index.mjs'));
   await cp(join(repo, 'tsconfig.pack.json'), join(work, 'tsconfig.pack.json'));
   await mkdir(join(work, 'scripts'));
   await cp(join(repo, 'scripts/g164-prepare-package.mjs'),
@@ -77,9 +78,13 @@ async function nativeProof(prefix, temp, stage) {
   const installed = join(prefix, 'node_modules', NAME);
   const pkg = JSON.parse(await readFile(join(installed, 'package.json'), 'utf8'));
   const main = await readFile(join(installed, 'dist/src/index.js'));
-  assert.equal(pkg.main, './dist/src/index.js');
-  assert.equal((await import(pathToFileURL(join(installed, 'dist/src/index.js')).href +
-    '?g164=' + stage)).default.id, 'opencode.webbridge');
+  assert.equal(pkg.main, './index.mjs');
+  const canonical = (await import(pathToFileURL(join(installed, 'dist/src/index.js')).href +
+    '?g164=' + stage)).default;
+  const installedEntry = (await import(pathToFileURL(join(installed, 'index.mjs')).href +
+    '?g164=' + stage)).default;
+  assert.equal(canonical.id, 'opencode.webbridge');
+  assert.equal(installedEntry.id, canonical.id, 'published index.mjs does not export real root');
   // Version metadata changes, not the actual root entrypoint; rollback must restore bytes.
   const configDir = join(temp, 'config-' + stage);
   for (const dir of ['home', 'data', 'cache', 'config-' + stage])
@@ -146,7 +151,7 @@ async function nativeProof(prefix, temp, stage) {
 
 test('G164 SOURCE-only npm pack without prepack is RED; production manifest is complete', async () => {
   const manifest = JSON.parse(await readFile(join(repo, 'package.json'), 'utf8'));
-  assert.equal(manifest.main, './dist/src/index.js');
+  assert.equal(manifest.main, './index.mjs');
   assert.equal(manifest.scripts.prepack, 'node scripts/g164-prepare-package.mjs');
   assert.deepEqual(manifest.files.slice(0, 1), ['dist/src/']);
   assert.equal(manifest.dependencies.playwright, '1.64.1');
