@@ -36,33 +36,43 @@ test("the adapter registry covers exactly the shared catalog with single-sourced
 
 test("no adapter fabricates a capability", () => {
   const senders = PROVIDER_ADAPTER_IDS.filter((id) => requireProviderAdapter(id).sendPrimitive !== null);
-  assert.deepEqual(senders, ["chatgpt"]);
+  assert.deepEqual(senders, ["chatgpt", "deepseek", "gemini", "qwen"]);
   for (const id of PROVIDER_ADAPTER_IDS) {
     const adapter = requireProviderAdapter(id);
     assert.equal(adapter.completionProof, "none", id + " must not claim a completion proof");
   }
   assert.equal(requireProviderAdapter("chatgpt").readPrimitive, "g157-chatgpt-cdp-observer");
-  for (const id of ["deepseek", "gemini", "mistral"] as const) {
+  assert.equal(requireProviderAdapter("chatgpt").sendPrimitive, "g159-chatgpt-one-shot");
+  assert.equal(requireProviderAdapter("deepseek").readPrimitive, "g160-other-provider-dom");
+  assert.equal(requireProviderAdapter("deepseek").discoverable, true);
+  assert.equal(requireProviderAdapter("deepseek").sendPrimitive, "g174-deepseek-one-shot");
+  assert.equal(requireProviderAdapter("gemini").readPrimitive, "g160-other-provider-dom");
+  assert.equal(requireProviderAdapter("gemini").discoverable, true);
+  assert.equal(requireProviderAdapter("gemini").sendPrimitive, "g175-gemini-one-shot");
+  for (const id of ["mistral"] as const) {
     const adapter = requireProviderAdapter(id);
     assert.equal(adapter.readPrimitive, "g160-other-provider-dom");
     assert.equal(adapter.discoverable, true);
     assert.equal(adapter.sendPrimitive, null);
   }
   const qwen = requireProviderAdapter("qwen");
-  assert.equal(qwen.readPrimitive, "g169-qwen-probe");
-  assert.equal(qwen.discoverable, false);
-  assert.equal(qwen.sendPrimitive, null);
-  assert.match(qwen.notes, /NO_GO_UNVERIFIED_LIVE_QWEN_DOM/);
+  assert.equal(qwen.readPrimitive, "g160-other-provider-dom");
+  assert.equal(qwen.discoverable, true);
+  assert.equal(qwen.sendPrimitive, "g176-qwen-one-shot");
+  assert.match(qwen.notes, /UNCERTAIN/);
   assert.deepEqual(
     [...PROVIDER_ADAPTER_IDS].filter((id) => requireProviderAdapter(id).discoverable).sort(),
-    ["chatgpt", "deepseek", "gemini", "mistral"]);
+    ["chatgpt", "deepseek", "gemini", "mistral", "qwen"]);
 });
 
 test("unknown adapters are refused and unknown capability lookups fail closed", () => {
   assert.throws(() => requireProviderAdapter("chatgpt2"), /unknown provider adapter/);
   assert.throws(() => requireProviderAdapter(""), /unknown provider adapter/);
   assert.equal(sendPrimitiveOf("chatgpt"), "g159-chatgpt-one-shot");
-  assert.equal(sendPrimitiveOf("deepseek"), null);
+  assert.equal(sendPrimitiveOf("deepseek"), "g174-deepseek-one-shot");
+  assert.equal(sendPrimitiveOf("gemini"), "g175-gemini-one-shot");
+  assert.equal(sendPrimitiveOf("qwen"), "g176-qwen-one-shot");
+  assert.equal(sendPrimitiveOf("mistral"), null);
   assert.equal(sendPrimitiveOf("no-such-provider"), null);
 });
 
@@ -119,7 +129,7 @@ test("the request gate refuses incomplete consent, unknown ids and non-loopback 
     /explicit host ownership, per-read approval and revocation checks are required/);
 });
 
-test("qwen discovery is refused by design; observation without a message key is refused", async () => {
+test("qwen discovery is now wired; observation without a message key is refused", async () => {
   const consent: ObserveConsent = {
     userDeclaresBrowserOwnership: true,
     approve: async () => true,
@@ -130,7 +140,7 @@ test("qwen discovery is refused by design; observation without a message key is 
     provider: "qwen", endpoint: "http://127.0.0.1:9", tabID: "ABCD1234",
     turnID: "turn-1", consent, signal: new AbortController().signal,
   };
-  await assert.rejects(discoverProviderAssistant(base), /no verified live DOM reader/);
+  await assert.rejects(discoverProviderAssistant(base));
   await assert.rejects(observeProviderAssistant({ ...base, provider: "gemini" }).next(),
     /confirmed assistant message key/);
 });

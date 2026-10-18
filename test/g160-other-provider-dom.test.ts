@@ -18,7 +18,7 @@ const CASES = [
   { id: 'deepseek', url: 'https://chat.deepseek.com/a/chat/s/mock', key: 'ds1', expected: 'DS answer',
     html: '<div data-message-id="ds1"><div class="ds-markdown ds-assistant-message-main-content">DS answer</div></div>' },
   { id: 'gemini', url: 'https://gemini.google.com/app/mock', key: 'ge1', expected: 'GE answer',
-    html: '<model-response data-message-id="ge1"><message-content class="model-response-text"><div class="markdown">GE answer</div></message-content></model-response>' },
+    html: '<model-response data-message-id="ge1"><model-response-content>GE answer</model-response-content></model-response>' },
   { id: 'mistral', url: 'https://chat.mistral.ai/chat/mock', key: 'mi1', expected: 'MI answer',
     html: '<div data-message-id="mi1" data-message-author-role="assistant"><div class="markdown">MI answer</div></div>' },
 ] as const;
@@ -31,9 +31,9 @@ async function reservePort() {
   return port;
 }
 
-test('G160 unverified Qwen DOM, wrong IDs, browser origin and missing consent refuse', async () => {
+test('G160 unknown provider, wrong IDs, browser origin and missing consent refuse', async () => {
   await assert.rejects(G160OtherProviderObserver.attach('http://127.0.0.1:9222',
-    'TABABCDEFG', 'qwen', consent(() => true)), /not independently verified/);
+    'TABABCDEFG', 'unknown' as never, consent(() => true)), /not independently verified/);
   await assert.rejects(G160OtherProviderObserver.attach('http://evil.example:9222',
     'TABABCDEFG', 'deepseek', consent(() => true)), /denied/);
   await assert.rejects(G160OtherProviderObserver.attach('http://127.0.0.1:9222',
@@ -80,6 +80,7 @@ test('G160 real existing CDP Chromium provider-specific bodies, exact identity a
           if (!updated) {
             updated = true;
             const selector = item.id === 'deepseek' ? '.ds-assistant-message-main-content'
+              : item.id === 'gemini' ? 'model-response-content'
               : '.markdown';
             await page.locator(selector).evaluate((el) => { el.textContent += ' more'; });
           }

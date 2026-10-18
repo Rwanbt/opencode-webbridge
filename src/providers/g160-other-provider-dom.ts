@@ -24,11 +24,16 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
     nodes = [...document.querySelectorAll('model-response')];
   } else if (provider === 'mistral') {
     nodes = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
-  } else return null; // Qwen DOM layout has not been independently confirmed.
+  } else if (provider === 'qwen') {
+    // Observed on the real authenticated Qwen UI (2026-10-18): each assistant
+    // turn is a container with id "chat-response-message-<uuid>".
+    nodes = [...document.querySelectorAll('[id^="chat-response-message-"]')];
+  } else return null;
   if (!nodes.length || nodes.length > 128) return null;
   const root = nodes.at(-1)!;
-  const content = provider === 'deepseek' ? [root] : provider === 'gemini'
-    ? [...root.querySelectorAll('message-content.model-response-text .markdown')]
+  const content = provider === 'deepseek' ? [root]
+    : provider === 'qwen' ? [...root.querySelectorAll('.qwen-markdown')]
+    : provider === 'gemini' ? [...root.querySelectorAll('model-response-content')]
     : [...root.querySelectorAll('.markdown')];
   if (content.length !== 1) return null; // No broad text fallback: reasoning/user contamination.
   let keyNode: Element | null = root;
@@ -36,6 +41,15 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
   for (let i = 0; i < 3 && keyNode && !key; i++, keyNode = keyNode.parentElement) {
     key = keyNode.getAttribute('data-message-id') ?? keyNode.getAttribute('data-turn-id') ??
       keyNode.getAttribute('data-response-id') ?? keyNode.id ?? null;
+  }
+  if (!key && provider === 'deepseek') {
+    // Observed on the real authenticated UI (2026-10-18): DeepSeek exposes no
+    // per-message id. The app's virtual-list item key paired with the
+    // conversation id from the URL is the stable pair (never a text hash).
+    const item = root.closest('[data-virtual-list-item-key]')
+      ?.getAttribute('data-virtual-list-item-key') ?? null;
+    const conversation = /\/a\/chat\/s\/([A-Za-z0-9-]{8,64})/.exec(location.pathname)?.[1] ?? null;
+    if (item && /^\d{1,6}$/.test(item) && conversation) key = conversation + ':' + item;
   }
   if (!key || !documentKey.test(key)) return null; // No unstable indices/text hashes.
   const text = content[0].textContent ?? '';
@@ -58,7 +72,7 @@ export class G160OtherProviderObserver {
 
   static async attach(endpoint: string, tabID: string, provider: OtherProviderID,
     consent: OtherReadConsent): Promise<G160OtherProviderObserver> {
-    if (!['deepseek', 'gemini', 'mistral'].includes(provider))
+    if (!['deepseek', 'gemini', 'mistral', 'qwen'].includes(provider))
       throw new Error('G160 provider DOM not independently verified');
     if (typeof tabID !== 'string' || !/^[A-Za-z0-9_-]{4,128}$/.test(tabID) ||
         typeof consent?.allowAssistantText !== 'function')
@@ -91,6 +105,12 @@ export class G160OtherProviderObserver {
       discovery.close();
       throw error;
     }
+  }
+
+  /** Attached target identity, mirroring G157: a caller may persist it and later
+   *  refuse to resume onto a different tab or a replaced generation. */
+  get scope(): { readonly tabID: string; readonly generation: number } {
+    return Object.freeze({ tabID: this.tab.tabID, generation: this.tab.generation });
   }
 
   private async authorize(): Promise<void> {

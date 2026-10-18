@@ -25,8 +25,9 @@ const root = resolve('.');
 const cli = WINDOWS
   ? join(root, 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe')
   : join(root, 'node_modules', '.bin', 'opencode');
-const tabDeclaration = process.env.P0_TAB_CHATGPT ?? '';
+const tabDeclaration = process.env['P0_TAB_' + (process.env.P0_PROVIDER ?? 'chatgpt').toUpperCase()] ?? '';
 const prompt = process.env.P0_PROMPT ?? 'Réponds en une seule phrase courte: combien font 2 + 2 ?';
+const provider = process.env.P0_PROVIDER ?? 'chatgpt';
 
 const ex = (file, args, options) => {
   const result = spawnSync(file, args, {
@@ -111,7 +112,7 @@ async function waitPlugin(host) {
 
 async function runPrompt(host, env) {
   return new Promise((done) => {
-    const child = spawn(cli, ['run', '--server', host.base, '--model', 'webbridge-chatgpt/chatgpt-web',
+    const child = spawn(cli, ['run', '--server', host.base, '--model', ('webbridge-' + provider + '/' + provider + '-web'),
       '--format', 'json', prompt], {
       cwd: host.cwd, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, OPENCODE_SERVER_PASSWORD: host.password, ...env },
@@ -125,7 +126,7 @@ async function runPrompt(host, env) {
 }
 
 async function main() {
-  if (!tabDeclaration) throw new Error('P0_TAB_CHATGPT="http://127.0.0.1:<port>#<tabID>" is required');
+  if (!tabDeclaration) throw new Error('P0_TAB_<PROVIDER>=\"http://127.0.0.1:<port>#<tabID>\" is required');
   assert.match(tabDeclaration, /^http:\/\/127\.0\.0\.1:\d+#[A-Za-z0-9_-]{4,128}$/);
   const temp = await mkdtemp(join(tmpdir(), 'p0-live-'));
   const journal = join(temp, 'journal');
@@ -151,7 +152,7 @@ async function main() {
   assert.equal(manifest.name, NAME);
 
   const config = JSON.stringify({ plugins: [pathToFileURL(installed).href] });
-  const env = { WEBBRIDGE_NATIVE_WEB_MODELS: 'chatgpt', WEBBRIDGE_NATIVE_TAB_CHATGPT: tabDeclaration,
+  const env = { WEBBRIDGE_NATIVE_WEB_MODELS: provider, ['WEBBRIDGE_NATIVE_TAB_' + provider.toUpperCase()]: tabDeclaration,
     WEBBRIDGE_NATIVE_JOURNAL_DIR: journal };
 
   console.log('[3/7] starting the official CLI and waiting for the plugin');
@@ -164,7 +165,7 @@ async function main() {
     console.log('[4/7] provider/model discovery');
     const providers = await api(host, '/api/provider');
     const providerJSON = JSON.stringify(providers.body ?? {});
-    assert.ok(providerJSON.includes('webbridge-chatgpt'), 'webbridge-chatgpt provider not listed');
+    assert.ok(providerJSON.includes('webbridge-' + provider), 'webbridge-' + provider + ' provider not listed');
     console.log('PROVIDER_JSON ' + providerJSON.slice(0, 2500));
 
     console.log('[5/7] one prompt through the native model (single browser send expected)');
@@ -192,7 +193,7 @@ async function main() {
     console.log(JSON.stringify({
       verdict: 'P0_LIVE_OBSERVED',
       cliVersion: '2.0.32',
-      model: 'webbridge-chatgpt/chatgpt-web',
+      model: ('webbridge-' + provider + '/' + provider + '-web'),
       tab: tabDeclaration.replace(/#.*/, '#<tab>'),
       runExit: run.code,
       elapsedMs,
