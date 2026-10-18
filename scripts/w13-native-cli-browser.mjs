@@ -176,7 +176,7 @@ function fixtureHTML() {
     '  setTimeout(()=>document.body.insertAdjacentHTML("beforeend",',
     '    \x27<article data-turn="assistant" data-turn-id="candidate1"><div class="markdown">W13_VISIBLE_</div></article>\x27),50);',
     '  setTimeout(()=>{const x=document.querySelector("[data-turn-id=candidate1] .markdown");',
-    '    if(x)x.textContent="W13_VISIBLE_PROVISIONAL_REPLY";},250);',
+    '    if(x)x.textContent="W13_VISIBLE_PROVISIONAL_REPLY";},2800);',
     '});',
     '</script></body></html>',
   ].join('\n');
@@ -255,7 +255,10 @@ test('W13 raw npm root -> unmodified CLI 2.0.32 -> intercepted HTTPS Chromium; a
       host = await launch(temp, plugin, 'approved', selection);
       before = await priorSessions(host);
       command = run(host, PROMPT);
-      const progress = await observed(host, CANDIDATE, 35_000, before);
+      const first = await observed(host, 'W13_VISIBLE_', 35_000, before);
+      assert.doesNotMatch(first, /W13_VISIBLE_PROVISIONAL_REPLY/,
+        'only final DOM text was persisted; no progressive model event was proved');
+      const progress = await observed(host, CANDIDATE, 25_000, before);
       assert.deepEqual(await sent(browser.page), [PROMPT]);
       assert.doesNotMatch(progress, /PRIOR_PRIVATE_ANSWER|W13_DO_NOT_LEAK/);
       // We must never claim a provider's actual completion on a DOM-only fixture.
