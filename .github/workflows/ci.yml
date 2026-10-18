@@ -246,6 +246,8 @@ jobs:
       - run: npx playwright install --with-deps --only-shell chromium
       - name: G153 real temporary FS Git status/diff/log and durable restart negatives
         run: npm run build && node --test scripts/test-g153-host.mjs
+      - name: G158 duplicate model stream race after 5s, companion failure and bounded refusal
+        run: node --test scripts/test-g158-model-gate.mjs
       - name: G153 actual root native selected model DOM RPC Git effects read-only before SSE
         run: npm run smoke:g153-root-git
 
