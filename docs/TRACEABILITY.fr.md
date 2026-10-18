@@ -152,7 +152,7 @@ _Reproducible, tested and documented releases with rollback path_
 
 ## Base de preuves
 
-- preuves partielles enregistrées : **111** (fenêtre couverte exactement une fois, vérifiée par `npm run check:progress`)
+- preuves partielles enregistrées : **125** (fenêtre couverte exactement une fois, vérifiée par `npm run check:progress`)
 - rouges superseded pinnés (SHA + motif) : **11**
 - bloqueurs de release : **6** (scope CLI 2.0.32, posture `NO-GO-PRODUCTION`)
 - stories acceptées production : **0/54** — L3 exige une interaction web réelle autorisée par l'utilisateur (voir les phases bloquées).
