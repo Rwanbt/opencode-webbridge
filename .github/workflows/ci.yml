@@ -297,6 +297,39 @@ jobs:
         env:
           G159_REAL_CDP: '1'
 
+  g164-raw-npm-package:
+    name: G168 raw npm tarball install upgrade rollback official CLI 2.0.32
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - run: node --test scripts/g164-raw-pack-native.mjs
+        env:
+          G164_OFFICIAL_CLI: '1'
+
+  g166-manual-chatgpt-turn:
+    name: G168 approved CDP turn with bounded provisional response
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run build
+      - run: node --test dist/test/g166-chatgpt-manual-turn.test.js
+        env:
+          G166_REAL_CDP: '1'
+
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
     runs-on: ubuntu-latest
