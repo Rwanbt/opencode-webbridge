@@ -102,6 +102,25 @@ test('G175 real Chromium intercepted HTTPS: common four-provider progressive cor
           provider: site.provider, status: 'uncertain', reason: 'provider-finality-unverified' });
         assert.doesNotMatch(JSON.stringify(events), /PRIVATE_USER_PROMPT|PRIVATE_PASSWORD|PRIVATE_REASONING/);
 
+        // A reworded answer must terminate uncertain, never silently replace deltas.
+        const revised = g175BrowserProgress({ ...base, polls: 2, intervalMs: 20 });
+        assert.equal((await revised.next()).value?.kind, 'candidate');
+        await page.locator(site.selector).evaluate((el) => { el.textContent = 'Rewritten'; });
+        assert.equal((await revised.next()).value?.kind, 'terminal');
+        await revised.return(undefined);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+
+        // Missing a selected answer cannot be upgraded to an accepted or finished turn.
+        const selected = site.provider === 'chatgpt' ? 'article[data-turn="assistant"]'
+          : site.provider === 'deepseek' ? '.ds-assistant-message-main-content'
+          : site.provider === 'gemini' ? 'model-response'
+          : '[data-message-author-role="assistant"]';
+        await page.locator(selected).evaluate((el) => el.remove());
+        const missing = await collect({ ...base, polls: 1 });
+        assert.equal((missing.at(-1) as any).reason, 'no-message');
+        assert.equal(missing.filter((e) => e.kind === 'candidate').length, 0);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+
         // Host permission is checked during every await and after each sample.
         let approved = true, reads = 0;
         const revoked = await collect({ ...base, consent: {

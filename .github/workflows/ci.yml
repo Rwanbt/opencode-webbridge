@@ -348,6 +348,7 @@ jobs:
       - run: node --test dist/test/g169-qwen-read.test.js
         env:
           G169_REAL_CDP: '1'
+          G169_INTERCEPTED_FIXTURE: '1'
 
   g175-common-browser-progress:
     name: G175 unified browser progress real Chromium five-provider fail-closed probe
@@ -366,7 +367,6 @@ jobs:
         run: node --test dist/test/g175-browser-progress.test.js
         env:
           G175_REAL_CDP: '1'
-          G169_INTERCEPTED_FIXTURE: '1'
 
   g170-official-cli-provider-probe:
     name: G173 native official CLI provider registration only with bounded fixture
