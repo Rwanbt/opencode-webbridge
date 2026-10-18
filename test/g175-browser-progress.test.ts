@@ -17,8 +17,8 @@ const cases = [
     key: 'ge_answer', markup: '<model-response data-message-id="ge_answer"><model-response-content>First</model-response-content></model-response>' },
   { provider: 'mistral', url: 'https://chat.mistral.ai/chat/g175', selector: '.markdown',
     key: 'mi_answer', markup: '<div data-message-id="mi_answer" data-message-author-role="assistant"><div class="markdown">First</div></div>' },
-  { provider: 'qwen', url: 'https://chat.qwen.ai/c/g175', selector: 'main',
-    key: 'qw_answer', markup: '<main data-webbridge-g169-fixture="intercepted-qwen-v1"><article data-webbridge-g169-speaker="assistant" data-message-id="qw_answer"><div data-webbridge-g169-body>Fixture response</div></article></main>' },
+  { provider: 'qwen', url: 'https://chat.qwen.ai/c/g175', selector: '.qwen-markdown',
+    key: 'chat-response-message-qw1', markup: '<div id="chat-response-message-qw1"><div class="qwen-markdown">First</div></div>' },
 ] as const;
 const collect = async (input: G175Request) => {
   const events: G175Event[] = [];
@@ -49,7 +49,7 @@ test('G175 rejects absent authority, corrupt selected key, polling abuse and can
   await assert.rejects(collect(base), /cancelled/);
 });
 
-test('G175 real Chromium intercepted HTTPS: common four-provider progressive correlation, Qwen NO-GO, adversarial epochs and revocation',
+test('G175 real Chromium intercepted HTTPS: common five-provider progressive correlation, adversarial epochs and revocation',
   { skip: process.platform !== 'linux' || process.env.G175_REAL_CDP !== '1' }, async () => {
     const profile = await mkdtemp(join(tmpdir(), 'g175-browser-'));
     const number = await port();
@@ -80,13 +80,6 @@ test('G175 real Chromium intercepted HTTPS: common four-provider progressive cor
           consent: consent(), polls: 3, intervalMs: 30 };
         await assert.rejects(collect({ ...base, tabID: tab.tabID + 'X' }),
           /target|selected|exact|mismatch/);
-        if (site.provider === 'qwen') {
-          const result = await collect(base);
-          assert.deepEqual(result, [{ kind: 'terminal', turnID: base.turnID,
-            provider: 'qwen', status: 'no-go', reason: 'qwen-unverified-live-dom' }]);
-          // An intercepted Qwen fixture is not validation of its real commercial selectors.
-          continue;
-        }
         const events: G175Event[] = [];
         for await (const event of g175BrowserProgress(base)) {
           events.push(event);
@@ -114,6 +107,7 @@ test('G175 real Chromium intercepted HTTPS: common four-provider progressive cor
         const selected = site.provider === 'chatgpt' ? 'article[data-turn="assistant"]'
           : site.provider === 'deepseek' ? '.ds-assistant-message-main-content'
           : site.provider === 'gemini' ? 'model-response'
+          : site.provider === 'qwen' ? '[id^="chat-response-message-"]'
           : '[data-message-author-role="assistant"]';
         await page.locator(selected).evaluate((el) => el.remove());
         const missing = await collect({ ...base, polls: 1 });

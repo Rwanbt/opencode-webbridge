@@ -3,7 +3,6 @@
 import type { CdpConsent, CdpTab, CdpProviderID } from '../browser/explicit-cdp-read.js';
 import { G157ChatgptCdpObserver } from '../browser/g157-chatgpt-cdp-observer.js';
 import { G160OtherProviderObserver } from '../providers/g160-other-provider-dom.js';
-import { G169QwenRead } from '../providers/g169-qwen-read.js';
 import { emptyProgressState, nextProgressStep } from './progress-step.js';
 
 export interface G175Consent extends CdpConsent {
@@ -30,7 +29,7 @@ export type G175Event =
   | { readonly kind: 'terminal'; readonly turnID: string; readonly provider: CdpProviderID;
       readonly status: 'uncertain' | 'no-go'; readonly reason: 'no-message' |
         'message-replaced' | 'answer-rewritten' | 'provider-finality-unverified' |
-        'permission-or-document-changed' | 'cancelled' | 'qwen-unverified-live-dom' };
+        'permission-or-document-changed' | 'cancelled' };
 
 const KEY = /^[\w:.-]{1,256}$/;
 const ID = /^[A-Za-z0-9_-]{4,128}$/;
@@ -87,22 +86,6 @@ export async function* g175BrowserProgress(input: G175Request): AsyncGenerator<G
   const terminal = (status: 'uncertain' | 'no-go', reason:
     Extract<G175Event, { kind: 'terminal' }>['reason']) =>
     ({ kind: 'terminal' as const, turnID: input.turnID, provider: input.provider, status, reason });
-  if (input.provider === 'qwen') {
-    const observer = await G169QwenRead.attach(input.endpoint, input.tabID, {
-      ...consent, signal: input.signal,
-      isStillApproved: (tab) => tab.tabID === input.tabID &&
-        tab.providerID === 'qwen' && !input.signal.aborted &&
-        input.consent.isStillApproved('qwen', input.tabID),
-    });
-    try {
-      const proof = await observer.probe(); // Actual G169 target/generation/epoch check.
-      requireLive(input);
-      if (proof.readStatus !== 'NO_GO_UNVERIFIED_LIVE_QWEN_DOM')
-        throw new Error('G175 unexpected Qwen readiness');
-      yield terminal('no-go', 'qwen-unverified-live-dom');
-    } finally { await observer.close(); }
-    return;
-  }
   const observer = input.provider === 'chatgpt'
     ? await G157ChatgptCdpObserver.attach(input.endpoint, input.tabID, consent)
     : await G160OtherProviderObserver.attach(input.endpoint, input.tabID, input.provider, consent);
