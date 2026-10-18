@@ -87,6 +87,8 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
   const discovery = new ExplicitCdpReadBridge(endpoint, consent);
   let browser: Browser | undefined;
   let consumed = false;
+  /** Only for the best-effort cleanup of the draft WE typed (never a retry). */
+  let selectedPage: Page | undefined;
   try {
     await discovery.open();
     const tab = (await discovery.tabs()).find((t) => t.tabID === tabID);
@@ -108,6 +110,7 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
       } finally { await proof.detach(); }
     }
     if (!page || page.url() !== tab.url) return deny('selected page/URL mismatch');
+    selectedPage = page;
     const selected = page;
     const session = await selected.context().newCDPSession(selected);
     try {
@@ -148,7 +151,15 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
       return Object.freeze({ status: 'uncertain' as const, turnID });
     } finally { await session.detach().catch(() => {}); }
   } catch (error) {
-    if (consumed) throw new Error('G175_SEND_UNCERTAIN: consumed before UI effect; do not replay');
+    if (consumed) {
+      // A consumed attempt is never replayed. Best effort only: remove the prompt
+      // WE typed when no click landed, so a failed or killed turn never leaves our
+      // text in the user's composer (otherwise every later turn is refused with
+      // 'nonempty user draft cannot be replaced'). Observed live 2026-10-19 on
+      // ChatGPT and DeepSeek; Qwen and Mistral already carried this.
+      try { if (selectedPage) await selectedPage.locator(COMPOSER).fill('', { timeout: 1000 }); } catch { /* ignore */ }
+      throw new Error('G175_SEND_UNCERTAIN: consumed before UI effect; do not replay');
+    }
     throw error;
   } finally {
     discovery.close();
