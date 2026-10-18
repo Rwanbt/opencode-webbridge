@@ -12,7 +12,9 @@
   "bin": {
     "webbridge-manual-chatgpt": "./bin/webbridge-manual-chatgpt.mjs",
     "webbridge-manual-observe": "./bin/webbridge-manual-observe.mjs",
-    "webbridge-journal": "./bin/webbridge-journal.mjs"
+    "webbridge-journal": "./bin/webbridge-journal.mjs",
+    "webbridge-doctor": "./bin/webbridge-doctor.mjs",
+    "webbridge-selftest": "./bin/webbridge-selftest.mjs"
   },
   "types": "./dist/src/index.d.ts",
   "files": ["index.mjs", "bin/", "dist/src/", "README.md", "LICENSE", "SECURITY.md", "THIRD-PARTY-NOTICES.md"],
