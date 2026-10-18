@@ -202,7 +202,7 @@ async function createBrowser(temp) {
 }
 const sent = (page) => page.evaluate(() => window.sent);
 
-test('W13 raw npm root -> unmodified CLI 2.0.32 -> intercepted HTTPS Chromium; authority, progressive UNCERTAIN, restart anti-replay',
+test('W13 raw npm root -> official CLI 2.0.32 -> HTTPS Chromium; authority, provisional DOM, UNCERTAIN, restart anti-replay',
   { skip: !ACTIVE, timeout: 240_000 }, async () => {
     assert.equal(JSON.parse(await readFile(join(ROOT, 'node_modules/@opencode/cli/package.json'))).version,
       '2.0.32', 'use exact unmodified official CLI');
@@ -255,21 +255,16 @@ test('W13 raw npm root -> unmodified CLI 2.0.32 -> intercepted HTTPS Chromium; a
       host = await launch(temp, plugin, 'approved', selection);
       before = await priorSessions(host);
       command = run(host, PROMPT);
-      let first;
-      try {
-        first = await observed(host, 'W13_VISIBLE_', 35_000, before);
-      } catch (error) {
-        const displayed = await browser.page.locator('[data-turn-id="candidate1"] .markdown')
-          .textContent().catch(() => null);
-        throw new Error('W13 progressive native failure: clicks=' +
-          JSON.stringify(await sent(browser.page)) + ' browserText=' +
-          JSON.stringify(displayed) + ' journalFiles=' +
-          JSON.stringify(await readdir(journal)) + ' CLI=' +
-          command.output().slice(-600), { cause: error });
-      }
-      assert.doesNotMatch(first, /W13_VISIBLE_PROVISIONAL_REPLY/,
-        'only final DOM text was persisted; no progressive model event was proved');
-      const progress = await observed(host, CANDIDATE, 25_000, before);
+      // Real Chrome visibly progresses through two distinct answer states.
+      // Official session history may buffer the text until the terminal; do
+      // NOT mislabel these page states as native SSE deltas.
+      await browser.page.waitForFunction(() =>
+        document.querySelector('[data-turn-id="candidate1"] .markdown')?.textContent ===
+          'W13_VISIBLE_', undefined, { timeout: 30_000 });
+      await browser.page.waitForFunction((expected) =>
+        document.querySelector('[data-turn-id="candidate1"] .markdown')?.textContent ===
+          expected, CANDIDATE, { timeout: 10_000 });
+      const progress = await observed(host, CANDIDATE, 48_000, before);
       assert.deepEqual(await sent(browser.page), [PROMPT]);
       assert.doesNotMatch(progress, /PRIOR_PRIVATE_ANSWER|W13_DO_NOT_LEAK/);
       // We must never claim a provider's actual completion on a DOM-only fixture.

@@ -21,7 +21,8 @@ are explicitly declared for the real WebBridge native model.
 
 Assertions span the official model inventory, no-tab consent refusal,
 nonexistent target refusal, user-draft preservation, zero preapproval clicks, exactly one approved
-browser UI click, persisted progressive candidate, absence of old/private
+browser UI click, two distinct provisional Chromium DOM states, eventual
+persisted candidate, absence of old/private
 page text, UNCERTAIN/error terminal (never provider completion), and
 exact-prompt retry after stopping and restarting the official server with
 the same persisted journal. The restart must cause **zero further clicks**.
@@ -36,6 +37,9 @@ ChatGPT inference, delivery acceptance or provider finality. A DOM candidate
 therefore ends as UNCERTAIN and cannot be promoted to an authoritative native
 completion. The public language hook lacks a trusted per-turn Desktop/OS
 session identity and a verified provider completion acknowledgement.
+This test **does not certify incremental native SSE**: the official session
+history can remain empty until the uncertain terminal despite changing DOM.
+The browser may progress while the native session buffers its visible result.
 This release gate stays **NO-GO for claimed end-to-end commercial operation**.
 
 The script does not establish native support for DeepSeek, Gemini, Mistral
