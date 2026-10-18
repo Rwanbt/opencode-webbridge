@@ -15,11 +15,11 @@ const consent = (fn: () => boolean) => ({
 });
 
 const CASES = [
-  { id: 'deepseek', url: 'https://chat.deepseek.com/a/chat/s/mock', key: 'ds1',
+  { id: 'deepseek', url: 'https://chat.deepseek.com/a/chat/s/mock', key: 'ds1', expected: 'DS answer',
     html: '<div data-message-id="ds1"><div class="ds-markdown ds-assistant-message-main-content">DS answer</div></div>' },
-  { id: 'gemini', url: 'https://gemini.google.com/app/mock', key: 'ge1',
+  { id: 'gemini', url: 'https://gemini.google.com/app/mock', key: 'ge1', expected: 'GE answer',
     html: '<model-response data-message-id="ge1"><message-content class="model-response-text"><div class="markdown">GE answer</div></message-content></model-response>' },
-  { id: 'mistral', url: 'https://chat.mistral.ai/chat/mock', key: 'mi1',
+  { id: 'mistral', url: 'https://chat.mistral.ai/chat/mock', key: 'mi1', expected: 'MI answer',
     html: '<div data-message-id="mi1" data-message-author-role="assistant"><div class="markdown">MI answer</div></div>' },
 ] as const;
 
@@ -72,7 +72,7 @@ test('G160 real existing CDP Chromium provider-specific bodies, exact identity a
         item.id, consent(() => allowed));
       try {
         const answer = await observer.sample();
-        assert.deepEqual(answer, { messageKey: item.key, text: item.id.slice(0, 2).toUpperCase() + ' answer' });
+        assert.deepEqual(answer, { messageKey: item.key, text: item.expected });
         const parts: string[] = [];
         let updated = false;
         for await (const fragment of observer.observe('readTurn', item.key, 2)) {
@@ -84,7 +84,7 @@ test('G160 real existing CDP Chromium provider-specific bodies, exact identity a
             await page.locator(selector).evaluate((el) => { el.textContent += ' more'; });
           }
         }
-        assert.deepEqual(parts, [item.id.slice(0, 2).toUpperCase() + ' answer', ' more']);
+        assert.deepEqual(parts, [item.expected, ' more']);
         assert.doesNotMatch(parts.join(''), /PRIVATE_USER|PRIVATE_TOKEN|HIDDEN_REASONING/);
         allowed = false;
         await assert.rejects(observer.sample(), /revoked/);
