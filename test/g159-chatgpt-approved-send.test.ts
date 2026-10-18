@@ -95,6 +95,15 @@ test('G159 existing Linux Chrome CDP: approved one click, denied/revoked/ambiguo
       assert.equal(await page.locator('#prompt-textarea').textContent(), '');
       assert.equal((await readdir(journal)).length, 0);
 
+      await assert.rejects(g159SendChatgptOnce({
+        ...base, turnID: 'turn_userdraft', consent: consent(async () => {
+          await page.locator('#prompt-textarea').fill('USER OWN DRAFT'); return true;
+        }),
+      }), /user draft changed/);
+      assert.equal(await page.locator('#prompt-textarea').textContent(), 'USER OWN DRAFT');
+      assert.deepEqual(await sent(), []);
+      await page.locator('#prompt-textarea').fill('');
+
       const outcome = await g159SendChatgptOnce({
         ...base, turnID: 'turn_approved', consent: consent(),
       });

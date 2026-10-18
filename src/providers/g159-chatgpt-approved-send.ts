@@ -128,6 +128,10 @@ export async function g159SendChatgptOnce(request: G159SendRequest): Promise<{
       await recheck();
       if (await consent.approveSend(action) !== true) return deny('operator declined this send');
       await recheck();
+      if (!await composer.evaluate((element) => {
+        const value = element instanceof HTMLTextAreaElement ? element.value : element.textContent;
+        return !value?.trim();
+      })) return deny('user draft changed during approval');
       if (consent.isStillApproved(action) !== true) return deny('send authorization revoked');
       await g159ConsumeOnce(journalDir, turnID, action);
       consumed = true; // After this point ANY failure is uncertain and cannot be retried.
