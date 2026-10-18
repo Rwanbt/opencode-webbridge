@@ -367,6 +367,30 @@ jobs:
         env:
           G170_NATIVE_CLI: '1'
 
+  g174-official-desktop-boundary:
+    name: G174 official Desktop2.0.32 artifact vs real CLI2.0.32 external package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install only disposable official CLI 2.0.32 dependency
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @opencode/cli@2.0.32
+      - name: Hostile release metadata, wrong tag and missing real binary fail closed
+        run: node --test test/g174-desktop-artifact.test.mjs
+      - name: Exact official tag, pinned packaged Desktop IPC and public binary boundary
+        run: node --test scripts/g174-desktop-artifact.mjs
+        env:
+          G174_LIVE_DESKTOP: '1'
+      - name: Install raw WebBridge tarball and inspect actual CLI plugin/provider surfaces
+        run: node --test scripts/g174-native-plugin-install.mjs
+        env:
+          G174_NATIVE_CLI: '1'
+
   upstream-v2-browser-patch:
     name: Upstream V2 browser capability patch
     runs-on: ubuntu-latest
