@@ -73,6 +73,10 @@ provider UI redesign.
 - **No completion proof.** No provider DOM exposes a trustworthy "finished" signal, so turns end
   `finish: "error"` with `webbridge-terminal-uncertain`. The answer still arrives and is persisted;
   OpenCode merely reports the turn as unfinished. A fabricated `stop` is never emitted.
+- **Deliberate, not an oversight:** emitting an optimistic `stop` after DOM silence was considered
+  and rejected. A false completion silently corrupts agent loops, whereas an honest `UNCERTAIN`
+  only costs a retry decision. The upstream fix (a first-class `uncertain` terminal) is proposed in
+  `docs/proposals/`.
 - **Not production-accepted.** `productionAcceptedStoryIDs` is `[]` (0/54): login/logout, completion
   and error coverage are not demonstrated. Release posture is `NO-GO-PRODUCTION`.
 - **No per-turn native permission.** Authorization is the declared tab, not a native prompt, because
