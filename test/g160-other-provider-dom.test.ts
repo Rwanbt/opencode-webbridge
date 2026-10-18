@@ -31,9 +31,9 @@ async function reservePort() {
   return port;
 }
 
-test('G160 unverified Qwen DOM, wrong IDs, browser origin and missing consent refuse', async () => {
+test('G160 unknown provider, wrong IDs, browser origin and missing consent refuse', async () => {
   await assert.rejects(G160OtherProviderObserver.attach('http://127.0.0.1:9222',
-    'TABABCDEFG', 'qwen', consent(() => true)), /not independently verified/);
+    'TABABCDEFG', 'unknown' as never, consent(() => true)), /not independently verified/);
   await assert.rejects(G160OtherProviderObserver.attach('http://evil.example:9222',
     'TABABCDEFG', 'deepseek', consent(() => true)), /denied/);
   await assert.rejects(G160OtherProviderObserver.attach('http://127.0.0.1:9222',

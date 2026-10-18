@@ -17,6 +17,7 @@ import { g159SendChatgptOnce } from "../providers/g159-chatgpt-approved-send.js"
 import { G160OtherProviderObserver } from "../providers/g160-other-provider-dom.js";
 import { g174SendDeepseekOnce } from "../providers/g174-deepseek-approved-send.js";
 import { g175SendGeminiOnce } from "../providers/g175-gemini-approved-send.js";
+import { g176SendQwenOnce } from "../providers/g176-qwen-approved-send.js";
 import { sendPrimitiveOf } from "../providers/provider-adapters.js";
 import {
   BrowserTurnRefusedError,
@@ -238,6 +239,55 @@ export async function attachDeclaredGeminiTab(
   });
 }
 
+export async function attachDeclaredQwenTab(
+  input: DeclaredTabAttachmentInput,
+): Promise<BrowserTurnAttachment> {
+  const { provider, consent } = input;
+  if (provider.id !== "qwen")
+    throw new WebBridgeSessionStateError(provider.label, "no consented send primitive for this provider");
+  const d = driverFor(input);
+  const attach = () => G160OtherProviderObserver.attach(consent.endpoint, consent.tabID, 'qwen', d.consent2);
+  let observer: G160OtherProviderObserver;
+  try {
+    observer = await attach();
+  } catch {
+    throw new WebBridgeSessionStateError(provider.label,
+      "no attached authorized browser session; the declared local debug endpoint is unreachable, "
+      + `the selected tab is gone, or it does not match ${provider.origin}`);
+  }
+  const read = async (): Promise<BrowserTurnObservation | null> => {
+    const sample = await observer.sample();
+    return sample === null ? null : Object.freeze({ messageKey: sample.messageKey, text: sample.text });
+  };
+  return Object.freeze({
+    identity: observer.scope,
+    baseline: await read(),
+    async send(prompt: string, turnID: string): Promise<void> {
+      d.stillDeclared();
+      const beforeUrl = await d.tabUrl().catch(() => null);
+      try {
+        await g176SendQwenOnce({
+          endpoint: consent.endpoint, tabID: consent.tabID, sessionID: SESSION_LABEL, turnID, prompt,
+          journalDir: consent.journalDir,
+          consent: { ...d.consent2, approveSend: async () => d.stillDeclared(),
+            isStillApproved: () => d.stillDeclared() },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/G176_SEND_UNCERTAIN/.test(message)) throw new BrowserTurnUncertainError(message);
+        throw new BrowserTurnRefusedError(message);
+      }
+      const outcome = await d.waitSameOriginNavigation(beforeUrl);
+      if (outcome === 'navigated') {
+        const next = await d.rebind<G160OtherProviderObserver>(() => observer.close(), attach);
+        if (next) observer = next;
+      }
+    },
+    sample: read,
+    async close(): Promise<void> { await observer.close(); },
+  });
+}
+
 /** Dispatch on the declared provider; every other provider stays unsent. */
 export async function attachDeclaredTab(
   input: DeclaredTabAttachmentInput,
@@ -249,6 +299,7 @@ export async function attachDeclaredTab(
   if (input.provider.id === "chatgpt") return attachDeclaredChatgptTab(input);
   if (input.provider.id === "deepseek") return attachDeclaredDeepseekTab(input);
   if (input.provider.id === "gemini") return attachDeclaredGeminiTab(input);
+  if (input.provider.id === "qwen") return attachDeclaredQwenTab(input);
   throw new WebBridgeSessionStateError(input.provider.label,
     "no consented attachment is wired for this provider yet");
 }

@@ -24,11 +24,16 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
     nodes = [...document.querySelectorAll('model-response')];
   } else if (provider === 'mistral') {
     nodes = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
-  } else return null; // Qwen DOM layout has not been independently confirmed.
+  } else if (provider === 'qwen') {
+    // Observed on the real authenticated Qwen UI (2026-10-18): each assistant
+    // turn is a container with id "chat-response-message-<uuid>".
+    nodes = [...document.querySelectorAll('[id^="chat-response-message-"]')];
+  } else return null;
   if (!nodes.length || nodes.length > 128) return null;
   const root = nodes.at(-1)!;
-  const content = provider === 'deepseek' ? [root] : provider === 'gemini'
-    ? [...root.querySelectorAll('model-response-content')]
+  const content = provider === 'deepseek' ? [root]
+    : provider === 'qwen' ? [...root.querySelectorAll('.qwen-markdown')]
+    : provider === 'gemini' ? [...root.querySelectorAll('model-response-content')]
     : [...root.querySelectorAll('.markdown')];
   if (content.length !== 1) return null; // No broad text fallback: reasoning/user contamination.
   let keyNode: Element | null = root;
@@ -67,7 +72,7 @@ export class G160OtherProviderObserver {
 
   static async attach(endpoint: string, tabID: string, provider: OtherProviderID,
     consent: OtherReadConsent): Promise<G160OtherProviderObserver> {
-    if (!['deepseek', 'gemini', 'mistral'].includes(provider))
+    if (!['deepseek', 'gemini', 'mistral', 'qwen'].includes(provider))
       throw new Error('G160 provider DOM not independently verified');
     if (typeof tabID !== 'string' || !/^[A-Za-z0-9_-]{4,128}$/.test(tabID) ||
         typeof consent?.allowAssistantText !== 'function')
