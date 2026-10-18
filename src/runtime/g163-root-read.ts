@@ -134,7 +134,6 @@ export async function registerG163PersonalRead(ctx: Context, env: NodeJS.Process
             inferenceEnabled: false, terminalStatus, terminalReason,
           }};
         }
-        if (provider === 'qwen') return fail('Qwen answer selectors unverified; discovery only');
         const read = async () => {
           await authorize('webbridge.cdp.assistant.read', [provider, tabID]);
           return true;

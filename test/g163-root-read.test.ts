@@ -68,7 +68,6 @@ test('G163 read requires explicit provider+tab, never opens CDP without both', a
   await registerG163PersonalRead(host.ctx, env());
   await assert.rejects(host.invoke({ action: 'read', provider: 'qwen', tabID: '' }), /explicit/);
   await assert.rejects(host.invoke({ action: 'read', provider: 'evil', tabID: 'ABCD' }), /explicit/);
-  await assert.rejects(host.invoke({ action: 'read', provider: 'qwen', tabID: 'ABCD' }), /unverified/);
   await assert.rejects(host.invoke({ action: 'observe', provider: 'qwen', tabID: 'ABCD',
     messageKey: 'invalid key !' }), /selected message/);
   assert.equal(host.actions.length, 0);
@@ -136,10 +135,10 @@ test('G163 real root registration -> owned Chromium CDP five origins -> ChatGPT 
     assert.equal(probe.metadata.inferenceEnabled, false);
     const qwenProgress = await host.invoke({ action: 'observe', provider: 'qwen',
       tabID: qwenTab.tabID, messageKey: 'synthetic_only', polls: 1 });
-    assert.equal(qwenProgress.metadata.terminalStatus, 'no-go');
-    assert.equal(qwenProgress.metadata.terminalReason, 'qwen-unverified-live-dom');
+    assert.equal(qwenProgress.metadata.terminalStatus, 'uncertain');
+    assert.equal(qwenProgress.metadata.terminalReason, 'no-message');
     await assert.rejects(host.invoke({ action: 'read', provider: 'qwen', tabID: qwenTab.tabID }),
-      /unverified/);
+      /no unambiguous selected assistant message/);
     host.deny();
     await assert.rejects(host.invoke({ action: 'probe', provider: 'qwen', tabID: qwenTab.tabID }),
       /denied/);

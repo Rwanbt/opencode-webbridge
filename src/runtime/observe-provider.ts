@@ -200,22 +200,6 @@ export async function* observeProviderAssistant(input: ObserveRequest): AsyncGen
   const checked = check(input);
   requireLive(checked);
   const provider: CdpProviderID = checked.adapter.id;
-  if (checked.adapter.readPrimitive === "g169-qwen-probe") {
-    const { G169QwenRead } = await import("../providers/g169-qwen-read.js");
-    const consent = gateConsent(checked);
-    const observer = await G169QwenRead.attach(checked.endpoint, checked.tabID, {
-      ...consent,
-      signal: checked.signal,
-      isStillApproved: (tab: CdpTab) => tab.providerID === "qwen" && tab.tabID === checked.tabID &&
-        !checked.signal.aborted && checked.consent.isStillApproved("qwen", checked.tabID),
-    });
-    try {
-      const proof = await observer.probe(); // real target/generation/epoch check
-      if (proof.readStatus !== "NO_GO_UNVERIFIED_LIVE_QWEN_DOM") fail("unexpected Qwen readiness proof");
-      yield { kind: "terminal", status: "no-go", reason: "qwen-unverified-live-dom" };
-    } finally { await observer.close(); }
-    return;
-  }
   if (checked.messageKey === undefined)
     fail("a confirmed assistant message key is required (discover the exact message, confirm it, then observe)");
   const { g175BrowserProgress } = await import("./g175-browser-progress.js");
