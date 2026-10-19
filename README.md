@@ -21,6 +21,10 @@ git clone https://github.com/Rwanbt/opencode-webbridge && cd opencode-webbridge
 npm ci && npm pack                       # -> opencode-webbridge-0.0.0.tgz
 npm install -g ./opencode-webbridge-0.0.0.tgz
 
+#    Developing locally instead? Tests prove the repo, not what OpenCode loads.
+#    Build, deploy into the directory it actually reads, then restart it:
+#      npm run build && npm run deploy:local
+
 # 2. Start a DEDICATED browser profile with a debug port and sign in there
 #    (Chrome/Brave refuses a debug port on the default profile)
 chromium --remote-debugging-port=9222 --user-data-dir=/tmp/webbridge-profile
