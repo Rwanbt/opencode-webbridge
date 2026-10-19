@@ -27,10 +27,16 @@ export interface NativeWebProvider {
   readonly tabEnv: string;
 }
 
-/** Honest IDs: the registered "model" is the user's web session, not a claimed model version. */
+/** ONE provider in the selector, with each backend as its own model: the user
+ *  picks `webbridge/chatgpt-web`, not a provider per website. The IDs stay
+ *  honest either way -- the registered "model" is the user's web session, never
+ *  a claimed model version. */
+export const WEB_PROVIDER_ID = "webbridge";
+export const WEB_PROVIDER_NAME = "WebBridge (personal browser sessions, no API key)";
+
 export const NATIVE_WEB_PROVIDERS: readonly NativeWebProvider[] = WEB_PROVIDER_CATALOG.map((provider) => ({
   id: provider.id,
-  providerID: `webbridge-${provider.id}`,
+  providerID: WEB_PROVIDER_ID,
   modelID: `${provider.id}-web`,
   label: provider.name,
   origin: provider.origin,
@@ -85,32 +91,35 @@ export async function registerNativeWebModels(
     transports.set(provider.id, consented === null ? null : governedNativeTransport(consented));
   }
   const registration = await ctx.provider.transform((editor) => {
-    for (const provider of config.providers) {
-      const providerID = Provider.ID.make(provider.providerID);
-      editor.add({
-        info: {
-          ...Provider.Info.empty(providerID),
-          name: `WebBridge ${provider.label} Web (personal browser session, no API key)`,
-          activation: "enabled",
-          package: `aisdk:${ANCHOR_URL}`,
-          settings: {},
-        },
-        models: [{
-          ...Model.Info.default(providerID, Model.ID.make(provider.modelID)),
-          name: `${provider.label} Web (browser session; observed terminal, non-authoritative)`,
-          // "tools" is advertised only when the bridge is on: without it the
-          // model is text-only and must not pretend it can call anything.
-          capabilities: { tools: config.toolBridge, input: ["text"], output: ["text"] },
-        }],
-      });
-    }
+    const providerID = Provider.ID.make(WEB_PROVIDER_ID);
+    editor.add({
+      info: {
+        ...Provider.Info.empty(providerID),
+        name: WEB_PROVIDER_NAME,
+        activation: "enabled",
+        package: `aisdk:${ANCHOR_URL}`,
+        settings: {},
+      },
+      // One provider, one model per activated backend. Activation stays
+      // individual: a backend that is not listed simply has no model.
+      models: config.providers.map((provider) => ({
+        ...Model.Info.default(providerID, Model.ID.make(provider.modelID)),
+        name: `${provider.label} Web (browser session; observed terminal, non-authoritative)`,
+        // "tools" is advertised only when the bridge is on: without it the
+        // model is text-only and must not pretend it can call anything.
+        capabilities: { tools: config.toolBridge, input: ["text"], output: ["text"] },
+      })),
+    });
   });
+  // One hook per backend, all scoped to the single provider: the MODEL decides
+  // which browser session answers, so the model id is the discriminator.
   const hooks = await Promise.all(config.providers.map((provider) => ctx.aisdk.hook(
     "language",
     (input) => {
-      if (input.model?.providerID !== provider.providerID) return;
+      if (input.model?.providerID !== WEB_PROVIDER_ID) return;
+      if (input.model?.modelID !== provider.modelID) return;
       input.language = createWebLanguageModel({
-        providerID: provider.providerID,
+        providerID: WEB_PROVIDER_ID,
         modelID: provider.modelID,
         providerName: provider.label,
         origin: provider.origin,
@@ -119,7 +128,7 @@ export async function registerNativeWebModels(
         toolBridge: config.toolBridge,
       });
     },
-    { providerID: provider.providerID },
+    { providerID: WEB_PROVIDER_ID },
   )));
   return async () => {
     for (const hook of hooks) await hook.dispose();

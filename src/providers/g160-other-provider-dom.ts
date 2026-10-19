@@ -151,7 +151,7 @@ export class G160OtherProviderObserver {
       if (targets.length > 1) throw new Error('G160 ambiguous CDP target');
       if (targets.length !== 1 || !sameOrigin(targets[0]!.url, tab.url))
         throw new Error('G160 target identity/origin mismatch');
-      page = await CdpPage.open(targets[0]!);
+      page = await CdpPage.open(targets[0]!, { revive: true });
       await discovery.verify(tab);
       const documentEpoch = await readCdpDocumentEpoch(page, tab.url);
       await discovery.verify(tab);

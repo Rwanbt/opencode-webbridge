@@ -4,7 +4,7 @@
  * a disposable OpenCode 2.0.32 profile, then the official CLI proves:
  *  1. dormant by default: no `webbridge-*` provider is registered without the
  *     individual activation list;
- *  2. individually activated: `webbridge-chatgpt/chatgpt-web` is selectable and a
+ *  2. individually activated: `webbridge/chatgpt-web` is selectable and a
  *     session turn is served by the plugin's LanguageModelV3 with exactly ONE
  *     browser turn (the core's auxiliary title call never reaches a browser);
  *  3. an unproven DOM terminal is recorded as an error finish, never a completion;
@@ -31,7 +31,7 @@ import { pathToFileURL } from 'node:url';
 
 const ROOT = process.cwd();
 const PLUGIN_ID = 'opencode.webbridge';
-const PROVIDER = 'webbridge-chatgpt';
+const PROVIDER = 'webbridge';
 const MODEL = 'chatgpt-web';
 const FIXTURE_MARKER = 'WEBBRIDGE_FIXTURE_STREAM_OK';
 const COMPLETION_RAW = 'webbridge-dom-completion-observed';
@@ -236,7 +236,10 @@ test('native web models: activated provider serves one honest fixture turn throu
       WEBBRIDGE_NATIVE_MODEL_FIXTURE_TOKEN: TOKEN,
     });
     const ready = await waitReady(launched, [PROVIDER], [{ providerID: PROVIDER, modelID: MODEL }]);
-    assert.match(ready.providers, /"name":"WebBridge ChatGPT Web \(personal browser session, no API key\)"/);
+    assert.match(ready.providers, /"name":"WebBridge \(personal browser sessions, no API key\)"/);
+    // One provider now serves every backend, so the informative assertion is the
+    // MODEL: the activated backend must be the one listed under it.
+    assert.match(ready.models, /ChatGPT Web/);
     const entry = JSON.parse(ready.models).find((model: any) =>
       model.providerID === PROVIDER && model.modelID === MODEL);
     assert.ok(entry, 'model entry missing from /api/model');
@@ -257,7 +260,7 @@ test('native web models: activated provider serves one honest fixture turn throu
     const log = (await readFile(join(temp, 'fixture-turn.log'), 'utf8')).trim().split('\n');
     assert.equal(log.length, 1,
       'exactly one browser turn expected (auxiliary calls must never reach a browser): ' + log.join(' | '));
-    assert.match(log[0], /^fixture-turn:1:webbridge-chatgpt\/chatgpt-web:prompt-[a-f0-9]{16}:complete$/);
+    assert.match(log[0], /^fixture-turn:1:webbridge\/chatgpt-web:prompt-[a-f0-9]{16}:complete$/);
   } finally {
     launched?.close();
     await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
