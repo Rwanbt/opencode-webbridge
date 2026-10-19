@@ -208,11 +208,14 @@ function pause(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** A CDP session handle with the two methods the transport uses. */
-export interface CdpSession {
+/** A CDP session handle with the two methods the transport uses. Playwright's
+ *  own CDPSession satisfies this too, so a helper can take either. */
+export interface CdpSessionLike {
   send(method: string, params?: object): Promise<unknown>;
   detach(): Promise<void>;
 }
+
+export type CdpSession = CdpSessionLike;
 
 export class CdpPage {
   private sequence = 0;
@@ -271,6 +274,13 @@ export class CdpPage {
 
   url(): string {
     return this.currentUrl;
+  }
+
+  /** Opens the session for a document-epoch read. The driver owns exactly one
+   *  session per attachment, so this is that session, and detaching it is a
+   *  no-op: the attachment's socket outlives every read. */
+  cdpSession(): Promise<CdpSessionLike> {
+    return this.session();
   }
 
   async session(): Promise<CdpSession> {
