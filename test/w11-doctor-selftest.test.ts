@@ -12,6 +12,8 @@ const doctor = await import(pathToFileURL(resolve('bin/webbridge-doctor.mjs')).h
     endpoint: string; journalDir: string;
     tabs: Array<{ id: string; tabID: string | null }>;
   }) => string[];
+  readonly checkAttachable: (endpoint: string) => Promise<
+    { readonly checked: false; readonly reason: string } | { readonly checked: true; readonly pages: number }>;
 };
 const selftest = await import(pathToFileURL(resolve('bin/webbridge-selftest.mjs')).href) as {
   readonly PROVIDER_IDS: readonly string[];
@@ -57,4 +59,13 @@ test('the selftest answer parser keeps only assistant text events', () => {
   ].join('\n');
   assert.deepEqual(selftest.answerFrom(stdout), { answer: '2 + 2 font 4.', events: 4 });
   assert.deepEqual(selftest.answerFrom(''), { answer: '', events: 0 });
+});
+
+test('the doctor reports an unattachable driver instead of staying silent', async () => {
+  // Nothing is listening on port 1, so the check must report itself as not
+  // performed with a reason, never as a silent success.
+  const result = await doctor.checkAttachable('http://127.0.0.1:1');
+  assert.equal(result.checked, false);
+  assert.equal(typeof result.reason, 'string');
+  assert.ok(result.reason.length > 0);
 });
