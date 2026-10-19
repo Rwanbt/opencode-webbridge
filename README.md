@@ -62,10 +62,11 @@ unavailable. Use `--standalone`, or set the variables before that service starts
 official OpenCode session. It does **not** mean production acceptance, and it does not survive a
 provider UI redesign.
 
-Verification requires the declared tab to be on a **conversation**, not on the provider's
-home/new-chat page: a landing page makes both the send and the observation fail in ways that look
-like a broken send. Measured on 2026-10-19, the correlation was exact across all five adapters, so
-the plugin now refuses up front and names the cause instead of recording an uncertain turn.
+Reading an answer requires the declared tab to be on a **conversation**, not on the
+provider's home/new-chat page: on a landing page the observation finds nothing, and
+the turn used to be recorded as uncertain. Sending is different — a send from a
+landing page is what CREATES a conversation (measured: DeepSeek's conversation was
+created that way), so the guard applies to observation only.
 
 ## How it works
 
