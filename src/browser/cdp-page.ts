@@ -76,26 +76,136 @@ export class CdpLocator {
     return this.page.evaluateSource<T>(source);
   }
 
-  async fill(value: string): Promise<void> {
-    if (typeof value !== "string" || value.length > 16_000) throw new Error("CDP locator: invalid fill value");
-    const ok = await this.page.evaluateSource<boolean>("(() => { const els = " + elementsExpression(this.selector) + ";"
-      + " const el = els[0]; if (!el) return false;"
-      + " try { el.focus(); } catch { /* ignore */ }"
-      + " if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) el.value = " + JSON.stringify(value) + ";"
-      + " else el.textContent = " + JSON.stringify(value) + ";"
-      + " el.dispatchEvent(new Event('input', { bubbles: true }));"
-      + " el.dispatchEvent(new Event('change', { bubbles: true }));"
-      + " return true; })()");
-    if (ok !== true) throw new Error("CDP locator: nothing to fill");
+  /** Attribute of the first match, or null. Reads do not auto-wait: the callers
+   *  bracket every read with their own re-verification. */
+  async getAttribute(name: string): Promise<string | null> {
+    if (typeof name !== "string" || !name || name.length > 128)
+      throw new Error("CDP locator: invalid attribute name");
+    const value = await this.page.evaluateSource<unknown>("(() => { const el = ("
+      + elementsExpression(this.selector) + ")[0];"
+      + " return el ? el.getAttribute(" + JSON.stringify(name) + ") : null; })()");
+    return typeof value === "string" ? value : null;
   }
 
-  async click(): Promise<void> {
-    const ok = await this.page.evaluateSource<boolean>("(() => { const els = " + elementsExpression(this.selector) + ";"
-      + " const el = els[0]; if (!el) return false;"
-      + " try { el.scrollIntoView({ block: 'center' }); } catch { /* ignore */ }"
-      + " el.click(); return true; })()");
-    if (ok !== true) throw new Error("CDP locator: nothing to click");
+  async textContent(): Promise<string | null> {
+    const value = await this.page.evaluateSource<unknown>("(() => { const el = ("
+      + elementsExpression(this.selector) + ")[0];"
+      + " return el ? el.textContent : null; })()");
+    return typeof value === "string" ? value : null;
   }
+
+  async isEnabled(): Promise<boolean> {
+    return await this.page.evaluateSource<boolean>("(() => { const el = ("
+      + elementsExpression(this.selector) + ")[0];"
+      + " if (!el) return false;"
+      + " return !el.disabled && el.getAttribute('aria-disabled') !== 'true'; })()");
+  }
+
+  async focus(): Promise<void> {
+    await this.page.evaluateSource<boolean>("(() => { const el = ("
+      + elementsExpression(this.selector) + ")[0];"
+      + " if (!el) return false; try { el.focus(); } catch { /* ignore */ } return true; })()");
+  }
+
+  /** Same contract as Playwright: a bubbling, cancelable event of that type. */
+  async dispatchEvent(type: string): Promise<void> {
+    if (typeof type !== "string" || !type || type.length > 64)
+      throw new Error("CDP locator: invalid event type");
+    const ok = await this.page.evaluateSource<boolean>("(() => { const el = ("
+      + elementsExpression(this.selector) + ")[0];"
+      + " if (!el) return false;"
+      + " el.dispatchEvent(new Event(" + JSON.stringify(type) + ", { bubbles: true, cancelable: true }));"
+      + " return true; })()");
+    if (ok !== true) throw new Error("CDP locator: nothing to dispatch on");
+  }
+
+  /** Actionability state of the first match. `hit` is the receives-events test:
+   *  the element must be the topmost node at its own centre. */
+  private async actionability(): Promise<{
+    present: boolean; visible: boolean; enabled: boolean; hit: boolean;
+    box: { x: number; y: number; w: number; h: number } | null;
+  }> {
+    return this.page.evaluateSource("(() => { const el = (" + elementsExpression(this.selector) + ")[0];"
+      + " if (!el) return { present: false, visible: false, enabled: false, hit: false, box: null };"
+      + " const rect = el.getBoundingClientRect();"
+      + " const visible = !!(el.offsetWidth || el.offsetHeight) && getComputedStyle(el).visibility !== 'hidden';"
+      + " const enabled = !el.disabled && el.getAttribute('aria-disabled') !== 'true';"
+      + " const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);"
+      + " return { present: true, visible, enabled,"
+      + " hit: !!top && (el === top || el.contains(top)),"
+      + " box: { x: rect.x, y: rect.y, w: rect.width, h: rect.height } }; })()");
+  }
+
+  private async scrollIntoView(): Promise<void> {
+    await this.page.evaluateSource<boolean>("(() => { const el = ("
+      + elementsExpression(this.selector) + ")[0];"
+      + " if (!el) return false;"
+      + " try { el.scrollIntoView({ block: 'center' }); } catch { /* ignore */ } return true; })()");
+  }
+
+  /** `fill(value, { timeout })`, like Playwright: waits for the element to be
+   *  present and visible, then sets the value and notifies the framework. */
+  async fill(value: string, options?: { timeout?: number }): Promise<void> {
+    if (typeof value !== "string" || value.length > 16_000) throw new Error("CDP locator: invalid fill value");
+    const timeout = typeof options?.timeout === "number" ? options.timeout : 5000;
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const state = await this.actionability();
+      const expired = Date.now() > deadline;
+      if (state.present && state.visible) {
+        const ok = await this.page.evaluateSource<boolean>("(() => { const els = " + elementsExpression(this.selector) + ";"
+          + " const el = els[0]; if (!el) return false;"
+          + " try { el.focus(); } catch { /* ignore */ }"
+          + " if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) el.value = " + JSON.stringify(value) + ";"
+          + " else el.textContent = " + JSON.stringify(value) + ";"
+          + " el.dispatchEvent(new Event('input', { bubbles: true }));"
+          + " el.dispatchEvent(new Event('change', { bubbles: true }));"
+          + " return true; })()");
+        if (ok === true) return;
+      }
+      if (expired) throw new Error("CDP locator: nothing to fill");
+      await pause(50);
+    }
+  }
+
+  /** `click({ timeout, force, noWaitAfter })`, like Playwright. Actionability is
+   *  enforced unless `force` is set: present, visible, enabled, stable across two
+   *  samples, and receiving events at its own centre. `noWaitAfter` is naturally
+   *  satisfied -- this driver never waits for a navigation after the click. */
+  async click(options?: { timeout?: number; force?: boolean; noWaitAfter?: boolean }): Promise<void> {
+    const timeout = typeof options?.timeout === "number" ? options.timeout : 5000;
+    const force = options?.force === true;
+    const deadline = Date.now() + timeout;
+    if (!force) await this.scrollIntoView();
+    for (;;) {
+      const state = await this.actionability();
+      const expired = Date.now() > deadline;
+      if (state.present && (force || (state.visible && state.enabled && state.hit))) {
+        if (force || await this.stable(state.box)) {
+          const ok = await this.page.evaluateSource<boolean>("(() => { const els = " + elementsExpression(this.selector) + ";"
+            + " const el = els[0]; if (!el) return false;"
+            + " el.click(); return true; })()");
+          if (ok === true) return;
+        }
+      }
+      if (expired) throw new Error("CDP locator: nothing to click");
+      await pause(50);
+    }
+  }
+
+  /** Two bounding-box samples: an element that moves between them is animating,
+   *  and clicking it would land on the wrong pixel. */
+  private async stable(before: { x: number; y: number } | null): Promise<boolean> {
+    if (!before) return false;
+    await pause(30);
+    const after = await this.actionability();
+    return !!after.box && after.box.x === before.x && after.box.y === before.y;
+  }
+}
+
+/** A bounded wait between actionability samples. */
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** A CDP session handle with the two methods the transport uses. */
