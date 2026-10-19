@@ -67,6 +67,10 @@ home/new-chat page: a landing page makes both the send and the observation fail 
 like a broken send. Measured on 2026-10-19, the correlation was exact across all five adapters, so
 the plugin now refuses up front and names the cause instead of recording an uncertain turn.
 
+The optional tool bridge (`WEBBRIDGE_NATIVE_TOOL_BRIDGE=1` / `toolBridge: true`) is
+**experimental and parked**: see [docs/TOOL-BRIDGE-DECISION.fr.md](docs/TOOL-BRIDGE-DECISION.fr.md).
+It is never enabled by default, and without it the models advertise no tool capability at all.
+
 ## How it works
 
 - **Native models through public SDK surfaces only.** `ctx.provider.transform` registers the
