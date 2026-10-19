@@ -31,7 +31,7 @@ webbridge-doctor --journal ~/.webbridge/journal
 # 4. Paste the printed export lines, then run one turn
 #    `--standalone` is REQUIRED: the activation variables are read when the
 #    server starts, and the long-lived background service predates them.
-opencode run --standalone --model webbridge-chatgpt/chatgpt-web "combien font 2 + 2 ?"
+opencode run --standalone --model webbridge/chatgpt-web "combien font 2 + 2 ?"
 
 # 5. Or verify every configured provider with one prompt each
 webbridge-selftest --provider chatgpt --yes
@@ -48,11 +48,11 @@ unavailable. Use `--standalone`, or set the variables before that service starts
 
 | Adapter | Website | Native model | Live conversation |
 | --- | --- | --- | --- |
-| `chatgpt` | https://chatgpt.com | `webbridge-chatgpt/chatgpt-web` | verified (one turn, ends `stop`) |
-| `deepseek` | https://chat.deepseek.com | `webbridge-deepseek/deepseek-web` | verified (one turn, ends `stop`) |
-| `gemini` | https://gemini.google.com | `webbridge-gemini/gemini-web` | verified (one turn, ends `stop`) |
-| `qwen` | https://chat.qwen.ai | `webbridge-qwen/qwen-web` | verified (one turn, ends `stop`) |
-| `mistral` | https://chat.mistral.ai | `webbridge-mistral/mistral-web` | verified (one turn, ends `stop`) |
+| `chatgpt` | https://chatgpt.com | `webbridge/chatgpt-web` | verified (one turn, ends `stop`) |
+| `deepseek` | https://chat.deepseek.com | `webbridge/deepseek-web` | verified (one turn, ends `stop`) |
+| `gemini` | https://gemini.google.com | `webbridge/gemini-web` | verified (one turn, ends `stop`) |
+| `qwen` | https://chat.qwen.ai | `webbridge/qwen-web` | verified (one turn, ends `stop`) |
+| `mistral` | https://chat.mistral.ai | `webbridge/mistral-web` | verified (one turn, ends `stop`) |
 
 "Verified" means one authenticated conversation produced a real, streamed answer persisted in an
 official OpenCode session. It does **not** mean production acceptance, and it does not survive a

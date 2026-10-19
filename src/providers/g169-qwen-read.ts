@@ -80,7 +80,7 @@ export class G169QwenRead {
       const targets = (await cdpTargets(endpoint)).filter((target) => target.id === tabID);
       if (targets.length > 1) return fail('duplicate CDP target ID');
       if (targets.length !== 1 || !sameOrigin(targets[0]!.url, tab.url)) return fail('target origin replaced');
-      page = await CdpPage.open(targets[0]!);
+      page = await CdpPage.open(targets[0]!, { revive: true });
       await discovery.verify(tab);
       const epoch = await readCdpDocumentEpoch(page, tab.url);
       await discovery.verify(tab);

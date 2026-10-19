@@ -62,7 +62,8 @@ test("native model selection is dormant by default and rejects unknown providers
   assert.equal(nativeWebModelConfig({}), null);
   assert.equal(nativeWebModelConfig({ WEBBRIDGE_NATIVE_WEB_MODELS: " , " }), null);
   const config = nativeWebModelConfig({ WEBBRIDGE_NATIVE_WEB_MODELS: "chatgpt, qwen" });
-  assert.deepEqual(config?.providers.map((provider) => provider.providerID), ["webbridge-chatgpt", "webbridge-qwen"]);
+  assert.deepEqual([...new Set(config?.providers.map((provider) => provider.providerID))], ["webbridge"]);
+  assert.deepEqual(config?.providers.map((provider) => provider.modelID), ["chatgpt-web", "qwen-web"]);
   assert.equal(config?.fixture, false);
   assert.throws(() => nativeWebModelConfig({ WEBBRIDGE_NATIVE_WEB_MODELS: "chatgpt,ocdx" }), /unknown provider/);
   assert.equal(NATIVE_WEB_PROVIDERS.length, 5);
