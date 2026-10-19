@@ -6,7 +6,7 @@
  *  transport reads, and expose the same session methods. */
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { CdpPage, cdpTargets, elementsExpression } from '../src/browser/cdp-page.js';
+import { CdpLocator, CdpPage, cdpTargets, elementsExpression } from '../src/browser/cdp-page.js';
 
 const LIVE = process.env.WEBBRIDGE_CDP_LIVE === '1';
 const ENDPOINT = process.env.WEBBRIDGE_CDP_ENDPOINT ?? 'http://127.0.0.1:9222';
@@ -22,6 +22,14 @@ test('the visibility pseudo-class is translated, never passed to CSS', () => {
   assert.ok(visible.includes('offsetWidth'), 'visibility is filtered explicitly');
   assert.throws(() => elementsExpression(':visible'), /only a visibility pseudo-class/);
   assert.throws(() => elementsExpression(''), /invalid selector/);
+});
+
+test('attribute names and event types are validated, never passed through', async () => {
+  const page = Object.create(CdpLocator.prototype) as CdpLocator;
+  await assert.rejects(page.getAttribute(''), /invalid attribute name/);
+  await assert.rejects(page.getAttribute('x'.repeat(129)), /invalid attribute name/);
+  await assert.rejects(page.dispatchEvent(''), /invalid event type/);
+  await assert.rejects(page.dispatchEvent('x'.repeat(65)), /invalid event type/);
 });
 
 test('the driver reads a real tab that Playwright may not enumerate', {
@@ -60,8 +68,32 @@ test('the driver reads a real tab that Playwright may not enumerate', {
       'the frame tree is readable through the session');
     await session.detach();
 
-    // A missing element is reported, never invented.
+    // The locator's element-first evaluate must match Playwright's shape: this is
+    // what the transport uses to read a composer's value or a node's attribute.
+    const composerValue = await page.locator('textarea, [contenteditable="true"]')
+      .evaluate((el) => ((el as HTMLTextAreaElement).value ?? el.textContent) ?? '');
+    assert.equal(typeof composerValue, 'string', 'locator.evaluate receives the ELEMENT first');
+
+    // The rest of the surface the send path relies on, exercised with NO side
+    // effect: reads, the enabled check, and the actionability gate itself.
+    assert.equal(await page.locator('html').getAttribute('data-webbridge-absent'), null,
+      'an absent attribute is null, never an empty string');
+    const html = await page.locator('html').textContent();
+    assert.ok(typeof html === 'string' && html.length > 0, 'textContent reads a real page');
+    assert.equal(await page.locator('html').isEnabled(), true, 'an enabled element reports so');
+
+    // `html` is always present, always the receiver of its own centre point, and
+    // carries no handler: clicking it proves the actionability gate end to end
+    // without ever touching a send control.
+    await page.locator('html').click({ timeout: 2000 });
+
+    // A missing element is reported, never invented -- and the click honours its
+    // deadline before refusing, rather than firing blind.
     assert.equal(await page.locator('#definitely-not-here').count(), 0);
-    await assert.rejects(page.locator('#definitely-not-here').click(), /nothing to click/);
+    assert.equal(await page.locator('#definitely-not-here').evaluate(() => 'never'), undefined);
+    const started = Date.now();
+    await assert.rejects(page.locator('#definitely-not-here').click({ timeout: 300 }), /nothing to click/);
+    assert.ok(Date.now() - started >= 250, 'the click honoured its timeout before refusing');
+    await assert.rejects(page.locator('#definitely-not-here').fill('x', { timeout: 300 }), /nothing to fill/);
   } finally { await page.close(); }
 });
