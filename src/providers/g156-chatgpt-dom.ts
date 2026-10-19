@@ -16,7 +16,13 @@ export interface G156Attachment {
   authorizeRead(): Promise<void>;
 }
 export type G156Tab = { readonly tabID: string; readonly generation: string; readonly url: string };
-export type G156Observation = { readonly messageKey: string; readonly text: string; readonly layout: 'legacy' | 'work' };
+export type G156Observation = {
+  readonly messageKey: string;
+  readonly text: string;
+  readonly layout: 'legacy' | 'work';
+  /** Provider-final evidence: the UI itself finalized THIS answer. */
+  readonly finalized: boolean;
+};
 const MAX_TEXT = 16_000;
 
 export function g156Origin(provider: WebProviderID, raw: string): string {
@@ -62,7 +68,32 @@ export function g156ChatgptReadDOM(): G156Observation | null {
   if (texts.length !== 1) return null; // Ambiguous answer vs reasoning/tool blocks.
   const text = texts[0].textContent ?? '';
   if (!text || text.length > 16_000) return null;
-  return { messageKey: key, layout, text };
+  // Provider-final evidence, observed live (2026-10-18): the finalized answer's
+  // own bar carries "Copier"/"Régénérer la réponse"/"Autres actions". The user
+  // turn's controls ("Copier le message", "Modifier le message", "Partager le
+  // prompt") deliberately do NOT match, so a streaming turn cannot borrow them.
+  const labelOf = (el: Element): string =>
+    el.getAttribute('aria-label') ?? el.getAttribute('title') ?? el.getAttribute('data-testid') ?? '';
+  const FINAL = /^copier$|régénérer la réponse|autres actions|^partager$|lire à voix haute/i;
+  const STOPPING = /stop|arr[êe]ter|abort|interrupt/i;
+  let finalControls = 0;
+  let bar: Element | null = root;
+  for (let i = 0; i < 4 && bar; i++, bar = bar.parentElement) {
+    const labels = new Set<string>();
+    for (const b of bar.querySelectorAll('button,[role="button"]')) {
+      const l = labelOf(b);
+      if (l && FINAL.test(l)) labels.add(l);
+    }
+    finalControls = Math.max(finalControls, labels.size);
+  }
+  let generating = false;
+  let seen = 0;
+  for (const b of document.querySelectorAll('button,[role="button"],[data-testid*="stop" i]')) {
+    if (++seen > 4000) break;
+    if (STOPPING.test(labelOf(b))) { generating = true; break; }
+  }
+  const finalized = finalControls >= 2 && !generating;
+  return { messageKey: key, layout, text, finalized };
 }
 
 export class G156ChatgptObserver {
@@ -99,14 +130,16 @@ export class G156ChatgptObserver {
     const raw = await this.host.evaluate(g156ChatgptReadDOM);
     await this.check(); // Revocation/navigation during evaluate refuses its private result.
     if (raw === null) return null;
-    const parsed = readPlainFields(raw, ['messageKey', 'text', 'layout']);
+    const parsed = readPlainFields(raw, ['messageKey', 'text', 'layout', 'finalized']);
     if (!parsed.ok) throw new Error('DOM snapshot malformed');
     const key = parsed.fields.get('messageKey'), text = parsed.fields.get('text');
     const layout = parsed.fields.get('layout');
+    const finalized = parsed.fields.get('finalized');
     if (typeof key !== 'string' || !/^[\w:.-]{1,256}$/.test(key) ||
         typeof text !== 'string' || !text || text.length > MAX_TEXT ||
+        typeof finalized !== 'boolean' ||
         (layout !== 'legacy' && layout !== 'work')) throw new Error('DOM snapshot invalid');
-    return Object.freeze({ messageKey: key, text, layout });
+    return Object.freeze({ messageKey: key, text, layout, finalized });
   }
 
   /** Observes an EXPLICITLY selected answer; never auto-switches to another turn. */

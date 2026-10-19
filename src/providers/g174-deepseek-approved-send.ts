@@ -11,6 +11,7 @@
  *  only once the composer has content, so it is resolved AFTER the fill.
  */
 import { createHash } from 'node:crypto';
+import { MAX_PROMPT_CHARS } from '../core/prompt-bound.js';
 import { lstat, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type Browser, type CDPSession, type Page } from 'playwright';
@@ -81,7 +82,7 @@ export async function g174SendDeepseekOnce(request: G174SendRequest): Promise<{
 }> {
   const { endpoint, tabID, sessionID, turnID, prompt, journalDir, consent } = request;
   if (!id(tabID) || !id(sessionID) || !id(turnID) ||
-      typeof prompt !== 'string' || !prompt.trim() || prompt.length > 4000 ||
+      typeof prompt !== 'string' || !prompt.trim() || prompt.length > MAX_PROMPT_CHARS ||
       /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(prompt) ||
       typeof consent?.approveSend !== 'function' ||
       typeof consent?.isStillApproved !== 'function')
@@ -89,6 +90,8 @@ export async function g174SendDeepseekOnce(request: G174SendRequest): Promise<{
   const discovery = new ExplicitCdpReadBridge(endpoint, consent);
   let browser: Browser | undefined;
   let consumed = false;
+  /** Only for the best-effort cleanup of the draft WE typed (never a retry). */
+  let selectedPage: Page | undefined;
   try {
     await discovery.open();
     const tab = (await discovery.tabs()).find((t) => t.tabID === tabID);
@@ -110,6 +113,7 @@ export async function g174SendDeepseekOnce(request: G174SendRequest): Promise<{
       } finally { await proof.detach(); }
     }
     if (!page || page.url() !== tab.url) return deny('selected page/URL mismatch');
+    selectedPage = page;
     const selected = page;
     const session = await selected.context().newCDPSession(selected);
     try {
@@ -150,11 +154,24 @@ export async function g174SendDeepseekOnce(request: G174SendRequest): Promise<{
           !await button.isVisible())
         return deny('send control changed after filling');
       // At most ONE user-visible click; never retry on timeout, navigation or lost ACK.
-      await button.click({ timeout: 2000, noWaitAfter: true });
+      // Observed on the real authenticated UI (2026-10-19): the DeepSeek send
+      // control animates, so Playwright's actionability/stability check times out
+      // at 2 s and the click never lands (the turn then settles `send-uncertain`
+      // with 0 delivered fragments). Qwen and Mistral carry the same documented
+      // treatment; the send control itself is unambiguous (exactly one visible
+      // `ds-button--primary` node).
+      await button.click({ timeout: 5000, noWaitAfter: true, force: true });
       return Object.freeze({ status: 'uncertain' as const, turnID });
     } finally { await session.detach().catch(() => {}); }
   } catch (error) {
-    if (consumed) throw new Error('G174_SEND_UNCERTAIN: consumed before UI effect; do not replay');
+    if (consumed) {
+      // A consumed attempt is never replayed. Best effort only: remove the prompt
+      // WE typed when no click landed, so a failed turn never leaves our text in
+      // the user's composer (otherwise every later turn is refused with
+      // "nonempty user draft cannot be replaced"). Cleanup of our own draft.
+      try { if (selectedPage) await selectedPage.locator(COMPOSER).fill('', { timeout: 1000 }); } catch { /* ignore */ }
+      throw new Error('G174_SEND_UNCERTAIN: consumed before UI effect; do not replay');
+    }
     throw error;
   } finally {
     discovery.close();

@@ -61,7 +61,9 @@ test('G157 real CDP existing Chromium ChatGPT DOM read, progressive delta and re
     let readAllowed = true;
     attached = await G157ChatgptCdpObserver.attach(endpoint, selected.tabID,
       consent(() => readAllowed));
-    assert.deepEqual(await attached.sample(), { messageKey: 'response1', text: 'Alpha', layout: 'legacy' });
+    assert.deepEqual(await attached.sample(), {
+      messageKey: 'response1', text: 'Alpha', layout: 'legacy', finalized: false,
+    });
     const fragments: string[] = [];
     let updated = false;
     for await (const event of attached.observe('readTurn', 'response1', 3)) {

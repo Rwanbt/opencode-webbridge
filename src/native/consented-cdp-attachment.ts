@@ -109,9 +109,14 @@ export async function attachDeclaredChatgptTab(
       "no attached authorized browser session; the declared local debug endpoint is unreachable, "
       + `the selected tab is gone, or it does not match ${provider.origin}`);
   }
+  // Provider-final evidence for THIS message only: the completion hook is a
+  // cached verdict from the exact sample the transport just consumed.
+  let finalized: { readonly key: string; readonly value: boolean } | null = null;
   const read = async (): Promise<BrowserTurnObservation | null> => {
     const sample = await observer.sample();
-    return sample === null ? null : Object.freeze({ messageKey: sample.messageKey, text: sample.text });
+    if (sample === null) { finalized = null; return null; }
+    finalized = Object.freeze({ key: sample.messageKey, value: sample.finalized === true });
+    return Object.freeze({ messageKey: sample.messageKey, text: sample.text });
   };
   return Object.freeze({
     identity: observer.scope,
@@ -138,6 +143,11 @@ export async function attachDeclaredChatgptTab(
       }
     },
     sample: read,
+    // Only the provider's OWN finalization of the observed message proves
+    // completion; DOM silence never does. Absent/negative -> the turn stays
+    // uncertain, exactly as before.
+    completion: (observation: BrowserTurnObservation) => finalized !== null
+      && finalized.key === observation.messageKey && finalized.value,
     async close(): Promise<void> { await observer.close(); },
   });
 }
@@ -158,9 +168,14 @@ export async function attachDeclaredDeepseekTab(
       "no attached authorized browser session; the declared local debug endpoint is unreachable, "
       + `the selected tab is gone, or it does not match ${provider.origin}`);
   }
+  // Provider-final evidence for THIS message only: the completion hook is a
+  // cached verdict from the exact sample the transport just consumed.
+  let finalized: { readonly key: string; readonly value: boolean } | null = null;
   const read = async (): Promise<BrowserTurnObservation | null> => {
     const sample = await observer.sample();
-    return sample === null ? null : Object.freeze({ messageKey: sample.messageKey, text: sample.text });
+    if (sample === null) { finalized = null; return null; }
+    finalized = Object.freeze({ key: sample.messageKey, value: sample.finalized === true });
+    return Object.freeze({ messageKey: sample.messageKey, text: sample.text });
   };
   return Object.freeze({
     identity: observer.scope,
@@ -187,6 +202,11 @@ export async function attachDeclaredDeepseekTab(
       }
     },
     sample: read,
+    // Only the provider's OWN finalization of the observed message proves
+    // completion; DOM silence never does. Absent/negative -> the turn stays
+    // uncertain, exactly as before.
+    completion: (observation: BrowserTurnObservation) => finalized !== null
+      && finalized.key === observation.messageKey && finalized.value,
     async close(): Promise<void> { await observer.close(); },
   });
 }
@@ -207,9 +227,14 @@ export async function attachDeclaredGeminiTab(
       "no attached authorized browser session; the declared local debug endpoint is unreachable, "
       + `the selected tab is gone, or it does not match ${provider.origin}`);
   }
+  // Provider-final evidence for THIS message only: the completion hook is a
+  // cached verdict from the exact sample the transport just consumed.
+  let finalized: { readonly key: string; readonly value: boolean } | null = null;
   const read = async (): Promise<BrowserTurnObservation | null> => {
     const sample = await observer.sample();
-    return sample === null ? null : Object.freeze({ messageKey: sample.messageKey, text: sample.text });
+    if (sample === null) { finalized = null; return null; }
+    finalized = Object.freeze({ key: sample.messageKey, value: sample.finalized === true });
+    return Object.freeze({ messageKey: sample.messageKey, text: sample.text });
   };
   return Object.freeze({
     identity: observer.scope,
@@ -236,6 +261,11 @@ export async function attachDeclaredGeminiTab(
       }
     },
     sample: read,
+    // Only the provider's OWN finalization of the observed message proves
+    // completion; DOM silence never does. Absent/negative -> the turn stays
+    // uncertain, exactly as before.
+    completion: (observation: BrowserTurnObservation) => finalized !== null
+      && finalized.key === observation.messageKey && finalized.value,
     async close(): Promise<void> { await observer.close(); },
   });
 }
@@ -256,9 +286,14 @@ export async function attachDeclaredQwenTab(
       "no attached authorized browser session; the declared local debug endpoint is unreachable, "
       + `the selected tab is gone, or it does not match ${provider.origin}`);
   }
+  // Provider-final evidence for THIS message only: the completion hook is a
+  // cached verdict from the exact sample the transport just consumed.
+  let finalized: { readonly key: string; readonly value: boolean } | null = null;
   const read = async (): Promise<BrowserTurnObservation | null> => {
     const sample = await observer.sample();
-    return sample === null ? null : Object.freeze({ messageKey: sample.messageKey, text: sample.text });
+    if (sample === null) { finalized = null; return null; }
+    finalized = Object.freeze({ key: sample.messageKey, value: sample.finalized === true });
+    return Object.freeze({ messageKey: sample.messageKey, text: sample.text });
   };
   return Object.freeze({
     identity: observer.scope,
@@ -285,6 +320,11 @@ export async function attachDeclaredQwenTab(
       }
     },
     sample: read,
+    // Only the provider's OWN finalization of the observed message proves
+    // completion; DOM silence never does. Absent/negative -> the turn stays
+    // uncertain, exactly as before.
+    completion: (observation: BrowserTurnObservation) => finalized !== null
+      && finalized.key === observation.messageKey && finalized.value,
     async close(): Promise<void> { await observer.close(); },
   });
 }
@@ -305,9 +345,14 @@ export async function attachDeclaredMistralTab(
       "no attached authorized browser session; the declared local debug endpoint is unreachable, "
       + `the selected tab is gone, or it does not match ${provider.origin}`);
   }
+  // Provider-final evidence for THIS message only: the completion hook is a
+  // cached verdict from the exact sample the transport just consumed.
+  let finalized: { readonly key: string; readonly value: boolean } | null = null;
   const read = async (): Promise<BrowserTurnObservation | null> => {
     const sample = await observer.sample();
-    return sample === null ? null : Object.freeze({ messageKey: sample.messageKey, text: sample.text });
+    if (sample === null) { finalized = null; return null; }
+    finalized = Object.freeze({ key: sample.messageKey, value: sample.finalized === true });
+    return Object.freeze({ messageKey: sample.messageKey, text: sample.text });
   };
   return Object.freeze({
     identity: observer.scope,
@@ -334,6 +379,11 @@ export async function attachDeclaredMistralTab(
       }
     },
     sample: read,
+    // Only the provider's OWN finalization of the observed message proves
+    // completion; DOM silence never does. Absent/negative -> the turn stays
+    // uncertain, exactly as before.
+    completion: (observation: BrowserTurnObservation) => finalized !== null
+      && finalized.key === observation.messageKey && finalized.value,
     async close(): Promise<void> { await observer.close(); },
   });
 }

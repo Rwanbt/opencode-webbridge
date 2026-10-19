@@ -11,6 +11,7 @@
  *  once the composer has content, so it is resolved AFTER the fill.
  */
 import { createHash } from 'node:crypto';
+import { MAX_PROMPT_CHARS } from '../core/prompt-bound.js';
 import { lstat, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type Browser, type CDPSession, type Page } from 'playwright';
@@ -77,7 +78,7 @@ export async function g176SendQwenOnce(request: G176SendRequest): Promise<{
 }> {
   const { endpoint, tabID, sessionID, turnID, prompt, journalDir, consent } = request;
   if (!id(tabID) || !id(sessionID) || !id(turnID) ||
-      typeof prompt !== 'string' || !prompt.trim() || prompt.length > 4000 ||
+      typeof prompt !== 'string' || !prompt.trim() || prompt.length > MAX_PROMPT_CHARS ||
       /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(prompt) ||
       typeof consent?.approveSend !== 'function' ||
       typeof consent?.isStillApproved !== 'function')

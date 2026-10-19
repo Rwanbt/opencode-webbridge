@@ -78,6 +78,7 @@ export function describeJournalEntry(entry: JournalEntry, now: number): string {
     "key=" + entry.key.slice(0, 16),
     "turn=" + record.turnID.slice(0, 16),
     "state=" + record.state,
+    "reason=" + (record.reason ?? "-"),
     "message=" + (record.messageKey ?? "-"),
     "acked=" + (record.progress === undefined ? "-" : record.progress.seq + "/" + record.progress.length),
     "tab=" + (record.scope === undefined ? "-" : record.scope.tabID + "#" + record.scope.generation),

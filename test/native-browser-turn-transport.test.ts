@@ -108,9 +108,10 @@ test("a streaming answer becomes fragments and an honest uncertain terminal", as
   assert.equal(calls.closes, 1);
   assert.deepEqual(store.snapshot(), [{
     turnID: calls.sends[0]!.turnID, state: "uncertain", at: store.writes.at(-1)!.at,
+    reason: "provider-finality-unverified",
     messageKey: "m2", progress: { seq: 2, length: 5, hash: digest("Hello") },
     scope: { tabID: "tab12345", generation: 1 },
-  }]);
+  }], "the durable record must carry WHY the turn is uncertain");
 });
 
 test("the answer present before the send is never adopted as our answer", async () => {
@@ -317,7 +318,7 @@ test("an oversized prompt is refused before any attach, and the exact bound is a
   });
   await assert.rejects(
     collect(transport, { ...REQUEST, prompt: "x".repeat(MAX_PROMPT_CHARS + 1) }),
-    /prompt exceeds the reviewed bound/);
+    /above the reviewed bound/);
   assert.equal(calls.sends.length, 0, "no browser effect may happen for a refused prompt");
   assert.equal(store.snapshot().length, 0, "a refused prompt leaves no durable attempt");
 
