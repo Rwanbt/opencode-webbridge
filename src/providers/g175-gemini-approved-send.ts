@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto';
 import { MAX_PROMPT_CHARS } from '../core/prompt-bound.js';
 import { lstat, open } from 'node:fs/promises';
 import { join } from 'node:path';
-import { chromium, type Browser, type CDPSession, type Page } from 'playwright';
+import { CdpPage, cdpTargets, type CdpSessionLike } from '../browser/cdp-page.js';
 import { ExplicitCdpReadBridge, type CdpConsent } from '../browser/explicit-cdp-read.js';
 
 export interface G175SendAction {
@@ -69,8 +69,9 @@ export async function g175ConsumeOnce(journalDir: string, turnID: string,
   } finally { await file.close(); }
 }
 
-const frameKey = async (session: CDPSession): Promise<string> => {
-  const result = await session.send('Page.getFrameTree');
+const frameKey = async (session: CdpSessionLike): Promise<string> => {
+  const result = await session.send('Page.getFrameTree') as
+    { frameTree?: { frame?: unknown } };
   return JSON.stringify(result?.frameTree?.frame ?? null);
 };
 
@@ -85,10 +86,10 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
       typeof consent?.isStillApproved !== 'function')
     return deny('invalid request or missing explicit send authorization');
   const discovery = new ExplicitCdpReadBridge(endpoint, consent);
-  let browser: Browser | undefined;
+  let page: CdpPage | undefined;
   let consumed = false;
   /** Only for the best-effort cleanup of the draft WE typed (never a retry). */
-  let selectedPage: Page | undefined;
+  let selectedPage: CdpPage | undefined;
   try {
     await discovery.open();
     const tab = (await discovery.tabs()).find((t) => t.tabID === tabID);
@@ -98,21 +99,17 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
       sessionID, turnID, tabID, generation: tab.generation, url: tab.url,
       providerID: 'gemini', promptSHA256: sha(prompt),
     });
-    browser = await chromium.connectOverCDP(endpoint, { timeout: 5000 });
-    let page: Page | undefined;
-    for (const context of browser.contexts()) for (const candidate of context.pages()) {
-      const proof = await context.newCDPSession(candidate);
-      try {
-        if ((await proof.send('Target.getTargetInfo')).targetInfo?.targetId === tabID) {
-          if (page) return deny('ambiguous duplicate CDP tab');
-          page = candidate;
-        }
-      } finally { await proof.detach(); }
-    }
-    if (!page || page.url() !== tab.url) return deny('selected page/URL mismatch');
+    // Resolve the tab through the inventory it advertises, then speak to THAT
+    // TAB'S OWN endpoint: Playwright's page enumeration is unreliable on Chrome
+    // 155 (see cdp-page.ts), and the tab-local endpoint is authoritative. The
+    // origin is checked BEFORE opening, so a mismatched tab is never connected to.
+    const targets = (await cdpTargets(endpoint)).filter((target) => target.id === tabID);
+    if (targets.length > 1) return deny('ambiguous duplicate CDP tab');
+    if (targets.length !== 1 || targets[0]!.url !== tab.url) return deny('selected page/URL mismatch');
+    page = await CdpPage.open(targets[0]!, { revive: true });
     selectedPage = page;
     const selected = page;
-    const session = await selected.context().newCDPSession(selected);
+    const session = await selected.session();
     try {
       const firstFrame = await frameKey(session);
       const recheck = async () => {
@@ -172,6 +169,6 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
     throw error;
   } finally {
     discovery.close();
-    await browser?.close();
+    await page?.close(); // close OUR socket only; DO NOT close the user's tab
   }
 }
