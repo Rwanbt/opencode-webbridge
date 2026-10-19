@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
+import type { Duplex } from 'node:stream';
 import { CdpLocator, CdpPage, cdpTargets, elementsExpression } from '../src/browser/cdp-page.js';
 
 const LIVE = process.env.WEBBRIDGE_CDP_LIVE === '1';
@@ -39,8 +40,11 @@ test('a tab that never answers is reloaded once, then refused with the cause', a
   // faithful shape of a discarded or frozen tab, which Chrome keeps listed in the
   // inventory while its renderer no longer answers. This is the case the revive
   // path exists for, so it is tested rather than asserted.
+  const sockets = new Set<Duplex>();
   const server = createServer();
   server.on('upgrade', (request, socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
     const key = String(request.headers['sec-websocket-key'] ?? '');
     const accept = createHash('sha1')
       .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
@@ -64,8 +68,11 @@ test('a tab that never answers is reloaded once, then refused with the cause', a
     // retry instead of failing at the first timeout.
     assert.ok(Date.now() - started >= 250, 'the revive retried before giving up');
   } finally {
-    server.closeAllConnections?.();
-    await new Promise<void>((done) => server.close(() => done()));
+    // Destroy the server side and NEVER await the close callback. Awaiting it is
+    // what hung this test -- and, with no runner timeout in CI, hung the whole
+    // suite for half an hour instead of failing. A test must fail, not stall.
+    for (const socket of sockets) socket.destroy();
+    server.close();
   }
 });
 
