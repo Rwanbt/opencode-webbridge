@@ -34,6 +34,45 @@ export function lastUserText(prompt: LanguageModelV3Prompt): string {
   return "";
 }
 
+/** Tool results already produced by OpenCode, in order. A web chat UI has no
+ *  tool channel, so they must be handed back to it as plain text. The SDK shape
+ *  is `{ type: 'tool-result', toolName, output }` — reading it as text would
+ *  silently send nothing, which is why this reads the real field. */
+export function toolResults(prompt: LanguageModelV3Prompt): readonly string[] {
+  if (!Array.isArray(prompt)) return [];
+  const results: string[] = [];
+  for (const message of prompt) {
+    const entry = message as { readonly role?: unknown; readonly content?: unknown } | undefined;
+    if (!entry || entry.role !== "tool" || !Array.isArray(entry.content)) continue;
+    for (const raw of entry.content as readonly Record<string, unknown>[]) {
+      if (!raw || typeof raw !== "object" || raw.type !== "tool-result") continue;
+      const name = typeof raw.toolName === "string" && raw.toolName ? raw.toolName : "tool";
+      const output = raw.output as { readonly type?: unknown; readonly value?: unknown } | undefined;
+      if (!output) continue;
+      if (output.type === "text" && typeof output.value === "string") {
+        results.push("[" + name + "]\n" + output.value);
+      } else if (output.type === "json") {
+        results.push("[" + name + "]\n" + JSON.stringify(output.value));
+      } else {
+        results.push("[" + name + "] execution denied by the user");
+      }
+    }
+  }
+  return results;
+}
+
+/** What the browser actually receives: the tool contract (only when the bridge
+ *  is on), the user's question, then any tool results. Everything here is data
+ *  handed to an untrusted page; it is never treated as an instruction to us. */
+export function browserPrompt(prompt: LanguageModelV3Prompt, contract: string | null): string {
+  const parts: string[] = [];
+  if (contract) parts.push(contract);
+  const question = lastUserText(prompt);
+  if (question) parts.push(question);
+  for (const result of toolResults(prompt)) parts.push("TOOL RESULT:\n" + result);
+  return parts.join("\n\n");
+}
+
 /** Core auxiliary calls (thread title) must never become a browser turn. */
 export function isTitleGeneration(prompt: LanguageModelV3Prompt): boolean {
   return /title generator/i.test(roleText(prompt, "system"));

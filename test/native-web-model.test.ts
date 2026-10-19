@@ -21,6 +21,7 @@ const TOKEN = "a".repeat(64);
 const MODEL_OPTIONS = {
   providerID: "webbridge-chatgpt", modelID: "chatgpt-web",
   providerName: "ChatGPT", origin: "https://chatgpt.com", fixture: false,
+  toolBridge: false,
 };
 
 const call = (text = "explain the failing test"): LanguageModelV3CallOptions => ({
