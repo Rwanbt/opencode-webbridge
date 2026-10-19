@@ -1,6 +1,6 @@
 /** Bounded, read-only DOM bodies for independently observed provider layouts.
  * All selectors are tentative until verified against an authenticated UI. */
-import { chromium, type Browser, type Page } from 'playwright';
+import { CdpPage, cdpTargets } from '../browser/cdp-page.js';
 import { ExplicitCdpReadBridge, type CdpConsent, type CdpTab } from '../browser/explicit-cdp-read.js';
 import { readCdpDocumentEpoch, assertCdpDocumentEpoch, sameOrigin, type CdpDocumentEpoch } from '../browser/cdp-document-epoch.js';
 import { readPlainFields } from '../core/adapter-contract.js';
@@ -121,8 +121,9 @@ export class G160OtherProviderObserver {
   private closed = false;
   private constructor(
     private readonly discovery: ExplicitCdpReadBridge,
-    private readonly connection: Browser,
-    private readonly page: Page,
+    /** The driver owns this attachment's socket: closing it detaches THIS client
+     *  only, and never terminates the browser or the user's tab. */
+    private readonly page: CdpPage,
     private readonly tab: CdpTab,
     private readonly provider: OtherProviderID,
     private readonly consent: OtherReadConsent,
@@ -137,30 +138,26 @@ export class G160OtherProviderObserver {
         typeof consent?.allowAssistantText !== 'function')
       throw new Error('G160 explicit tab and per-read consent required');
     const discovery = new ExplicitCdpReadBridge(endpoint, consent);
-    let connection: Browser | undefined;
+    let page: CdpPage | undefined;
     try {
       await discovery.open();
       const tab = (await discovery.tabs()).find((t) => t.tabID === tabID);
       if (!tab || tab.providerID !== provider) throw new Error('G160 provider/tab mismatch');
-      connection = await chromium.connectOverCDP(endpoint, { timeout: 5000 });
-      let selected: Page | undefined;
-      for (const context of connection.contexts()) for (const page of context.pages()) {
-        const session = await context.newCDPSession(page);
-        try {
-          if ((await session.send('Target.getTargetInfo')).targetInfo?.targetId === tabID) {
-            if (selected) throw new Error('G160 ambiguous CDP target');
-            selected = page;
-          }
-        } finally { await session.detach(); }
-      }
-      if (!selected || !sameOrigin(selected.url(), tab.url)) throw new Error('G160 target identity/origin mismatch');
+      // Resolve the tab through the inventory it advertises, then speak to THAT
+      // TAB'S OWN endpoint: Playwright's page enumeration is unreliable on Chrome
+      // 155 (see cdp-page.ts), and the tab-local endpoint is authoritative. The
+      // origin is checked BEFORE opening, so a mismatched tab is never connected to.
+      const targets = (await cdpTargets(endpoint)).filter((target) => target.id === tabID);
+      if (targets.length > 1) throw new Error('G160 ambiguous CDP target');
+      if (targets.length !== 1 || !sameOrigin(targets[0]!.url, tab.url))
+        throw new Error('G160 target identity/origin mismatch');
+      page = await CdpPage.open(targets[0]!);
       await discovery.verify(tab);
-      const documentEpoch = await readCdpDocumentEpoch(selected, tab.url);
+      const documentEpoch = await readCdpDocumentEpoch(page, tab.url);
       await discovery.verify(tab);
-      return new G160OtherProviderObserver(discovery, connection, selected, tab, provider, consent,
-        documentEpoch);
+      return new G160OtherProviderObserver(discovery, page, tab, provider, consent, documentEpoch);
     } catch (error) {
-      await connection?.close();
+      await page?.close();
       discovery.close();
       throw error;
     }
@@ -228,6 +225,6 @@ export class G160OtherProviderObserver {
     if (this.closed) return;
     this.closed = true;
     this.discovery.close();
-    await this.connection.close(); // CDP detach, NOT the original browser process.
+    await this.page.close(); // close OUR socket only; never the user's tab
   }
 }
