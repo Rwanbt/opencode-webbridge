@@ -21,6 +21,10 @@ git clone https://github.com/Rwanbt/opencode-webbridge && cd opencode-webbridge
 npm ci && npm pack                       # -> opencode-webbridge-0.0.0.tgz
 npm install -g ./opencode-webbridge-0.0.0.tgz
 
+#    Developing locally instead? Tests prove the repo, not what OpenCode loads.
+#    Build, deploy into the directory it actually reads, then restart it:
+#      npm run build && npm run deploy:local
+
 # 2. Start a DEDICATED browser profile with a debug port and sign in there
 #    (Chrome/Brave refuses a debug port on the default profile)
 chromium --remote-debugging-port=9222 --user-data-dir=/tmp/webbridge-profile
@@ -57,6 +61,16 @@ unavailable. Use `--standalone`, or set the variables before that service starts
 "Verified" means one authenticated conversation produced a real, streamed answer persisted in an
 official OpenCode session. It does **not** mean production acceptance, and it does not survive a
 provider UI redesign.
+
+Reading an answer requires the declared tab to be on a **conversation**, not on the
+provider's home/new-chat page: on a landing page the observation finds nothing, and
+the turn used to be recorded as uncertain. Sending is different — a send from a
+landing page is what CREATES a conversation (measured: DeepSeek's conversation was
+created that way), so the guard applies to observation only.
+
+The optional tool bridge (`WEBBRIDGE_NATIVE_TOOL_BRIDGE=1` / `toolBridge: true`) is
+**experimental and parked**: see [docs/TOOL-BRIDGE-DECISION.fr.md](docs/TOOL-BRIDGE-DECISION.fr.md).
+It is never enabled by default, and without it the models advertise no tool capability at all.
 
 ## How it works
 

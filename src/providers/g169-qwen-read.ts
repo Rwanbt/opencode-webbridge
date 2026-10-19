@@ -1,6 +1,7 @@
 /** Qwen browser capability probe; fixture-only DOM adapter until real Qwen UI is independently verified.
  * Never submit prompts, inspect credentials, or declare a commercial provider operational. */
 import { CdpPage, cdpTargets } from '../browser/cdp-page.js';
+import { conversationRequired } from '../browser/tab-page-state.js';
 import { ExplicitCdpReadBridge, type CdpConsent, type CdpTab } from '../browser/explicit-cdp-read.js';
 import { readCdpDocumentEpoch, assertCdpDocumentEpoch, sameOrigin, type CdpDocumentEpoch } from '../browser/cdp-document-epoch.js';
 
@@ -72,6 +73,8 @@ export class G169QwenRead {
       const tab = (await discovery.tabs()).find((item) => item.tabID === tabID);
       if (!tab || tab.providerID !== 'qwen' || new URL(tab.url).origin !== 'https://chat.qwen.ai')
         return fail('exact Qwen target and origin required');
+      const home = conversationRequired('qwen', tab.url);
+      if (home) return fail(home);
       requireLive(consent, tab, false);
       // Resolve the tab through the inventory it advertises, then speak to THAT
       // TAB'S OWN endpoint: Playwright's page enumeration is unreliable on Chrome

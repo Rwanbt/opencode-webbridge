@@ -164,15 +164,26 @@ export class CdpLocator {
       const state = await this.actionability();
       const expired = Date.now() > deadline;
       if (state.present && state.visible) {
-        const ok = await this.page.evaluateSource<boolean>("(() => { const els = " + elementsExpression(this.selector) + ";"
+        const focused = await this.page.evaluateSource<boolean>("(() => { const els = " + elementsExpression(this.selector) + ";"
           + " const el = els[0]; if (!el) return false;"
           + " try { el.focus(); } catch { /* ignore */ }"
-          + " if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) el.value = " + JSON.stringify(value) + ";"
-          + " else el.textContent = " + JSON.stringify(value) + ";"
-          + " el.dispatchEvent(new Event('input', { bubbles: true }));"
-          + " el.dispatchEvent(new Event('change', { bubbles: true }));"
-          + " return true; })()");
-        if (ok === true) return;
+          + " return document.activeElement === el || el.contains(document.activeElement); })()");
+        if (focused === true) {
+          if (value === "") {
+            // Clearing is a different operation: the guard that matters reads the
+            // DOM value back, so an empty DOM is what must be guaranteed here.
+            await this.page.evaluateSource<boolean>("(() => { const el = (" + elementsExpression(this.selector) + ")[0];"
+              + " if (!el) return false;"
+              + " if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) el.value = '';"
+              + " else el.textContent = '';"
+              + " el.dispatchEvent(new Event('input', { bubbles: true }));"
+              + " return true; })()");
+            return;
+          }
+          await this.page.selectAll();
+          await this.page.insertText(value);
+          return;
+        }
       }
       if (expired) throw new Error("CDP locator: nothing to fill");
       await pause(50);
@@ -193,10 +204,16 @@ export class CdpLocator {
       const expired = Date.now() > deadline;
       if (state.present && (force || (state.visible && state.enabled && state.hit))) {
         if (force || await this.stable(state.box)) {
-          const ok = await this.page.evaluateSource<boolean>("(() => { const els = " + elementsExpression(this.selector) + ";"
-            + " const el = els[0]; if (!el) return false;"
-            + " el.click(); return true; })()");
-          if (ok === true) return;
+          const box = state.box;
+          if (!box) {
+            if (expired) throw new Error("CDP locator: nothing to click");
+            await pause(50);
+            continue;
+          }
+          const x = box.x + box.w / 2, y = box.y + box.h / 2;
+          await this.page.dispatchMouse("mousePressed", x, y);
+          await this.page.dispatchMouse("mouseReleased", x, y);
+          return;
         }
       }
       if (expired) throw new Error("CDP locator: nothing to click");
@@ -316,6 +333,36 @@ export class CdpPage {
 
   url(): string {
     return this.currentUrl;
+  }
+
+  /** Types text through the browser's input pipeline instead of rewriting the
+   *  DOM. Frameworks keep their own value tracker: only a real input event
+   *  updates it, and only then does a send button bound to that state become
+   *  live. Measured: Gemini's send control stayed inert while the draft was
+   *  visibly present, so the click was a no-op and the draft was left behind. */
+  async insertText(text: string): Promise<void> {
+    if (typeof text !== "string") throw new Error("CDP page: invalid text");
+    await this.call("Input.insertText", { text });
+  }
+
+  /** Selects the whole content of the focused field, so a following insert
+   *  REPLACES it instead of appending. Measured: without this, repeated fills
+   *  produced "WEBBRIDGE-OKWEBBRIDGE-OK". */
+  async selectAll(): Promise<void> {
+    await this.call("Input.dispatchKeyEvent", {
+      type: "rawKeyDown", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 2,
+    });
+    await this.call("Input.dispatchKeyEvent", {
+      type: "keyUp", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 2,
+    });
+  }
+
+  /** A real pointer event at viewport coordinates. `element.click()` is a DOM
+   *  synthetic event, and frameworks that bind pointer/mouse handlers ignore it:
+   *  measured on Gemini, where the send button appeared live yet a DOM click
+   *  only emptied the composer without sending anything. */
+  async dispatchMouse(type: "mousePressed" | "mouseReleased", x: number, y: number): Promise<void> {
+    await this.call("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
   }
 
   /** Opens the session for a document-epoch read. The driver owns exactly one
