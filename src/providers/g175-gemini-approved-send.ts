@@ -45,7 +45,13 @@ const id = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_-]{8,12
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const deny = (reason: string): never => { throw new Error('G175 send refused: ' + reason); };
 const COMPOSER = 'div[role="textbox"][contenteditable="true"]:visible';
-const SEND = 'button[aria-label="Envoyer un message"]:visible,button[aria-label="Send message"]:visible';
+// Gemini renders TWO different send controls depending on where the prompt area
+// sits. On a new chat it is <button aria-label="Envoyer un message">. On a
+// conversation it is <gem-icon-button class="send-button"> with NO aria-label --
+// measured on the live tab (x=1076, y=638, label null). A label-only selector
+// therefore found nothing on conversations, which is why the send never happened.
+const SEND = 'gem-icon-button.send-button:visible,'
+  + 'button[aria-label="Envoyer un message"]:visible,button[aria-label="Send message"]:visible';
 const CHAT_ORIGIN = 'https://gemini.google.com';
 
 /** Durable consume BEFORE any UI effect. No reset/rollback method exists. */
@@ -144,7 +150,7 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
       const button = selected.locator(SEND);
       if (await composer.count() !== 1 || await button.count() !== 1 || !await button.isVisible())
         return deny('send control changed after filling');
-      await button.click({ timeout: 2000, noWaitAfter: true });
+      await button.clickDom({ timeout: 2000 });
       return Object.freeze({ status: 'uncertain' as const, turnID });
     } finally { await session.detach().catch(() => {}); }
   } catch (error) {
