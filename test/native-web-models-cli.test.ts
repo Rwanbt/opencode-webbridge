@@ -236,7 +236,10 @@ test('native web models: activated provider serves one honest fixture turn throu
       WEBBRIDGE_NATIVE_MODEL_FIXTURE_TOKEN: TOKEN,
     });
     const ready = await waitReady(launched, [PROVIDER], [{ providerID: PROVIDER, modelID: MODEL }]);
-    assert.match(ready.providers, /"name":"WebBridge ChatGPT Web \(personal browser session, no API key\)"/);
+    assert.match(ready.providers, /"name":"WebBridge \(personal browser sessions, no API key\)"/);
+    // One provider now serves every backend, so the informative assertion is the
+    // MODEL: the activated backend must be the one listed under it.
+    assert.match(ready.models, /ChatGPT Web/);
     const entry = JSON.parse(ready.models).find((model: any) =>
       model.providerID === PROVIDER && model.modelID === MODEL);
     assert.ok(entry, 'model entry missing from /api/model');

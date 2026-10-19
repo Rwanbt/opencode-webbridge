@@ -51,7 +51,7 @@ export class G157ChatgptCdpObserver {
       // even connected to.
       if (targets.length !== 1 || !sameOrigin(targets[0]!.url, tab.url))
         throw new Error('G157 target identity/origin mismatch');
-      page = await CdpPage.open(targets[0]!);
+      page = await CdpPage.open(targets[0]!, { revive: true });
       await discovery.verify(tab);
       const documentEpoch = await readCdpDocumentEpoch(page, tab.url);
       await discovery.verify(tab);
