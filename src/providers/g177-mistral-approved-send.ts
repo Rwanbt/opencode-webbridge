@@ -11,6 +11,7 @@
  *  resolved AFTER the fill.
  */
 import { createHash } from 'node:crypto';
+import { MAX_PROMPT_CHARS } from '../core/prompt-bound.js';
 import { lstat, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type Browser, type CDPSession, type Page } from 'playwright';
@@ -77,7 +78,7 @@ export async function g177SendMistralOnce(request: G177SendRequest): Promise<{
 }> {
   const { endpoint, tabID, sessionID, turnID, prompt, journalDir, consent } = request;
   if (!id(tabID) || !id(sessionID) || !id(turnID) ||
-      typeof prompt !== 'string' || !prompt.trim() || prompt.length > 4000 ||
+      typeof prompt !== 'string' || !prompt.trim() || prompt.length > MAX_PROMPT_CHARS ||
       /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(prompt) ||
       typeof consent?.approveSend !== 'function' ||
       typeof consent?.isStillApproved !== 'function')
@@ -153,7 +154,16 @@ export async function g177SendMistralOnce(request: G177SendRequest): Promise<{
   } catch (error) {
     if (consumed) {
       // Best effort only: remove the prompt WE typed when no click landed.
-      try { if (selectedPage) await selectedPage.locator(COMPOSER).fill('', { timeout: 1000 }); } catch { /* ignore */ }
+      // Clear ONLY an untouched copy of the prompt WE just typed. If anyone edited
+      // the composer in the meantime, their text is left alone: a draft is never
+      // silently overwritten.
+      try {
+        if (selectedPage) {
+          const box = selectedPage.locator(COMPOSER);
+          if (await box.evaluate((el) => ((el as HTMLTextAreaElement | HTMLInputElement).value ?? el.textContent ?? '')) === prompt)
+            await box.fill('', { timeout: 1000 });
+        }
+      } catch { /* ignore */ }
       throw new Error('G177_SEND_UNCERTAIN: consumed before UI effect; do not replay');
     }
     throw error;

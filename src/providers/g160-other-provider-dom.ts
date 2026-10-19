@@ -7,7 +7,12 @@ import { readPlainFields } from '../core/adapter-contract.js';
 import { assertOpaqueID, type TurnEvent } from '../core/browser-port.js';
 
 export type OtherProviderID = 'deepseek' | 'gemini' | 'mistral' | 'qwen';
-export type OtherResponse = { readonly messageKey: string; readonly text: string };
+export type OtherResponse = {
+  readonly messageKey: string;
+  readonly text: string;
+  /** Provider-final evidence: the UI itself finalized THIS message. */
+  readonly finalized: boolean;
+};
 export interface OtherReadConsent extends CdpConsent {
   readonly allowAssistantText: (tab: CdpTab) => Promise<boolean>;
 }
@@ -58,7 +63,57 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
   if (!key || !documentKey.test(key)) return null; // No unstable indices/text hashes.
   const text = content[0].textContent ?? '';
   if (!text || text.length > 16_000) return null;
-  return { messageKey: key, text };
+  // Provider-final evidence, observed live (2026-10-18). A finalized answer
+  // exposes its OWN action bar; the user turn's controls ("Copier le message",
+  // "Modifier le message", "Copier le prompt") never match, so a streaming turn
+  // cannot borrow them. DOM silence is never used as proof.
+  const labelOf = (el: Element): string =>
+    el.getAttribute('aria-label') ?? el.getAttribute('title') ?? el.getAttribute('data-testid') ?? '';
+  const FINAL = provider === 'gemini'
+    ? /^copier$|^écouter$|^partager et exporter$|bonne réponse|mauvaise réponse|afficher plus d'options/i
+    : provider === 'qwen'
+      ? /^copier$|^régénérer$|^partager$|bonne réponse|mauvaise réponse|plus d'actions/i
+      : /copy to clipboard|^rewrite$|^like$|^dislike$|lire à voix haute/i; // mistral
+  // Observed on the real authenticated DeepSeek UI (2026-10-19): its finalized
+  // answer DOES expose an action bar, but it is entirely ICON-ONLY — no
+  // aria-label, no title, no data-* — so labels can never identify it. The bar
+  // lives on the turn container (the answer body itself carries no controls) and
+  // is recognised by the first path of its SVG icons.
+  const DEEPSEEK_ICONS = ['M6.14929 4.02032', 'M7.92136 0.349152', 'M8.27868 0.811572',
+    'M7.72451 15.1086', 'M9.31006 14.8936', 'M7.95889 1.52285'];
+  const iconPrefix = (el: Element): string =>
+    el.querySelector('svg path')?.getAttribute('d')?.slice(0, 20) ?? '';
+  const finalToken = (el: Element): string | null => {
+    if (provider === 'deepseek') {
+      const prefix = iconPrefix(el);
+      if (!prefix) return null;
+      return DEEPSEEK_ICONS.find((icon) => prefix.startsWith(icon)) ?? null;
+    }
+    const label = labelOf(el);
+    return label && FINAL.test(label) ? label : null;
+  };
+  const STOPPING = /stop|arr[êe]ter|abort|interrupt/i;
+  // DeepSeek needs more distinct controls than a labelled bar: an icon-only bar
+  // is easier to match by accident, so it must look like a complete action bar.
+  const needed = provider === 'deepseek' ? 4 : 2;
+  let finalControls = 0;
+  let bar: Element | null = root;
+  for (let i = 0; i < 4 && bar; i++, bar = bar.parentElement) {
+    const tokens = new Set<string>();
+    for (const b of bar.querySelectorAll('button,[role="button"]')) {
+      const token = finalToken(b);
+      if (token) tokens.add(token);
+    }
+    finalControls = Math.max(finalControls, tokens.size);
+  }
+  let generating = false;
+  let seen = 0;
+  for (const b of document.querySelectorAll('button,[role="button"],[data-testid*="stop" i]')) {
+    if (++seen > 4000) break;
+    if (STOPPING.test(labelOf(b))) { generating = true; break; }
+  }
+  const finalized = finalControls >= needed && !generating;
+  return { messageKey: key, text, finalized };
 }
 
 /** Uses the ACTUAL existing user-selected Chromium tab and exact DOM reader. */
@@ -132,13 +187,15 @@ export class G160OtherProviderObserver {
     const raw = await this.page.evaluate(g160ReadOtherDOM, this.provider);
     await this.authorize();
     if (raw === null) return null;
-    const parsed = readPlainFields(raw, ['messageKey', 'text']);
+    const parsed = readPlainFields(raw, ['messageKey', 'text', 'finalized']);
     if (!parsed.ok) throw new Error('G160 invalid DOM snapshot');
     const key = parsed.fields.get('messageKey'), text = parsed.fields.get('text');
+    const finalized = parsed.fields.get('finalized');
     if (typeof key !== 'string' || !KEY.test(key) ||
-        typeof text !== 'string' || !text || text.length > 16_000)
+        typeof text !== 'string' || !text || text.length > 16_000 ||
+        typeof finalized !== 'boolean')
       throw new Error('G160 invalid assistant content');
-    return Object.freeze({ messageKey: key, text });
+    return Object.freeze({ messageKey: key, text, finalized });
   }
 
   async *observe(turnID: string, messageKey: string, polls = 12): AsyncGenerator<TurnEvent> {

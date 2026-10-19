@@ -106,10 +106,10 @@ _Five individually gated adapters conforming to a common capability contract_
 | --- | --- | --- | --- | --- |
 | US-E5-01 | P0 | #43 | L1 | adapter-contract tests for all five providers + provider-offline-benches against the common contract |
 | US-E5-02 | P1 | #44 | L1 | ChatGPT: G159 send + G157 observer primitives, #262 durable anti-replay transport, #263 declared-tab consent with CI-pr… |
-| US-E5-03 | P1 | #45 | L1 | DeepSeek offline bench + policy gate; live authorized E2E not performed — non-operational (0/5) |
-| US-E5-04 | P1 | #46 | L1 | Gemini offline bench + policy gate; live authorized E2E not performed — non-operational (0/5) |
-| US-E5-05 | P1 | #47 | L1 | Qwen offline bench + policy gate; live authorized E2E not performed — non-operational (0/5) |
-| US-E5-06 | P1 | #48 | L1 | Mistral/Le Chat offline bench + policy gate; live authorized E2E not performed — non-operational (0/5) |
+| US-E5-03 | P1 | #45 | L1 | DeepSeek offline bench + policy gate; live authenticated turn demonstrated 2026-10-19 (real answer streamed into an off… |
+| US-E5-04 | P1 | #46 | L1 | Gemini offline bench + policy gate; live authenticated turn demonstrated 2026-10-19 (real answer streamed into an offic… |
+| US-E5-05 | P1 | #47 | L1 | Qwen offline bench + policy gate; live authenticated turn demonstrated 2026-10-19 (real answer streamed into an officia… |
+| US-E5-06 | P1 | #48 | L1 | Mistral/Le Chat offline bench + policy gate; live authenticated turn demonstrated 2026-10-19 (real answer streamed into… |
 
 ## E6 — Native user experience and operations
 

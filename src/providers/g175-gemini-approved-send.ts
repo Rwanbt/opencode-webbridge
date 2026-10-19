@@ -12,6 +12,7 @@
  *  content, so it is resolved AFTER the fill.
  */
 import { createHash } from 'node:crypto';
+import { MAX_PROMPT_CHARS } from '../core/prompt-bound.js';
 import { lstat, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type Browser, type CDPSession, type Page } from 'playwright';
@@ -78,7 +79,7 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
 }> {
   const { endpoint, tabID, sessionID, turnID, prompt, journalDir, consent } = request;
   if (!id(tabID) || !id(sessionID) || !id(turnID) ||
-      typeof prompt !== 'string' || !prompt.trim() || prompt.length > 4000 ||
+      typeof prompt !== 'string' || !prompt.trim() || prompt.length > MAX_PROMPT_CHARS ||
       /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(prompt) ||
       typeof consent?.approveSend !== 'function' ||
       typeof consent?.isStillApproved !== 'function')
@@ -86,6 +87,8 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
   const discovery = new ExplicitCdpReadBridge(endpoint, consent);
   let browser: Browser | undefined;
   let consumed = false;
+  /** Only for the best-effort cleanup of the draft WE typed (never a retry). */
+  let selectedPage: Page | undefined;
   try {
     await discovery.open();
     const tab = (await discovery.tabs()).find((t) => t.tabID === tabID);
@@ -107,6 +110,7 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
       } finally { await proof.detach(); }
     }
     if (!page || page.url() !== tab.url) return deny('selected page/URL mismatch');
+    selectedPage = page;
     const selected = page;
     const session = await selected.context().newCDPSession(selected);
     try {
@@ -147,7 +151,24 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
       return Object.freeze({ status: 'uncertain' as const, turnID });
     } finally { await session.detach().catch(() => {}); }
   } catch (error) {
-    if (consumed) throw new Error('G175_SEND_UNCERTAIN: consumed before UI effect; do not replay');
+    if (consumed) {
+      // A consumed attempt is never replayed. Best effort only: remove the prompt
+      // WE typed when no click landed, so a failed or killed turn never leaves our
+      // text in the user's composer (otherwise every later turn is refused with
+      // 'nonempty user draft cannot be replaced'). Observed live 2026-10-19 on
+      // ChatGPT and DeepSeek; Qwen and Mistral already carried this.
+      // Clear ONLY an untouched copy of the prompt WE just typed. If anyone edited
+      // the composer in the meantime, their text is left alone: a draft is never
+      // silently overwritten.
+      try {
+        if (selectedPage) {
+          const box = selectedPage.locator(COMPOSER);
+          if (await box.evaluate((el) => ((el as HTMLTextAreaElement | HTMLInputElement).value ?? el.textContent ?? '')) === prompt)
+            await box.fill('', { timeout: 1000 });
+        }
+      } catch { /* ignore */ }
+      throw new Error('G175_SEND_UNCERTAIN: consumed before UI effect; do not replay');
+    }
     throw error;
   } finally {
     discovery.close();

@@ -9,7 +9,7 @@ import { WEB_PROVIDER_CATALOG } from '../src/catalog.js';
 
 const original: G156Tab = { tabID: 'attachedTab', generation: 'gen1',
   url: 'https://chatgpt.com/c/fixture' };
-const answer: G156Observation = { messageKey: 'msg-1', layout: 'legacy', text: 'Hello' };
+const answer: G156Observation = { messageKey: 'msg-1', layout: 'legacy', text: 'Hello', finalized: false };
 function fixture(initial: G156Observation | null = answer) {
   let tab: G156Tab = { ...original };
   let response = initial;
@@ -125,12 +125,12 @@ test('G156 real Chromium DOM legacy + 2026 Chat/Work emulation, read-only', {
     };
     const observer = await G156ChatgptObserver.attach(attached, 'chatgpt', original);
     assert.deepEqual(await observer.sample(), {
-      messageKey: 'old-1', text: 'Alpha', layout: 'legacy',
+      messageKey: 'old-1', text: 'Alpha', layout: 'legacy', finalized: false,
     });
     html = modern;
     await page.reload();
     assert.deepEqual(await observer.sample(), {
-      messageKey: 'turn1:0:assistant', text: 'New', layout: 'work',
+      messageKey: 'turn1:0:assistant', text: 'New', layout: 'work', finalized: false,
     });
     const parts: string[] = [];
     for await (const event of observer.observe('turnRead', 'turn1:0:assistant', {

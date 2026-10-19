@@ -22,6 +22,7 @@ export const ATTEMPT_FILE_PREFIX = "attempt-";
 const ATTEMPT_KEY = /^[a-f0-9]{64}$/;
 const TURN_ID = /^[a-f0-9]{32}$/;
 const MESSAGE_KEY = /^[\w:.-]{1,256}$/;
+const REASON = /^[a-z][a-z-]{2,63}$/;
 const DIGEST = /^[a-f0-9]{64}$/;
 const SCOPE_ID = /^[A-Za-z0-9_-]{4,128}$/;
 
@@ -60,11 +61,12 @@ function parseRecord(raw: string): AttemptRecord {
   try { parsed = JSON.parse(raw); } catch { throw corrupt(); }
   if (typeof parsed !== "object" || parsed === null) throw corrupt();
   const record = parsed as Record<string, unknown>;
-  const { turnID, state, at, messageKey, progress, scope } = record;
+  const { turnID, state, at, messageKey, progress, scope, reason } = record;
   if (typeof turnID !== "string" || !TURN_ID.test(turnID)) throw corrupt();
   if (state !== "inflight" && state !== "complete" && state !== "uncertain" && state !== "abandoned")
     throw corrupt();
   if (typeof at !== "number" || !Number.isSafeInteger(at) || at < 0) throw corrupt();
+  if (reason !== undefined && (typeof reason !== "string" || !REASON.test(reason))) throw corrupt();
   if (messageKey !== undefined && (typeof messageKey !== "string" || !MESSAGE_KEY.test(messageKey)))
     throw corrupt();
   let cursor: AttemptProgress | undefined;
@@ -94,6 +96,7 @@ function parseRecord(raw: string): AttemptRecord {
     turnID: turnID as string,
     state: state as AttemptRecord["state"],
     at: at as number,
+    ...(reason === undefined ? {} : { reason: reason as string }),
     ...(messageKey === undefined ? {} : { messageKey: messageKey as string }),
     ...(cursor === undefined ? {} : { progress: cursor }),
     ...(target === undefined ? {} : { scope: target }),

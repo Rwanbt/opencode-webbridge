@@ -19,6 +19,7 @@
  * here ever fabricates assistant text.
  */
 import { createHash, randomBytes } from "node:crypto";
+import { MAX_PROMPT_CHARS } from "../core/prompt-bound.js";
 import type {
   NativeTerminalState,
   NativeTurnEvent,
@@ -69,6 +70,9 @@ export interface AttemptRecord {
    *  must never be reconciled again. It claims no completion. */
   readonly state: "inflight" | "complete" | "uncertain" | "abandoned";
   readonly at: number;
+  /** Why the attempt reached its terminal. Persisted so an operator can see the
+   *  exact cause without reproducing the turn (never a guess, never free text). */
+  readonly reason?: string;
   /** Candidate selected by this attempt; absent when none was observed yet. */
   readonly messageKey?: string;
   /** Exact delivered prefix already acknowledged durably. Only the length and a
@@ -121,8 +125,10 @@ const digest = (text: string) => createHash("sha256").update(text).digest("hex")
 const SCOPE_ID = /^[A-Za-z0-9_-]{4,128}$/;
 /** Defence in depth: the same reviewed bound the G159 one-shot submission
  *  enforces. The transport refuses an oversized prompt BEFORE attaching, so an
- *  over-long prompt can never reach a composer or the browser at all. */
-export const MAX_PROMPT_CHARS = 4000;
+ *  over-long prompt can never reach a composer or the browser at all.
+ *  Single-sourced in core so the transport and the five send primitives can
+ *  never drift apart. */
+export { MAX_PROMPT_CHARS };
 const requireScope = (scope: BrowserTurnScope): BrowserTurnScope => {
   if (!scope || typeof scope.tabID !== "string" || !SCOPE_ID.test(scope.tabID) ||
       !Number.isSafeInteger(scope.generation) || scope.generation < 0)
@@ -147,8 +153,9 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
       if (!request || typeof request.prompt !== "string" || !request.prompt.trim())
         throw new Error("WebBridge browser turn: empty prompt refused");
       if (request.prompt.length > MAX_PROMPT_CHARS)
-        throw new Error("WebBridge browser turn: prompt exceeds the reviewed bound ("
-          + MAX_PROMPT_CHARS + " characters)");
+        throw new Error("WebBridge browser turn: prompt is " + request.prompt.length
+          + " characters, above the reviewed bound (" + MAX_PROMPT_CHARS
+          + " characters); shorten the request or the injected context");
       const key = promptKey(request.providerID, request.modelID, request.prompt);
       const existing = await config.store.read(key);
       // Only a provisional attempt (inflight/uncertain) may be reconciled; a
@@ -175,7 +182,8 @@ export function createBrowserTurnTransport(config: BrowserTurnTransportConfig): 
       const settle = async (state: NativeTerminalState, reason: string) => {
         await config.store.write(key, {
           turnID, state: state === "complete" ? "complete" : "uncertain",
-          at: now(), ...(selected === undefined ? {} : { messageKey: selected }),
+          at: now(), reason,
+          ...(selected === undefined ? {} : { messageKey: selected }),
           progress: acked,
           ...(recordedScope === undefined ? {} : { scope: recordedScope }),
         });

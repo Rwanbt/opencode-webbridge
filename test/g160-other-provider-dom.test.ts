@@ -72,7 +72,7 @@ test('G160 real existing CDP Chromium provider-specific bodies, exact identity a
         item.id, consent(() => allowed));
       try {
         const answer = await observer.sample();
-        assert.deepEqual(answer, { messageKey: item.key, text: item.expected });
+        assert.deepEqual(answer, { messageKey: item.key, text: item.expected, finalized: false });
         const parts: string[] = [];
         let updated = false;
         for await (const fragment of observer.observe('readTurn', item.key, 2)) {

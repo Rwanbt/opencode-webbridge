@@ -34,7 +34,7 @@ code, ou retiré du code sans mise à jour de ce document, fait échouer la suit
 | Marqueur | Où | Sens | Action opérateur |
 | --- | --- | --- | --- |
 | `empty prompt refused` | `src/native/browser-turn-transport.ts` | prompt vide | corriger la demande |
-| `prompt exceeds the reviewed bound` | `src/native/browser-turn-transport.ts` | prompt au-delà de `MAX_PROMPT_CHARS` (4000, même borne que G159) | raccourcir le prompt |
+| `above the reviewed bound` | `src/native/browser-turn-transport.ts` | prompt au-delà de `MAX_PROMPT_CHARS` (16 000, borne unique partagée avec les cinq primitives d'envoi) ; le message porte la longueur réelle observée | raccourcir le prompt ou le contexte injecté |
 | `invalid bounded budget` | `src/native/browser-turn-transport.ts` | budgets `polls`/`intervalMs`/`reconcileWindowMs` hors bornes | corriger la configuration |
 | `invalid attached tab identity` | `src/native/browser-turn-transport.ts` | l'onglet attaché ne fournit pas `{tabID, generation}` valides | ne pas contourner : ré-attacher proprement |
 | `governance-` | `src/native/governed-transport.ts` | budget de tours épuisé ou tour déjà en cours (refus explicite, aucun effet navigateur) | attendre la fenêtre ou réduire la cadence |
