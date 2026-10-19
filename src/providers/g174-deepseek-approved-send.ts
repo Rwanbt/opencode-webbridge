@@ -15,6 +15,7 @@ import { MAX_PROMPT_CHARS } from '../core/prompt-bound.js';
 import { lstat, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CdpPage, cdpTargets, type CdpSessionLike } from '../browser/cdp-page.js';
+import { conversationRequired } from '../browser/tab-page-state.js';
 import { ExplicitCdpReadBridge, type CdpConsent } from '../browser/explicit-cdp-read.js';
 
 export interface G174SendAction {
@@ -98,6 +99,8 @@ export async function g174SendDeepseekOnce(request: G174SendRequest): Promise<{
     const tab = (await discovery.tabs()).find((t) => t.tabID === tabID);
     if (!tab || tab.providerID !== 'deepseek' || new URL(tab.url).origin !== CHAT_ORIGIN)
       return deny('selected DeepSeek tab missing');
+    const home = conversationRequired('deepseek', tab.url);
+    if (home) return deny(home);
     const action: G174SendAction = Object.freeze({
       sessionID, turnID, tabID, generation: tab.generation, url: tab.url,
       providerID: 'deepseek', promptSHA256: sha(prompt),

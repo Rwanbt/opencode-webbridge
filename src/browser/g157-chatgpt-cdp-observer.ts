@@ -2,6 +2,7 @@
  * The CDP port is user-declared, NOT Core/OS/Desktop attestation. No input or writes. */
 import { ExplicitCdpReadBridge, type CdpConsent, type CdpTab } from './explicit-cdp-read.js';
 import { CdpPage, cdpTargets } from './cdp-page.js';
+import { conversationRequired } from './tab-page-state.js';
 import { readCdpDocumentEpoch, assertCdpDocumentEpoch, sameOrigin } from './cdp-document-epoch.js';
 import {
   G156ChatgptObserver, g156ChatgptReadDOM, type G156Attachment,
@@ -38,6 +39,8 @@ export class G157ChatgptCdpObserver {
       await discovery.open();
       const tab = (await discovery.tabs()).find((t) => t.tabID === tabID);
       if (!tab || tab.providerID !== 'chatgpt') throw new Error('G157 exact ChatGPT tab not selected');
+      const home = conversationRequired('chatgpt', tab.url);
+      if (home) throw new Error('G157 ' + home);
       // Resolve the tab through the inventory the browser advertises, then speak
       // to THAT TAB'S OWN endpoint. Playwright's connectOverCDP enumerates pages
       // through the browser endpoint, and on Chrome 155 that enumeration is

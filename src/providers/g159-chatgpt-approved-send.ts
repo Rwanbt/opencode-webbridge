@@ -5,6 +5,7 @@ import { MAX_PROMPT_CHARS } from '../core/prompt-bound.js';
 import { lstat, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CdpPage, cdpTargets, type CdpSessionLike } from '../browser/cdp-page.js';
+import { conversationRequired } from '../browser/tab-page-state.js';
 import { ExplicitCdpReadBridge, type CdpConsent, type CdpTab } from '../browser/explicit-cdp-read.js';
 
 export interface G159SendAction {
@@ -100,6 +101,8 @@ export async function g159SendChatgptOnce(request: G159SendRequest): Promise<{
     const tab = (await discovery.tabs()).find((t) => t.tabID === tabID);
     if (!tab || tab.providerID !== 'chatgpt' || new URL(tab.url).origin !== 'https://chatgpt.com')
       return deny('selected ChatGPT tab missing');
+    const home = conversationRequired('chatgpt', tab.url);
+    if (home) return deny(home);
     const action: G159SendAction = Object.freeze({
       sessionID, turnID, tabID, generation: tab.generation, url: tab.url,
       providerID: 'chatgpt', promptSHA256: sha(prompt),
