@@ -60,8 +60,16 @@ test('the driver reads a real tab that Playwright may not enumerate', {
       'the frame tree is readable through the session');
     await session.detach();
 
+    // The locator's element-first evaluate must match Playwright's shape: this is
+    // what the transport uses to read a composer's value or a node's attribute.
+    const composerValue = await page.locator('textarea, [contenteditable="true"]')
+      .evaluate((el) => ((el as HTMLTextAreaElement).value ?? el.textContent) ?? '');
+    assert.equal(typeof composerValue, 'string', 'locator.evaluate receives the ELEMENT first');
+
     // A missing element is reported, never invented.
     assert.equal(await page.locator('#definitely-not-here').count(), 0);
+    assert.equal(await page.locator('#definitely-not-here').evaluate(() => 'never'), undefined);
     await assert.rejects(page.locator('#definitely-not-here').click(), /nothing to click/);
+    await assert.rejects(page.locator('#definitely-not-here').fill('x'), /nothing to fill/);
   } finally { await page.close(); }
 });

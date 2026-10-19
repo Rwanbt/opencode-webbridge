@@ -66,11 +66,13 @@ export class CdpLocator {
     return (await this.count()) > 0;
   }
 
-  /** Runs `fn(element, arg)` on the FIRST match; undefined when nothing matches. */
-  async evaluate<T>(fn: (element: never, arg?: never) => T, arg?: unknown): Promise<T> {
+  /** Runs `fn(element, arg)` on the FIRST match; undefined when nothing matches.
+   *  The element is the FIRST parameter, exactly like Playwright: the transport
+   *  relies on that shape (`(el) => el.value`). */
+  async evaluate<T>(fn: (element: Element, arg?: unknown) => T, arg?: unknown): Promise<T> {
     const source = "(() => { const els = " + elementsExpression(this.selector) + ";"
       + " const el = els[0]; if (!el) return undefined;"
-      + " return (" + fn.toString() + ")(" + JSON.stringify(arg ?? null) + ", " + JSON.stringify(arg ?? null) + "); })()";
+      + " return (" + fn.toString() + ")(el, " + JSON.stringify(arg ?? null) + "); })()";
     return this.page.evaluateSource<T>(source);
   }
 
