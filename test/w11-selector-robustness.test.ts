@@ -20,6 +20,62 @@ const CASES = [
     expect: { messageKey: 'ds-live-1', text: 'DS answer', finalized: false },
   },
   {
+    name: 'deepseek: its ICON-ONLY action bar proves completion (no labels exist to match)',
+    provider: 'deepseek' as const,
+    url: 'https://chat.deepseek.com/a/chat/s/abcdefgh-1234',
+    html: '<div class="turn"><div data-message-id="ds-icon-1">'
+      + '<div class="ds-markdown ds-assistant-message-main-content">DS answer</div></div>'
+      + '<div class="actions">'
+      + '<button><svg><path d="M6.14929 4.02032C7.111"></path></svg></button>'
+      + '<button><svg><path d="M7.92136 0.349152C10.3"></path></svg></button>'
+      + '<button><svg><path d="M8.27868 0.811572C8.81"></path></svg></button>'
+      + '<button><svg><path d="M7.72451 15.1086C7.189"></path></svg></button>'
+      + '</div></div>',
+    expect: { messageKey: 'ds-icon-1', text: 'DS answer', finalized: true },
+  },
+  {
+    name: 'deepseek: three icon controls are below the complete-bar threshold',
+    provider: 'deepseek' as const,
+    url: 'https://chat.deepseek.com/a/chat/s/abcdefgh-1234',
+    html: '<div class="turn"><div data-message-id="ds-icon-2">'
+      + '<div class="ds-markdown ds-assistant-message-main-content">DS answer</div></div>'
+      + '<div class="actions">'
+      + '<button><svg><path d="M6.14929 4.02032C7.111"></path></svg></button>'
+      + '<button><svg><path d="M7.92136 0.349152C10.3"></path></svg></button>'
+      + '<button><svg><path d="M8.27868 0.811572C8.81"></path></svg></button>'
+      + '</div></div>',
+    expect: { messageKey: 'ds-icon-2', text: 'DS answer', finalized: false },
+  },
+  {
+    name: 'deepseek: unrelated icon controls are never mistaken for the action bar',
+    provider: 'deepseek' as const,
+    url: 'https://chat.deepseek.com/a/chat/s/abcdefgh-1234',
+    html: '<div class="turn"><div data-message-id="ds-icon-3">'
+      + '<div class="ds-markdown ds-assistant-message-main-content">DS answer</div></div>'
+      + '<div class="actions">'
+      + '<button><svg><path d="M1.0 1.0C2.0"></path></svg></button>'
+      + '<button><svg><path d="M2.0 2.0C3.0"></path></svg></button>'
+      + '<button><svg><path d="M3.0 3.0C4.0"></path></svg></button>'
+      + '<button><svg><path d="M4.0 4.0C5.0"></path></svg></button>'
+      + '</div></div>',
+    expect: { messageKey: 'ds-icon-3', text: 'DS answer', finalized: false },
+  },
+  {
+    name: 'deepseek: an active stop control vetoes completion even with the icon bar',
+    provider: 'deepseek' as const,
+    url: 'https://chat.deepseek.com/a/chat/s/abcdefgh-1234',
+    html: '<div class="turn"><div data-message-id="ds-icon-4">'
+      + '<div class="ds-markdown ds-assistant-message-main-content">DS answer</div></div>'
+      + '<div class="actions">'
+      + '<button><svg><path d="M6.14929 4.02032C7.111"></path></svg></button>'
+      + '<button><svg><path d="M7.92136 0.349152C10.3"></path></svg></button>'
+      + '<button><svg><path d="M8.27868 0.811572C8.81"></path></svg></button>'
+      + '<button><svg><path d="M7.72451 15.1086C7.189"></path></svg></button>'
+      + '</div></div>'
+      + '<button aria-label="Arrêter"></button>',
+    expect: { messageKey: 'ds-icon-4', text: 'DS answer', finalized: false },
+  },
+  {
     name: 'gemini: model-response pair with its finalized action bar',
     provider: 'gemini' as const,
     url: 'https://gemini.google.com/app/abcdef',
