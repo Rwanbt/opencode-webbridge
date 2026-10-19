@@ -88,6 +88,35 @@ peut réellement s'y attacher. Deux cas fréquents :
 - Les identifiants d'onglet CDP **changent à chaque redémarrage du navigateur** : recopiez ceux que le
   doctor affiche dans `tabs`.
 
+## 2 ter. Déployer une modification locale (build → copie → vérification)
+
+Les tests valident le code du dépôt ; ils ne prouvent rien sur ce qu'OpenCode
+charge réellement. Vérifié le 2026-10-19 : une session entière de changements
+était verte en CI et vérifiée en réel dans le worktree, alors qu'OpenCode
+continuait de charger une copie plus ancienne du dossier `custom-plugins`. Tous
+les tours échouaient avec « Model unavailable » sans que la cause soit visible.
+
+Déployer fait donc partie de livrer :
+
+```sh
+npm run build
+npm run deploy:local
+```
+
+Le script copie `dist/src` vers le dossier réellement chargé, puis **vérifie** quatre
+marqueurs : provider unique, saisie réelle, clic réel, garde d'état de page. Un
+marqueur manquant est une **erreur**, jamais un avertissement.
+
+**Redémarrez ensuite OpenCode** : le serveur en cours garde le module qu'il a
+chargé à son démarrage.
+
+Sans argument, la cible est `%LOCALAPPDATA%\OpenCode\custom-plugins\opencode-webbridge`.
+Pour un autre emplacement :
+
+```sh
+node scripts/deploy-local.mjs --target C:/chemin/vers/opencode-webbridge
+```
+
 ## 3. Configuration minimale
 
 | Variable | Effet | Requis pour |
