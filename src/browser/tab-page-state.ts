@@ -40,13 +40,37 @@ export function tabPageState(url: string): TabPageState {
   return { kind: 'conversation', detail: 'conversation path ' + pathname };
 }
 
-/** The refusal text, or null when the tab is on a conversation. Callers report
+/** The refusal text, or null when the tab holds a conversation. Callers report
  *  rather than throw when they have a refusal channel, and throw otherwise. It
  *  names the provider and the action, so the failure is actionable instead of
- *  mysterious. */
-export function conversationRequired(provider: string, url: string): string | null {
+ *  mysterious.
+ *
+ *  `hasTurns` is not decoration: measured on Gemini, whose conversation URL stays
+ *  '/app' after the first message. A path-only rule therefore refused a tab that
+ *  visibly contained an exchange ("Gemini a dit WEBBRIDGE-OK"). The path is a
+ *  hint, the rendered turns are the evidence. */
+export function conversationRequired(
+  provider: string, url: string, hasTurns = false,
+): string | null {
+  if (hasTurns) return null;
   const state = tabPageState(url);
   if (state.kind === 'conversation') return null;
   return provider + ': ' + state.detail
     + '; open a conversation in that tab, then declare it again';
+}
+
+/** Rendered conversation turns, the evidence the path cannot give. Gemini keeps
+ *  '/app' after the first message, so a URL-only check refused a tab that visibly
+ *  contained an exchange. */
+export async function pageHasTurns(
+  page: { evaluateSource<T>(source: string): Promise<T> },
+): Promise<boolean> {
+  try {
+    const count = await page.evaluateSource<number>(
+      "document.querySelectorAll('model-response, user-query, [data-message-author-role], [data-testid*=\"conversation-turn\"], article').length",
+    );
+    return typeof count === "number" && count > 0;
+  } catch {
+    return false;
+  }
 }
