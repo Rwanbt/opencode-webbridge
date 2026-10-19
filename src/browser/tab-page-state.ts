@@ -1,12 +1,16 @@
-/** A declared tab must be on a CONVERSATION, not on the provider's home or
- *  new-chat page.
+/** A declared tab must be on a CONVERSATION **when an answer is observed**.
  *
- *  Measured across all five providers on 2026-10-19: the two that answered
- *  (ChatGPT, Mistral) had their declared tab on a conversation URL, while the
- *  three that failed (DeepSeek, Gemini, Qwen) were on `/`, `/app` or `/chat`.
- *  The correlation was exact. On a home page the send and the observation both
- *  fail in ways that look like a broken send -- the plugin recorded "uncertain"
- *  and the real cause stayed invisible.
+ *  Measured across all five providers on 2026-10-19: the providers that answered
+ *  had their declared tab on a conversation URL, while the ones that failed were
+ *  on `/`, `/app` or `/chat`. On a home page the observation finds nothing and the
+ *  plugin recorded "uncertain", which hid the real cause.
+ *
+ *  Scope, corrected by later evidence: this guard belongs to OBSERVATION, not to
+ *  sending. DeepSeek's conversation titled "WEBBRIDGE-OK" was created by a send
+ *  issued from the home page -- so a send from a landing page works and is the
+ *  normal way to start a conversation. Refusing it there (the first version of
+ *  this module did) blocked the very action that creates the conversation, and
+ *  made Gemini's new-chat page impossible to use at all.
  *
  *  The rule is deliberately conservative: a path with fewer than two segments is
  *  a landing page. Every conversation URL seen so far has two or more
