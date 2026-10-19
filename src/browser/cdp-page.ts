@@ -30,8 +30,12 @@ const CALL_TIMEOUT_MS = 15000;
  *  never answers. Measured live: exactly that happened, and the attachment hung
  *  for the full call timeout instead of failing fast and naming the cause. */
 const HANDSHAKE_TIMEOUT_MS = 5000;
+/** The retry window after a revive reload, which is slower than a live tab. */
+const REVIVE_TIMEOUT_MS = 12000;
 const UNRESPONSIVE =
   "the tab did not answer; it may be discarded or frozen, and refreshing the page fixes it";
+const UNRESPONSIVE_AFTER_RELOAD =
+  "the tab did not answer even after a reload; it may be closed or still starting up";
 const VISIBLE = /:visible/;
 
 /** The pages the browser advertises, with the endpoint each one owns. */
@@ -249,9 +253,19 @@ export class CdpPage {
     };
   }
 
-  static async open(target: CdpTargetInfo): Promise<CdpPage> {
+  /** Opens a driver on the tab's own endpoint. With `revive`, a tab that does not
+   *  answer the handshake -- the signature of a discarded or frozen tab, which
+   *  Chrome keeps listed in the inventory -- is RELOADED once, then the handshake
+   *  is retried. Reloading is what a person does by hand, it is the only way to
+   *  keep going on the SAME tab, and the conversation survives because the URL
+   *  carries its id. This only ever touches the tab the caller already declared. */
+  static async open(
+    target: CdpTargetInfo, options?: { revive?: boolean; handshakeTimeoutMs?: number },
+  ): Promise<CdpPage> {
     if (!target || typeof target.wsUrl !== "string" || !target.wsUrl.startsWith("ws://"))
       throw new Error("CDP page: a tab-local websocket endpoint is required");
+    const handshakeMs = options?.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
+    const retryMs = options?.handshakeTimeoutMs ?? REVIVE_TIMEOUT_MS;
     const socket = new WebSocket(target.wsUrl);
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("CDP page: connect timeout")), CONNECT_TIMEOUT_MS);
@@ -259,9 +273,30 @@ export class CdpPage {
       socket.onerror = () => { clearTimeout(timer); reject(new Error("CDP page: connect failed")); };
     });
     const page = new CdpPage(socket, target.url);
-    await page.call("Page.enable", {}, HANDSHAKE_TIMEOUT_MS, UNRESPONSIVE);
-    await page.call("Runtime.enable", {}, HANDSHAKE_TIMEOUT_MS, UNRESPONSIVE);
-    return page;
+    try {
+      await page.handshake(handshakeMs, UNRESPONSIVE);
+      return page;
+    } catch (error) {
+      if (options?.revive !== true) { await page.close(); throw error; }
+      await page.reload(handshakeMs);
+      try {
+        await page.handshake(retryMs, UNRESPONSIVE_AFTER_RELOAD);
+        return page;
+      } catch (retry) { await page.close(); throw retry; }
+    }
+  }
+
+  /** The two domains the transport relies on. */
+  private async handshake(timeoutMs: number, hint: string): Promise<void> {
+    await this.call("Page.enable", {}, timeoutMs, hint);
+    await this.call("Runtime.enable", {}, timeoutMs, hint);
+  }
+
+  /** Best effort by design: if the reload cannot be delivered either, the retry
+   *  that follows is what reports the truth. */
+  private async reload(timeoutMs: number): Promise<void> {
+    try { await this.call("Page.reload", {}, timeoutMs, UNRESPONSIVE); }
+    catch { /* the retry decides */ }
   }
 
   private call(method: string, params: object, timeoutMs = CALL_TIMEOUT_MS, hint = ""): Promise<unknown> {

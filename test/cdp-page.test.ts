@@ -6,6 +6,8 @@
  *  transport reads, and expose the same session methods. */
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { CdpLocator, CdpPage, cdpTargets, elementsExpression } from '../src/browser/cdp-page.js';
 
 const LIVE = process.env.WEBBRIDGE_CDP_LIVE === '1';
@@ -30,6 +32,41 @@ test('attribute names and event types are validated, never passed through', asyn
   await assert.rejects(page.getAttribute('x'.repeat(129)), /invalid attribute name/);
   await assert.rejects(page.dispatchEvent(''), /invalid event type/);
   await assert.rejects(page.dispatchEvent('x'.repeat(65)), /invalid event type/);
+});
+
+test('a tab that never answers is reloaded once, then refused with the cause', async () => {
+  // A WebSocket server that completes the handshake and then NEVER replies: the
+  // faithful shape of a discarded or frozen tab, which Chrome keeps listed in the
+  // inventory while its renderer no longer answers. This is the case the revive
+  // path exists for, so it is tested rather than asserted.
+  const server = createServer();
+  server.on('upgrade', (request, socket) => {
+    const key = String(request.headers['sec-websocket-key'] ?? '');
+    const accept = createHash('sha1')
+      .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+    socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n' +
+      'Connection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');
+  });
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const target = {
+      id: 'silent', url: 'https://example.test/',
+      wsUrl: `ws://127.0.0.1:${port}/devtools/page/silent`,
+    };
+    const started = Date.now();
+    await assert.rejects(
+      CdpPage.open(target, { revive: true, handshakeTimeoutMs: 150 }),
+      /after a reload/,
+      'the refusal must say a reload was already attempted',
+    );
+    // First handshake, then the reload, then the retry: the revive really did
+    // retry instead of failing at the first timeout.
+    assert.ok(Date.now() - started >= 250, 'the revive retried before giving up');
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise<void>((done) => server.close(() => done()));
+  }
 });
 
 test('the driver reads a real tab that Playwright may not enumerate', {
