@@ -104,10 +104,11 @@ export async function attachDeclaredChatgptTab(
   let observer: G157ChatgptCdpObserver;
   try {
     observer = await attach();
-  } catch {
+  } catch (error) {
     throw new WebBridgeSessionStateError(provider.label,
       "no attached authorized browser session; the declared local debug endpoint is unreachable, "
-      + `the selected tab is gone, or it does not match ${provider.origin}`);
+      + `the selected tab is gone, or it does not match ${provider.origin} (cause: `
+      + (error instanceof Error ? error.message : String(error)).slice(0, 200) + ")");
   }
   // Provider-final evidence for THIS message only: the completion hook is a
   // cached verdict from the exact sample the transport just consumed.
@@ -163,10 +164,11 @@ export async function attachDeclaredDeepseekTab(
   let observer: G160OtherProviderObserver;
   try {
     observer = await attach();
-  } catch {
+  } catch (error) {
     throw new WebBridgeSessionStateError(provider.label,
       "no attached authorized browser session; the declared local debug endpoint is unreachable, "
-      + `the selected tab is gone, or it does not match ${provider.origin}`);
+      + `the selected tab is gone, or it does not match ${provider.origin} (cause: `
+      + (error instanceof Error ? error.message : String(error)).slice(0, 200) + ")");
   }
   // Provider-final evidence for THIS message only: the completion hook is a
   // cached verdict from the exact sample the transport just consumed.
@@ -222,10 +224,11 @@ export async function attachDeclaredGeminiTab(
   let observer: G160OtherProviderObserver;
   try {
     observer = await attach();
-  } catch {
+  } catch (error) {
     throw new WebBridgeSessionStateError(provider.label,
       "no attached authorized browser session; the declared local debug endpoint is unreachable, "
-      + `the selected tab is gone, or it does not match ${provider.origin}`);
+      + `the selected tab is gone, or it does not match ${provider.origin} (cause: `
+      + (error instanceof Error ? error.message : String(error)).slice(0, 200) + ")");
   }
   // Provider-final evidence for THIS message only: the completion hook is a
   // cached verdict from the exact sample the transport just consumed.
@@ -281,10 +284,11 @@ export async function attachDeclaredQwenTab(
   let observer: G160OtherProviderObserver;
   try {
     observer = await attach();
-  } catch {
+  } catch (error) {
     throw new WebBridgeSessionStateError(provider.label,
       "no attached authorized browser session; the declared local debug endpoint is unreachable, "
-      + `the selected tab is gone, or it does not match ${provider.origin}`);
+      + `the selected tab is gone, or it does not match ${provider.origin} (cause: `
+      + (error instanceof Error ? error.message : String(error)).slice(0, 200) + ")");
   }
   // Provider-final evidence for THIS message only: the completion hook is a
   // cached verdict from the exact sample the transport just consumed.
@@ -340,10 +344,11 @@ export async function attachDeclaredMistralTab(
   let observer: G160OtherProviderObserver;
   try {
     observer = await attach();
-  } catch {
+  } catch (error) {
     throw new WebBridgeSessionStateError(provider.label,
       "no attached authorized browser session; the declared local debug endpoint is unreachable, "
-      + `the selected tab is gone, or it does not match ${provider.origin}`);
+      + `the selected tab is gone, or it does not match ${provider.origin} (cause: `
+      + (error instanceof Error ? error.message : String(error)).slice(0, 200) + ")");
   }
   // Provider-final evidence for THIS message only: the completion hook is a
   // cached verdict from the exact sample the transport just consumed.
