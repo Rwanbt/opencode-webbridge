@@ -1,6 +1,7 @@
 /** Bounded, read-only DOM bodies for independently observed provider layouts.
  * All selectors are tentative until verified against an authenticated UI. */
 import { CdpPage, cdpTargets } from '../browser/cdp-page.js';
+import { conversationRequired } from '../browser/tab-page-state.js';
 import { ExplicitCdpReadBridge, type CdpConsent, type CdpTab } from '../browser/explicit-cdp-read.js';
 import { readCdpDocumentEpoch, assertCdpDocumentEpoch, sameOrigin, type CdpDocumentEpoch } from '../browser/cdp-document-epoch.js';
 import { readPlainFields } from '../core/adapter-contract.js';
@@ -143,6 +144,8 @@ export class G160OtherProviderObserver {
       await discovery.open();
       const tab = (await discovery.tabs()).find((t) => t.tabID === tabID);
       if (!tab || tab.providerID !== provider) throw new Error('G160 provider/tab mismatch');
+      const home = conversationRequired(provider, tab.url);
+      if (home) throw new Error('G160 ' + home);
       // Resolve the tab through the inventory it advertises, then speak to THAT
       // TAB'S OWN endpoint: Playwright's page enumeration is unreliable on Chrome
       // 155 (see cdp-page.ts), and the tab-local endpoint is authoritative. The

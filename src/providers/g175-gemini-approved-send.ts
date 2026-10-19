@@ -16,6 +16,7 @@ import { MAX_PROMPT_CHARS } from '../core/prompt-bound.js';
 import { lstat, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CdpPage, cdpTargets, type CdpSessionLike } from '../browser/cdp-page.js';
+import { conversationRequired } from '../browser/tab-page-state.js';
 import { ExplicitCdpReadBridge, type CdpConsent } from '../browser/explicit-cdp-read.js';
 
 export interface G175SendAction {
@@ -95,6 +96,8 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
     const tab = (await discovery.tabs()).find((t) => t.tabID === tabID);
     if (!tab || tab.providerID !== 'gemini' || new URL(tab.url).origin !== CHAT_ORIGIN)
       return deny('selected Gemini tab missing');
+    const home = conversationRequired('gemini', tab.url);
+    if (home) return deny(home);
     const action: G175SendAction = Object.freeze({
       sessionID, turnID, tabID, generation: tab.generation, url: tab.url,
       providerID: 'gemini', promptSHA256: sha(prompt),
