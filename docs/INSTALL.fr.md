@@ -175,6 +175,28 @@ de conversation. Les gardes locales complètent l'inspection :
 | Ressources temporaires | profils/tarballs de test supprimés par les scripts ; côté utilisateur : supprimer le répertoire du journal si plus aucune tentative n'est en attente | cycle de vie G164 |
 | Restauration | réinstaller l'archive, redéclarer l'onglet ; les sessions OpenCode **persistent** pendant l'opération | cycle de vie G164 (session intacte après désinstallation) |
 
+## 7 bis. Dépannage par symptôme
+
+Ces quatre cas ont été rencontrés en conditions réelles. Chacun a désormais un
+symptôme nommé et une action précise.
+
+| Symptôme | Cause réelle | Action |
+| --- | --- | --- |
+| `provider.no-route` / « Model unavailable: webbridge/… » | Le plugin déployé n'est pas celui du dépôt, ou le serveur n'a pas redémarré | `npm run build && npm run deploy:local`, puis **redémarrer OpenCode** |
+| « … is on the provider home/new-chat page (/app) » | L'onglet déclaré est sur la page d'accueil, pas sur une conversation | Ouvrir une conversation dans cet onglet, puis le redéclarer |
+| Attachement refusé avec « discarded or frozen » | Onglet déchargé par le navigateur | Le pilote le recharge une fois et réessaie ; si l'échec persiste, rafraîchir la page |
+| « the tab did not answer even after a reload » | Onglet fermé ou en cours de démarrage | Rouvrir l'onglet et redéclarer son identifiant |
+
+**Les identifiants d'onglet sont recréés à chaque redémarrage du navigateur.**
+Après une réouverture, la carte `tabs` de la configuration doit être réconciliée
+avec l'inventaire réel (`http://127.0.0.1:9223/json/list`). Un identifiant périmé
+produit « provider/tab mismatch », qui ne dit pas que la cause est un identifiant
+mort.
+
+**Le profil dédié doit être connecté.** Après un redémarrage de la machine, les
+sessions des cinq fournisseurs peuvent être perdues : la reconnexion est manuelle.
+Le plugin ne lit jamais cookies, jetons ni mots de passe.
+
 ## 8. À ne jamais faire
 
 - **copier `dist/` à la main** dans une installation : l'archive npm est la seule voie supportée ;
