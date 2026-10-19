@@ -25,6 +25,13 @@ export interface CdpTargetInfo {
 
 const CONNECT_TIMEOUT_MS = 8000;
 const CALL_TIMEOUT_MS = 15000;
+/** The opening handshake is short on purpose. A discarded or frozen tab (Brave's
+ *  memory saver does this to background tabs) stays listed in the inventory but
+ *  never answers. Measured live: exactly that happened, and the attachment hung
+ *  for the full call timeout instead of failing fast and naming the cause. */
+const HANDSHAKE_TIMEOUT_MS = 5000;
+const UNRESPONSIVE =
+  "the tab did not answer; it may be discarded or frozen, and refreshing the page fixes it";
 const VISIBLE = /:visible/;
 
 /** The pages the browser advertises, with the endpoint each one owns. */
@@ -208,11 +215,14 @@ function pause(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** A CDP session handle with the two methods the transport uses. */
-export interface CdpSession {
+/** A CDP session handle with the two methods the transport uses. Playwright's
+ *  own CDPSession satisfies this too, so a helper can take either. */
+export interface CdpSessionLike {
   send(method: string, params?: object): Promise<unknown>;
   detach(): Promise<void>;
 }
+
+export type CdpSession = CdpSessionLike;
 
 export class CdpPage {
   private sequence = 0;
@@ -249,18 +259,18 @@ export class CdpPage {
       socket.onerror = () => { clearTimeout(timer); reject(new Error("CDP page: connect failed")); };
     });
     const page = new CdpPage(socket, target.url);
-    await page.call("Page.enable", {});
-    await page.call("Runtime.enable", {});
+    await page.call("Page.enable", {}, HANDSHAKE_TIMEOUT_MS, UNRESPONSIVE);
+    await page.call("Runtime.enable", {}, HANDSHAKE_TIMEOUT_MS, UNRESPONSIVE);
     return page;
   }
 
-  private call(method: string, params: object): Promise<unknown> {
+  private call(method: string, params: object, timeoutMs = CALL_TIMEOUT_MS, hint = ""): Promise<unknown> {
     const id = ++this.sequence;
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error("CDP page: " + method + " timed out"));
-      }, CALL_TIMEOUT_MS);
+        reject(new Error("CDP page: " + method + " timed out" + (hint ? " -- " + hint : "")));
+      }, timeoutMs);
       this.pending.set(id, {
         resolve: (value) => { clearTimeout(timer); resolve(value); },
         reject: (error) => { clearTimeout(timer); reject(error); },
@@ -271,6 +281,13 @@ export class CdpPage {
 
   url(): string {
     return this.currentUrl;
+  }
+
+  /** Opens the session for a document-epoch read. The driver owns exactly one
+   *  session per attachment, so this is that session, and detaching it is a
+   *  no-op: the attachment's socket outlives every read. */
+  cdpSession(): Promise<CdpSessionLike> {
+    return this.session();
   }
 
   async session(): Promise<CdpSession> {
