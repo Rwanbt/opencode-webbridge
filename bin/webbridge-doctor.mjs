@@ -38,6 +38,29 @@ export function configLines({ endpoint, journalDir, tabs }) {
 
 const originOf = (raw) => { try { return new URL(raw).origin; } catch { return null; } };
 
+/** Whether the browser instance can actually be driven, not merely listed.
+ *
+ *  Observed live (2026-10-19): `/json/list` can show every provider tab while the
+ *  driver enumerates NONE of them — the tabs exist, but the running instance is
+ *  no longer adoptable, so every turn fails at attach. A fresh instance of the
+ *  same browser and version was enumerable, so this is a property of the running
+ *  instance, not of the plugin. Reporting it here turns an obscure failure into
+ *  an actionable instruction. */
+export async function checkAttachable(endpoint) {
+  let chromium;
+  try { ({ chromium } = await import('playwright')); }
+  catch { return { checked: false, reason: 'driver unavailable' }; }
+  let connection;
+  try { connection = await chromium.connectOverCDP(endpoint, { timeout: 8000 }); }
+  catch (error) { return { checked: false, reason: String(error?.message ?? error).slice(0, 160) }; }
+  try {
+    const contexts = connection.contexts();
+    let pages = 0;
+    for (const context of contexts) pages += context.pages().length;
+    return { checked: true, contexts: contexts.length, pages };
+  } finally { await connection.close().catch(() => {}); }
+}
+
 /** Read-only inventory: maps the live CDP pages onto the five providers. */
 export async function inventory(endpoint) {
   const response = await fetch(endpoint + '/json/list', {
@@ -82,6 +105,7 @@ export async function diagnose({ endpoint = 'http://127.0.0.1:9222', journalDir,
     return { ...provider, tabs: matches.length, tabID: matches.length === 1 ? matches[0].tabID : null };
   });
   result.journal = await journalState(journalDir);
+  result.attachable = await checkAttachable(endpoint);
   if (models) {
     const wanted = String(models).split(',').map((v) => v.trim()).filter(Boolean);
     for (const id of wanted) {
@@ -107,6 +131,15 @@ function render(result, { journalDir }) {
     else lines.push('[fail] journal: must be an existing private directory');
   } else {
     lines.push('[--] journal: not provided (required once a tab is declared)');
+  }
+  const totalTabs = result.providers.reduce((sum, provider) => sum + provider.tabs, 0);
+  if (result.attachable?.checked && result.attachable.pages === 0 && totalTabs > 0) {
+    lines.push('[fail] driver: enumerates 0 pages while the inventory lists ' + totalTabs + ' tab(s)');
+    lines.push('       this browser INSTANCE is not attachable, so every turn would fail at attach.');
+    lines.push('       Close it COMPLETELY and relaunch it (same profile, same debug port):');
+    lines.push('       a fresh instance of the same browser is attachable.');
+  } else if (result.attachable?.checked && result.attachable.pages > 0) {
+    lines.push('[ok] driver: ' + result.attachable.pages + ' page(s) attachable');
   }
   const ready = result.providers.filter((provider) => provider.tabID);
   if (ready.length) {
