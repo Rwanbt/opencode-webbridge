@@ -157,7 +157,16 @@ export async function g176SendQwenOnce(request: G176SendRequest): Promise<{
       // A consumed attempt is never replayed. Best effort only: remove the prompt
       // WE typed when no click landed, so a failed turn never leaves our text in
       // the user's composer. Cleanup of our own draft, not a retry.
-      try { if (selectedPage) await selectedPage.locator(COMPOSER).fill('', { timeout: 1000 }); } catch { /* ignore */ }
+      // Clear ONLY an untouched copy of the prompt WE just typed. If anyone edited
+      // the composer in the meantime, their text is left alone: a draft is never
+      // silently overwritten.
+      try {
+        if (selectedPage) {
+          const box = selectedPage.locator(COMPOSER);
+          if (await box.evaluate((el) => ((el as HTMLTextAreaElement | HTMLInputElement).value ?? el.textContent ?? '')) === prompt)
+            await box.fill('', { timeout: 1000 });
+        }
+      } catch { /* ignore */ }
       throw new Error('G176_SEND_UNCERTAIN: consumed before UI effect; do not replay');
     }
     throw error;
