@@ -13,7 +13,7 @@ import type {
   SharedV3ProviderMetadata,
 } from "@ai-sdk/provider";
 import { browserPrompt, isTitleGeneration, lastUserText, localTitle } from "./prompt.js";
-import { firstFenceIndex, holdBack, parseToolCalls, toolContract } from "./tool-bridge.js";
+import { firstFenceIndex, holdBack, offeredToolNames, parseToolCalls, toolContract } from "./tool-bridge.js";
 import {
   WebBridgeSessionStateError,
   type NativeTerminalState,
@@ -69,12 +69,29 @@ export function createWebLanguageModel(options: WebModelOptions): LanguageModelV
     );
   }
 
+  /** The tools the call actually offers, in the shape the contract renders.
+   *  Parity means these come from the call, never from a hard-coded list: the
+   *  OpenCode mode decides which tools are offered, so a read-only mode cannot
+   *  reach a writing tool through this bridge. */
+  const offered = (call: LanguageModelV3CallOptions) =>
+    Array.isArray(call.tools)
+      ? call.tools
+        .filter((tool) => (tool as { readonly type?: unknown })?.type === "function")
+        .map((tool) => {
+          const entry = tool as { readonly name?: unknown; readonly description?: unknown };
+          return { name: typeof entry.name === "string" ? entry.name : "",
+            description: typeof entry.description === "string" ? entry.description : undefined };
+        })
+        .filter((tool) => tool.name)
+      : [];
+
   const request = (call: LanguageModelV3CallOptions): NativeTurnRequest => ({
     providerID,
     modelID,
-    // The browser sees the tool contract and any tool result OpenCode produced;
-    // without the bridge this is exactly the previous last-user-text behaviour.
-    prompt: browserPrompt(call.prompt, toolBridge ? toolContract() : null),
+    // The browser sees the tool definitions this call offers and any tool result
+    // OpenCode produced; without the bridge this is exactly the previous
+    // last-user-text behaviour.
+    prompt: browserPrompt(call.prompt, toolBridge ? toolContract(offered(call)) : null),
     signal: call.abortSignal ?? new AbortController().signal,
   });
 
@@ -103,7 +120,7 @@ export function createWebLanguageModel(options: WebModelOptions): LanguageModelV
         if (toolBridge && state === "complete") {
           const at = firstFenceIndex(text);
           if (at >= 0) {
-            const parsed = parseToolCalls(text.slice(at));
+            const parsed = parseToolCalls(text.slice(at), offeredToolNames(call.tools));
             if (parsed.calls.length) {
               const prose = text.slice(0, at);
               return {
@@ -208,7 +225,7 @@ export function createWebLanguageModel(options: WebModelOptions): LanguageModelV
             // complete: an effect is never run on an unproven turn. On any other
             // terminal the text (block included) is delivered verbatim.
             if (toolBridge && fence >= 0 && state === "complete") {
-              const parsed = parseToolCalls(acc.slice(fence));
+              const parsed = parseToolCalls(acc.slice(fence), offeredToolNames(call.tools));
               if (parsed.calls.length) {
                 closeText();
                 let index = 0;
