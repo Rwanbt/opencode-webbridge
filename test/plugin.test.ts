@@ -7,9 +7,15 @@ type PluginContext = Parameters<typeof plugin.setup>[0];
 test('V2 plugin module is importable and does not register fake models or tools', async () => {
   assert.equal(plugin.id, 'opencode.webbridge');
   // Until browser/runtime gate passes, setup may not touch any registries.
-  const forbidden = new Proxy({}, {
-    get(_target, key) { throw new Error(`unexpected plugin context access: ${String(key)}`); },
+  // `options` is a documented public field of Plugin.Context (read so activation
+  // can come from the configuration file, which the chat's long-lived server
+  // re-reads at every start); every OTHER access must still fail.
+  const context = new Proxy({ options: {} }, {
+    get(target, key) {
+      if (key === 'options') return (target as { options: unknown }).options;
+      throw new Error(`unexpected plugin context access: ${String(key)}`);
+    },
   });
-  const result = await plugin.setup(forbidden as PluginContext);
+  const result = await plugin.setup(context as PluginContext);
   assert.equal(result, undefined);
 });
