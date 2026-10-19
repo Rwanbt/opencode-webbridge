@@ -1,6 +1,6 @@
 /** Qwen browser capability probe; fixture-only DOM adapter until real Qwen UI is independently verified.
  * Never submit prompts, inspect credentials, or declare a commercial provider operational. */
-import { chromium, type Browser, type Page } from 'playwright';
+import { CdpPage, cdpTargets } from '../browser/cdp-page.js';
 import { ExplicitCdpReadBridge, type CdpConsent, type CdpTab } from '../browser/explicit-cdp-read.js';
 import { readCdpDocumentEpoch, assertCdpDocumentEpoch, sameOrigin, type CdpDocumentEpoch } from '../browser/cdp-document-epoch.js';
 
@@ -50,8 +50,9 @@ export class G169QwenRead {
   private closed = false;
   private constructor(
     private readonly discovery: ExplicitCdpReadBridge,
-    private readonly browser: Browser,
-    private readonly page: Page,
+    /** The driver owns this attachment's socket: closing it detaches THIS client
+     *  only, and never terminates the browser or the user's tab. */
+    private readonly page: CdpPage,
     private readonly tab: CdpTab,
     private readonly epoch: CdpDocumentEpoch,
     private readonly consent: G169Consent,
@@ -64,7 +65,7 @@ export class G169QwenRead {
         typeof consent?.isStillApproved !== 'function' || !consent?.signal)
       return fail('explicit tab, per-read consent and cancellation signal required');
     const discovery = new ExplicitCdpReadBridge(endpoint, consent);
-    let browser: Browser | undefined;
+    let page: CdpPage | undefined;
     try {
       if (consent.signal.aborted) return fail('caller cancelled before CDP discovery');
       await discovery.open();
@@ -72,25 +73,21 @@ export class G169QwenRead {
       if (!tab || tab.providerID !== 'qwen' || new URL(tab.url).origin !== 'https://chat.qwen.ai')
         return fail('exact Qwen target and origin required');
       requireLive(consent, tab, false);
-      browser = await chromium.connectOverCDP(endpoint, { timeout: 5000 });
-      let selected: Page | undefined;
-      for (const context of browser.contexts()) for (const candidate of context.pages()) {
-        const probe = await context.newCDPSession(candidate);
-        try {
-          if ((await probe.send('Target.getTargetInfo')).targetInfo?.targetId === tabID) {
-            if (selected) return fail('duplicate CDP target ID');
-            selected = candidate;
-          }
-        } finally { await probe.detach(); }
-      }
-      if (!selected || !sameOrigin(selected.url(), tab.url)) return fail('target origin replaced');
+      // Resolve the tab through the inventory it advertises, then speak to THAT
+      // TAB'S OWN endpoint: Playwright's page enumeration is unreliable on Chrome
+      // 155 (see cdp-page.ts), and the tab-local endpoint is authoritative. The
+      // origin is checked BEFORE opening, so a mismatched tab is never connected to.
+      const targets = (await cdpTargets(endpoint)).filter((target) => target.id === tabID);
+      if (targets.length > 1) return fail('duplicate CDP target ID');
+      if (targets.length !== 1 || !sameOrigin(targets[0]!.url, tab.url)) return fail('target origin replaced');
+      page = await CdpPage.open(targets[0]!);
       await discovery.verify(tab);
-      const epoch = await readCdpDocumentEpoch(selected, tab.url);
+      const epoch = await readCdpDocumentEpoch(page, tab.url);
       await discovery.verify(tab);
       requireLive(consent, tab, false);
-      return new G169QwenRead(discovery, browser, selected, tab, epoch, consent);
+      return new G169QwenRead(discovery, page, tab, epoch, consent);
     } catch (error) {
-      await browser?.close().catch(() => {});
+      await page?.close().catch(() => {});
       discovery.close();
       throw error;
     }
@@ -135,6 +132,6 @@ export class G169QwenRead {
     if (this.closed) return;
     this.closed = true;
     this.discovery.close();
-    await this.browser.close(); // Detach CDP connection only; user's Chromium keeps running.
+    await this.page.close(); // close OUR socket only; user's Chromium keeps running
   }
 }
