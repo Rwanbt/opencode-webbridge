@@ -141,9 +141,11 @@ test('G159 existing Linux Chrome CDP: approved one click, denied/revoked/ambiguo
       await assert.rejects(g159SendChatgptOnce({
         ...base, turnID: 'turn_revoked', consent: consent(),
       }), /already consumed|nonempty user draft/);
-      // The revocation leaves a draft; never silently overwrite it.
-      assert.equal(await page.locator('#prompt-textarea').textContent(), base.prompt);
-      await page.locator('#prompt-textarea').fill('');
+      // A post-consumption refusal removes ONLY the untouched prompt WE typed, so a
+      // failed turn never blocks the next one. A draft is still never silently
+      // overwritten: the pre-fill blank check refuses another author's text (above),
+      // and the cleanup compares the composer against our own prompt before clearing.
+      assert.equal(await page.locator('#prompt-textarea').textContent(), '');
 
       // Reload to EXACTLY the same URL during approval: only CDP loaderId changes.
       await assert.rejects(g159SendChatgptOnce({

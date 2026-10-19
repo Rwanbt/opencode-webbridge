@@ -164,7 +164,16 @@ export async function g159SendChatgptOnce(request: G159SendRequest): Promise<{
       // text in the user's composer (otherwise every later turn is refused with
       // 'nonempty user draft cannot be replaced'). Observed live 2026-10-19 on
       // ChatGPT and DeepSeek; Qwen and Mistral already carried this.
-      try { if (selectedPage) await selectedPage.locator(COMPOSER).fill('', { timeout: 1000 }); } catch { /* ignore */ }
+      // Clear ONLY an untouched copy of the prompt WE just typed. If anyone edited
+      // the composer in the meantime, their text is left alone: a draft is never
+      // silently overwritten.
+      try {
+        if (selectedPage) {
+          const box = selectedPage.locator(COMPOSER);
+          if (await box.evaluate((el) => ((el as HTMLTextAreaElement | HTMLInputElement).value ?? el.textContent ?? '')) === prompt)
+            await box.fill('', { timeout: 1000 });
+        }
+      } catch { /* ignore */ }
       throw new Error('G159_SEND_UNCERTAIN: consumed before UI effect; do not replay');
     }
     throw error;
