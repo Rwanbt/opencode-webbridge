@@ -15,6 +15,7 @@ import { fixtureTransport } from "./fixture-transport.js";
 import { governedNativeTransport } from "./governed-transport.js";
 import type { NativeTurnTransport } from "./turn-transport.js";
 import { createWebLanguageModel } from "./web-model.js";
+import { toolBridgeEnabled } from "./tool-bridge.js";
 
 export interface NativeWebProvider {
   readonly id: WebProviderID;
@@ -42,6 +43,8 @@ export const ANCHOR_URL = new URL("./provider-anchor.js", import.meta.url).href;
 export interface NativeWebModelConfig {
   readonly providers: readonly NativeWebProvider[];
   readonly fixture: boolean;
+  /** Opt-in read-only tool bridge (text -> tool-call). */
+  readonly toolBridge: boolean;
 }
 
 /** Individual activation list; unknown names fail loudly instead of being ignored. */
@@ -58,7 +61,8 @@ export function nativeWebModelConfig(env: NodeJS.ProcessEnv): NativeWebModelConf
     }
     providers.push(provider);
   }
-  return { providers, fixture: env.WEBBRIDGE_NATIVE_MODEL_FIXTURE === "1" };
+  return { providers, fixture: env.WEBBRIDGE_NATIVE_MODEL_FIXTURE === "1",
+    toolBridge: toolBridgeEnabled(env) };
 }
 
 export async function registerNativeWebModels(
@@ -94,7 +98,9 @@ export async function registerNativeWebModels(
         models: [{
           ...Model.Info.default(providerID, Model.ID.make(provider.modelID)),
           name: `${provider.label} Web (browser session; observed terminal, non-authoritative)`,
-          capabilities: { tools: false, input: ["text"], output: ["text"] },
+          // "tools" is advertised only when the bridge is on: without it the
+          // model is text-only and must not pretend it can call anything.
+          capabilities: { tools: config.toolBridge, input: ["text"], output: ["text"] },
         }],
       });
     }
@@ -110,6 +116,7 @@ export async function registerNativeWebModels(
         origin: provider.origin,
         transport: transports.get(provider.id) ?? null,
         fixture: config.fixture,
+        toolBridge: config.toolBridge,
       });
     },
     { providerID: provider.providerID },

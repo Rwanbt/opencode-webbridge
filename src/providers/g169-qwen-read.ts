@@ -2,7 +2,7 @@
  * Never submit prompts, inspect credentials, or declare a commercial provider operational. */
 import { chromium, type Browser, type Page } from 'playwright';
 import { ExplicitCdpReadBridge, type CdpConsent, type CdpTab } from '../browser/explicit-cdp-read.js';
-import { readCdpDocumentEpoch, assertCdpDocumentEpoch, type CdpDocumentEpoch } from '../browser/cdp-document-epoch.js';
+import { readCdpDocumentEpoch, assertCdpDocumentEpoch, sameOrigin, type CdpDocumentEpoch } from '../browser/cdp-document-epoch.js';
 
 export interface G169Consent extends CdpConsent {
   readonly allowAssistantText: (tab: CdpTab) => Promise<boolean>;
@@ -83,7 +83,7 @@ export class G169QwenRead {
           }
         } finally { await probe.detach(); }
       }
-      if (!selected || selected.url() !== tab.url) return fail('target URL replaced');
+      if (!selected || !sameOrigin(selected.url(), tab.url)) return fail('target origin replaced');
       await discovery.verify(tab);
       const epoch = await readCdpDocumentEpoch(selected, tab.url);
       await discovery.verify(tab);

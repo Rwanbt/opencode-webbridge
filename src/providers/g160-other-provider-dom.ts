@@ -2,7 +2,7 @@
  * All selectors are tentative until verified against an authenticated UI. */
 import { chromium, type Browser, type Page } from 'playwright';
 import { ExplicitCdpReadBridge, type CdpConsent, type CdpTab } from '../browser/explicit-cdp-read.js';
-import { readCdpDocumentEpoch, assertCdpDocumentEpoch, type CdpDocumentEpoch } from '../browser/cdp-document-epoch.js';
+import { readCdpDocumentEpoch, assertCdpDocumentEpoch, sameOrigin, type CdpDocumentEpoch } from '../browser/cdp-document-epoch.js';
 import { readPlainFields } from '../core/adapter-contract.js';
 import { assertOpaqueID, type TurnEvent } from '../core/browser-port.js';
 
@@ -153,7 +153,7 @@ export class G160OtherProviderObserver {
           }
         } finally { await session.detach(); }
       }
-      if (!selected || selected.url() !== tab.url) throw new Error('G160 target identity mismatch');
+      if (!selected || !sameOrigin(selected.url(), tab.url)) throw new Error('G160 target identity/origin mismatch');
       await discovery.verify(tab);
       const documentEpoch = await readCdpDocumentEpoch(selected, tab.url);
       await discovery.verify(tab);

@@ -12,7 +12,8 @@ import type {
   LanguageModelV3Usage,
   SharedV3ProviderMetadata,
 } from "@ai-sdk/provider";
-import { isTitleGeneration, lastUserText, localTitle } from "./prompt.js";
+import { browserPrompt, isTitleGeneration, lastUserText, localTitle } from "./prompt.js";
+import { firstFenceIndex, holdBack, parseToolCalls, toolContract } from "./tool-bridge.js";
 import {
   WebBridgeSessionStateError,
   type NativeTerminalState,
@@ -23,6 +24,7 @@ import {
 export const DOM_COMPLETE_RAW = "webbridge-dom-completion-observed";
 export const TERMINAL_UNCERTAIN_RAW = "webbridge-terminal-uncertain";
 export const TERMINAL_CANCELLED_RAW = "webbridge-turn-cancelled";
+export const TOOL_CALLS_RAW = "webbridge-tool-calls-from-browser-text";
 export const AUX_TITLE_RAW = "webbridge-aux-title-local";
 
 const TEXT_ID = "webbridge-text";
@@ -41,6 +43,8 @@ export interface WebModelOptions {
   /** null = no attached, explicitly authorized browser session. */
   readonly transport: NativeTurnTransport | null;
   readonly fixture: boolean;
+  /** Opt-in: let the browser model drive the READ-ONLY tools through text. */
+  readonly toolBridge: boolean;
 }
 
 const terminalReason = (state: NativeTerminalState): LanguageModelV3FinishReason => {
@@ -52,7 +56,7 @@ const terminalReason = (state: NativeTerminalState): LanguageModelV3FinishReason
 const UNCERTAIN_END: LanguageModelV3FinishReason = { unified: "error", raw: TERMINAL_UNCERTAIN_RAW };
 
 export function createWebLanguageModel(options: WebModelOptions): LanguageModelV3 {
-  const { providerID, modelID, providerName, origin, transport, fixture } = options;
+  const { providerID, modelID, providerName, origin, transport, fixture, toolBridge } = options;
 
   function metadata(terminal: string, reason: string): SharedV3ProviderMetadata {
     return { webbridge: { terminal, reason, correlation: "unverified-dom", origin, fixture } };
@@ -68,7 +72,9 @@ export function createWebLanguageModel(options: WebModelOptions): LanguageModelV
   const request = (call: LanguageModelV3CallOptions): NativeTurnRequest => ({
     providerID,
     modelID,
-    prompt: lastUserText(call.prompt),
+    // The browser sees the tool contract and any tool result OpenCode produced;
+    // without the bridge this is exactly the previous last-user-text behaviour.
+    prompt: browserPrompt(call.prompt, toolBridge ? toolContract() : null),
     signal: call.abortSignal ?? new AbortController().signal,
   });
 
@@ -92,17 +98,42 @@ export function createWebLanguageModel(options: WebModelOptions): LanguageModelV
       if (!transport) refusal("no attached authorized browser session");
       const session = transport;
       let text = "";
+      const finish = (state: NativeTerminalState, reason: string) => {
+        // Same rule as the stream: a tool call runs only on a proven complete turn.
+        if (toolBridge && state === "complete") {
+          const at = firstFenceIndex(text);
+          if (at >= 0) {
+            const parsed = parseToolCalls(text.slice(at));
+            if (parsed.calls.length) {
+              const prose = text.slice(0, at);
+              return {
+                content: [
+                  ...(prose ? [{ type: "text" as const, text: prose }] : []),
+                  ...parsed.calls.map((call, index) => ({
+                    type: "tool-call" as const,
+                    toolCallId: "webbridge-tool-" + (index + 1),
+                    toolName: call.toolName, input: call.input,
+                  })),
+                ],
+                finishReason: { unified: "tool-calls" as const, raw: TOOL_CALLS_RAW },
+                usage: UNKNOWN_USAGE,
+                warnings: [],
+                providerMetadata: metadata(state, reason),
+              };
+            }
+          }
+        }
+        return {
+          content: text ? [{ type: "text" as const, text }] : [],
+          finishReason: terminalReason(state),
+          usage: UNKNOWN_USAGE,
+          warnings: [],
+          providerMetadata: metadata(state, reason),
+        };
+      };
       for await (const event of session.stream(request(call))) {
         if (event.kind === "fragment") text += event.text;
-        else {
-          return {
-            content: text ? [{ type: "text" as const, text }] : [],
-            finishReason: terminalReason(event.state),
-            usage: UNKNOWN_USAGE,
-            warnings: [],
-            providerMetadata: metadata(event.state, event.reason),
-          };
-        }
+        else return finish(event.state, event.reason);
       }
       return {
         content: text ? [{ type: "text" as const, text }] : [],
@@ -144,32 +175,74 @@ export function createWebLanguageModel(options: WebModelOptions): LanguageModelV
             opened = false;
             controller.enqueue({ type: "text-end", id: TEXT_ID });
           };
-          try {
-            for await (const event of session.stream(turn)) {
-              if (event.kind === "fragment") {
-                if (!event.text) continue;
-                if (!opened) {
-                  opened = true;
-                  controller.enqueue({ type: "text-start", id: TEXT_ID });
-                }
-                controller.enqueue({ type: "text-delta", id: TEXT_ID, delta: event.text });
-                continue;
-              }
-              closeText();
-              controller.enqueue({
-                type: "finish", usage: UNKNOWN_USAGE,
-                finishReason: terminalReason(event.state),
-                providerMetadata: metadata(event.state, event.reason),
-              });
-              controller.close();
+          const emitText = (delta: string) => {
+            if (!delta) return;
+            if (!opened) {
+              opened = true;
+              controller.enqueue({ type: "text-start", id: TEXT_ID });
+            }
+            controller.enqueue({ type: "text-delta", id: TEXT_ID, delta });
+          };
+          // Without the bridge this is exactly the previous behaviour: every
+          // fragment is forwarded as text. With the bridge we hold back a possible
+          // fence prefix so a tool block is never shown as text mid-flight.
+          let acc = "";
+          let sent = 0;
+          let fence = -1;
+          const consume = (delta: string) => {
+            if (!delta) return;
+            acc += delta;
+            if (!toolBridge) { emitText(delta); sent = acc.length; return; }
+            if (fence >= 0) return; // inside a block: hold everything until we know
+            const at = firstFenceIndex(acc);
+            if (at >= 0) {
+              fence = at;
+              if (at > sent) { emitText(acc.slice(sent, at)); sent = at; }
               return;
             }
+            const safeEnd = acc.length - holdBack(acc);
+            if (safeEnd > sent) { emitText(acc.slice(sent, safeEnd)); sent = safeEnd; }
+          };
+          const settle = (state: NativeTerminalState, reason: string) => {
+            // A tool call is executed ONLY when the browser turn is itself proven
+            // complete: an effect is never run on an unproven turn. On any other
+            // terminal the text (block included) is delivered verbatim.
+            if (toolBridge && fence >= 0 && state === "complete") {
+              const parsed = parseToolCalls(acc.slice(fence));
+              if (parsed.calls.length) {
+                closeText();
+                let index = 0;
+                for (const call of parsed.calls) {
+                  controller.enqueue({
+                    type: "tool-call", toolCallId: "webbridge-tool-" + (++index),
+                    toolName: call.toolName, input: call.input,
+                  });
+                }
+                controller.enqueue({
+                  type: "finish", usage: UNKNOWN_USAGE,
+                  finishReason: { unified: "tool-calls", raw: TOOL_CALLS_RAW },
+                  providerMetadata: metadata(state, reason),
+                });
+                controller.close();
+                return;
+              }
+            }
+            if (acc.length > sent) { emitText(acc.slice(sent)); sent = acc.length; }
             closeText();
             controller.enqueue({
-              type: "finish", usage: UNKNOWN_USAGE, finishReason: UNCERTAIN_END,
-              providerMetadata: metadata("uncertain", "transport-ended-without-terminal"),
+              type: "finish", usage: UNKNOWN_USAGE,
+              finishReason: terminalReason(state),
+              providerMetadata: metadata(state, reason),
             });
             controller.close();
+          };
+          try {
+            for await (const event of session.stream(turn)) {
+              if (event.kind === "fragment") { consume(event.text); continue; }
+              settle(event.state, event.reason);
+              return;
+            }
+            settle("uncertain", "transport-ended-without-terminal");
           } catch (error) {
             controller.enqueue({ type: "error", error });
             controller.close();
