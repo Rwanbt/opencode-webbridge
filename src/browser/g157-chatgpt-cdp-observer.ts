@@ -2,7 +2,7 @@
  * The CDP port is user-declared, NOT Core/OS/Desktop attestation. No input or writes. */
 import { chromium, type Browser, type Page } from 'playwright';
 import { ExplicitCdpReadBridge, type CdpConsent, type CdpTab } from './explicit-cdp-read.js';
-import { readCdpDocumentEpoch, assertCdpDocumentEpoch } from './cdp-document-epoch.js';
+import { readCdpDocumentEpoch, assertCdpDocumentEpoch, sameOrigin } from './cdp-document-epoch.js';
 import {
   G156ChatgptObserver, g156ChatgptReadDOM, type G156Attachment,
 } from '../providers/g156-chatgpt-dom.js';
@@ -51,7 +51,7 @@ export class G157ChatgptCdpObserver {
           } finally { await session.detach(); }
         }
       }
-      if (!selected || selected.url() !== tab.url) throw new Error('G157 target identity/URL mismatch');
+      if (!selected || !sameOrigin(selected.url(), tab.url)) throw new Error('G157 target identity/origin mismatch');
       await discovery.verify(tab);
       const page = selected;
       const documentEpoch = await readCdpDocumentEpoch(page, tab.url);
