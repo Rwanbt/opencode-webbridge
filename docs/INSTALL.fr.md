@@ -40,6 +40,54 @@ Le serveur OpenCode officiel doit alors rapporter `opencode.webbridge` comme plu
 (constaté en CI sur Windows et Linux). Sans activation individuelle, tous les modèles restent
 **dormants**.
 
+## 2 bis. Activer par la configuration (indispensable dans le chat)
+
+Une variable d'environnement n'est lue qu'au **démarrage du serveur**. Le chat parle à un serveur
+d'arrière-plan de longue durée : si les variables n'existaient pas à son démarrage, le plugin
+charge mais reste **dormant** et WebBridge n'apparaît pas dans le sélecteur. C'est exactement ce qui
+se produit avec `opencode run` sans `--standalone`, et dans l'application.
+
+Le fichier de configuration, lui, est relu **à chaque démarrage**. Déclarez donc le plugin sous
+forme d'objet, avec ses options :
+
+```jsonc
+{
+  "plugins": [
+    {"package":"opencode-webbridge",
+     "options":{
+       "providers":["chatgpt","deepseek","gemini","qwen","mistral"],
+       "journalDir":"~/.webbridge/journal",
+       "tabs":{
+         "chatgpt":"http://127.0.0.1:9222#<tabID>",
+         "deepseek":"http://127.0.0.1:9222#<tabID>"
+       }
+     }}
+  ]
+}
+```
+
+Options acceptées (les mêmes que les variables, qui restent prioritaires si elles sont définies) :
+`providers`, `journalDir`, `tabs`, `fixture`, `readonlyTools`, `cdpReadonly`, `workspace`. Les
+valeurs non valides sont **ignorées, jamais coercées** : un id de fournisseur doit matcher un motif
+strict, et une déclaration d'onglet doit être un endpoint loopback explicite avec un id de cible CDP.
+
+**Puis redémarrez OpenCode** (application ou TUI) : les cinq modèles apparaissent dans le sélecteur.
+
+### Vérifier que le navigateur est réellement pilotable
+
+```sh
+webbridge-doctor --journal ~/.webbridge/journal
+```
+
+Le doctor est en lecture seule et liste les onglets par fournisseur, puis vérifie que le **driver**
+peut réellement s'y attacher. Deux cas fréquents :
+
+- `[fail] driver: enumerates 0 pages while the inventory lists N tab(s)` — les onglets existent mais
+  l'**instance** du navigateur n'est plus adoptable : **fermez-la complètement et relancez-la** (même
+  profil, même port de debug). Une instance fraîche du même navigateur est adoptable.
+- Les identifiants d'onglet CDP **changent à chaque redémarrage du navigateur** : recopiez ceux que le
+  doctor affiche dans `tabs`.
+
 ## 3. Configuration minimale
 
 | Variable | Effet | Requis pour |
@@ -47,6 +95,7 @@ Le serveur OpenCode officiel doit alors rapporter `opencode.webbridge` comme plu
 | `WEBBRIDGE_NATIVE_WEB_MODELS` | active individuellement un ou plusieurs fournisseurs (`chatgpt,deepseek,…`) | modèles natifs |
 | `WEBBRIDGE_NATIVE_TAB_<PROVIDER>` | **c'est l'autorisation** : `http://127.0.0.1:<port>#<tabID>` (onglet CDP explicitement sélectionné) | envoi/lecture navigateur |
 | `WEBBRIDGE_NATIVE_JOURNAL_DIR` | répertoire privé du journal durable de tentatives (obligatoire dès qu'un onglet est déclaré) | anti-rejeu, reprise |
+| `WEBBRIDGE_NATIVE_TOOL_BRIDGE` | `1` active le **pont d'outils lecture seule** : le modèle web peut appeler `webbridge_readonly` (`file.read`, `git.status/diff/log`) via un bloc délimité ; tout-ou-rien, jamais d'effet sur un tour non prouvé | outils appelés par le modèle web |
 | `WEBBRIDGE_PERSONAL_READONLY_TOOLS` | active les outils read-only `file.read`, `git.status/diff/log` | outils workspace |
 | `WEBBRIDGE_PERSONAL_WORKSPACE` | répertoire de travail confiné (chemin canonique absolu) | outils workspace |
 | `WEBBRIDGE_PERSONAL_CDP_READONLY` | active l'outil navigateur read-only (avec `WEBBRIDGE_PERSONAL_BROWSER_OWNED=1` et `WEBBRIDGE_PERSONAL_CDP_ENDPOINT`) | lecture d'onglets |
