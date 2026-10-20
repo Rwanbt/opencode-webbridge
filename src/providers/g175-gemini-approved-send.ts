@@ -45,7 +45,13 @@ const id = (value: unknown) => typeof value === 'string' && /^[A-Za-z0-9_-]{8,12
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const deny = (reason: string): never => { throw new Error('G175 send refused: ' + reason); };
 const COMPOSER = 'div[role="textbox"][contenteditable="true"]:visible';
-const SEND = 'button[aria-label="Envoyer un message"]:visible,button[aria-label="Send message"]:visible';
+// Gemini renders TWO different send controls depending on where the prompt area
+// sits. On a new chat it is <button aria-label="Envoyer un message">. On a
+// conversation it is <gem-icon-button class="send-button"> with NO aria-label --
+// measured on the live tab (x=1076, y=638, label null). A label-only selector
+// therefore found nothing on conversations, which is why the send never happened.
+const SEND = 'gem-icon-button.send-button:visible,'
+  + 'button[aria-label="Envoyer un message"]:visible,button[aria-label="Send message"]:visible';
 const CHAT_ORIGIN = 'https://gemini.google.com';
 
 /** Durable consume BEFORE any UI effect. No reset/rollback method exists. */
@@ -142,9 +148,17 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
       await recheck();
       if (consent.isStillApproved(action) !== true) return deny('send authorization revoked');
       const button = selected.locator(SEND);
-      if (await composer.count() !== 1 || await button.count() !== 1 || !await button.isVisible())
-        return deny('send control changed after filling');
-      await button.click({ timeout: 2000, noWaitAfter: true });
+      // Gemini mounts its send control only AFTER its framework has processed the
+      // typed text: measured, the count is 0 immediately after fill() and becomes 1
+      // about a second later. Playwright waited for actionability; calling the
+      // control missing before the framework has reacted is a false negative.
+      const sendDeadline = Date.now() + 5000;
+      while (await button.count() !== 1 || !await button.isVisible() || !await button.isEnabled()) {
+        if (Date.now() > sendDeadline) return deny('send control never appeared after filling');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (await composer.count() !== 1) return deny('composer changed after filling');
+      await button.clickDom({ timeout: 2000 });
       return Object.freeze({ status: 'uncertain' as const, turnID });
     } finally { await session.detach().catch(() => {}); }
   } catch (error) {
