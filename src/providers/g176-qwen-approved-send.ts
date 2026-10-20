@@ -140,13 +140,56 @@ export async function g176SendQwenOnce(request: G176SendRequest): Promise<{
       await recheck();
       if (consent.isStillApproved(action) !== true) return deny('send authorization revoked');
       const button = selected.locator(SEND);
-      if (await composer.count() !== 1 || await button.count() !== 1 || !await button.isVisible())
-        return deny('send control changed after filling');
+      // Qwen mounts its send control only once the composer holds text, and it
+      // animates in. A single check is a false negative: measured on the live tab,
+      // the control is a 32x32 <button aria-label="Envoyer" class="send-button">
+      // that appears with the text, not before it. Wait for it, and report what was
+      // observed if it never becomes usable.
+      const sendDeadline = Date.now() + 5000;
+      while (await button.count() !== 1 || !await button.isVisible() || !await button.isEnabled()) {
+        if (Date.now() > sendDeadline) {
+          return deny('send control never appeared after filling (count=' + await button.count()
+            + ' visible=' + await button.isVisible() + ' enabled=' + await button.isEnabled()
+            + ' composer=' + await composer.count() + ')');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
       // At most ONE user-visible click; never retry on timeout, navigation or
-      // lost ACK. Observed on the real Qwen UI: the control animates, so
-      // Playwright's stability check flakes; we already verified it is visible
-      // (and blank-checked the composer), so the click is forced and bounded.
-      await button.click({ timeout: 5000, noWaitAfter: true, force: true });
+      // lost ACK.
+      //
+      // A forced MOUSE click reports success and does nothing on Qwen: measured on
+      // the live tab, click({force:true}) returned without error while the composer
+      // still held the exact prompt and no turn appeared. A DOM click on the same
+      // control sent it immediately (5 -> 6 rendered answers, composer emptied).
+      // The mouse path is what the UI intercepts; the app's own handler is what
+      // accepts the turn, so that is what is used.
+      await button.clickDom({ timeout: 5000 });
+      // Confirm the visible effect we can actually observe: the app empties the
+      // composer when it accepts the turn. Without this, a swallowed click leaves
+      // OUR text sitting in the user's composer and reports only "uncertain"
+      // later, far from the cause.
+      const promptBox = page.locator(COMPOSER);
+      const acceptedDeadline = Date.now() + 4000;
+      let accepted = false;
+      for (;;) {
+        const current = await promptBox.evaluate((element) => {
+          const el = element as HTMLTextAreaElement | HTMLInputElement;
+          return el.value ?? el.textContent ?? '';
+        });
+        if (current !== prompt) { accepted = true; break; }
+        if (Date.now() > acceptedDeadline) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (!accepted) {
+        // Nothing was sent. Remove ONLY our untouched copy: a draft the operator
+        // edited is never overwritten, and this is cleanup, not a retry.
+        try {
+          if (await promptBox.evaluate((element) => {
+            const el = element as HTMLTextAreaElement | HTMLInputElement;
+            return el.value ?? el.textContent ?? '';
+          }) === prompt) await promptBox.fill('', { timeout: 1000 });
+        } catch { /* ignore */ }
+      }
       return Object.freeze({ status: 'uncertain' as const, turnID });
     } finally { await session.detach().catch(() => {}); }
   } catch (error) {
@@ -164,7 +207,10 @@ export async function g176SendQwenOnce(request: G176SendRequest): Promise<{
             await box.fill('', { timeout: 1000 });
         }
       } catch { /* ignore */ }
-      throw new Error('G176_SEND_UNCERTAIN: consumed before UI effect; do not replay');
+      // Keep the CAUSE: "consumed before UI effect" alone makes every failure
+      // indistinguishable and costs a debug cycle to rediscover which step threw.
+      const cause = error instanceof Error ? error.message : String(error);
+      throw new Error('G176_SEND_UNCERTAIN: consumed before UI effect; do not replay (cause: ' + cause + ')');
     }
     throw error;
   } finally {

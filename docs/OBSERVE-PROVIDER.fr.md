@@ -39,10 +39,11 @@ node bin/webbridge-manual-observe.mjs \
   --provider chatgpt --endpoint http://127.0.0.1:9222 --tab <CDP_TARGET_ID> --turn <TURN_ID> \
   --message <MESSAGE_KEY> --polls 12
 
-# Qwen : la sonde de disponibilité vérifie l'onglet puis termine NO-GO
-# (le DOM Qwen réel n'est pas vérifié ; aucune lecture n'est faite) :
+# Qwen : lecture d'une réponse réelle (lecteur vérifié sur l'interface réelle ;
+# le terminal reste UNCERTAIN par construction, voir plus bas) :
 node bin/webbridge-manual-observe.mjs \
-  --provider qwen --endpoint http://127.0.0.1:9222 --tab <CDP_TARGET_ID> --turn <TURN_ID> --message probe
+  --provider qwen --endpoint http://127.0.0.1:9222 --tab <CDP_TARGET_ID> --turn <TURN_ID> \
+  --message <MESSAGE_KEY>
 ```
 
 `--polls` borné à `1..32` (défaut 12, ~200 ms d'intervalle). L'endpoint doit
@@ -56,12 +57,29 @@ node bin/webbridge-manual-observe.mjs \
 | DeepSeek | g160 (sélecteurs tâtonnants) | oui | aucun | UNCERTAIN |
 | Gemini | g160 (sélecteurs tâtonnants) | oui | aucun | UNCERTAIN |
 | Mistral Le Chat | g160 (sélecteurs tâtonnants) | oui | aucun | UNCERTAIN |
-| Qwen | g169 (sonde seule, NO_GO live) | non | aucun | NO-GO |
+| Qwen | g160 (lecteur réel vérifié : `chat-response-message-<uuid>` + `.qwen-markdown`) | oui | aucun | UNCERTAIN (construction de la commande) |
 
-Aucun fournisseur ne peut actuellement **prouver** l'achèvement DOM : le
-terminal reste `uncertain` par construction. Aucune capacité d'envoi n'est
-inventée pour les fournisseurs sans primitive vérifiée ; le transport natif
-refuse tour par tour (dégradation par fournisseur, jamais un veto global).
+Aucun fournisseur ne peut actuellement **prouver** l'achèvement DOM **depuis
+cette commande** : elle est en lecture seule et n'émet jamais `complete`. La
+finalité est en revanche mesurée côté transport, sur l'interface réelle :
+
+- Gemini : `complete / dom-completion-proven` (journal, 2026-10-20).
+- Qwen : la barre d'actions (`Copier`, `Bonne réponse`, `Partager`,
+  `Régénérer`, `Plus d'actions`) **n'est montée que si l'onglet est visible**.
+  Onglet caché : texte peint, zéro bouton pendant 71 s, ni survol ni défilement
+  n'y changent rien. Onglet activé : les sept contrôles apparaissent en trois
+  secondes.
+- DeepSeek : même dépendance, autre symptôme. Onglet caché : **liste virtuelle
+  vide** alors que la conversation existe côté serveur (0 élément pendant 32 s).
+  Onglet activé : les deux tours et la réponse sont rendus en trois secondes.
+
+C'est pourquoi l'observateur active l'onglet déclaré avant de lire : c'est la
+seule façon d'obtenir la preuve de finalité du fournisseur lui-même, et un échec
+d'activation ne coûte que la finalité, jamais la correction.
+
+Aucune capacité d'envoi n'est inventée pour les fournisseurs sans primitive
+vérifiée ; le transport natif refuse tour par tour (dégradation par fournisseur,
+jamais un veto global).
 
 ## Rapport avec le transport natif
 

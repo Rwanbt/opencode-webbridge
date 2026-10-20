@@ -47,11 +47,16 @@ const deny = (reason: string): never => { throw new Error('G175 send refused: ' 
 const COMPOSER = 'div[role="textbox"][contenteditable="true"]:visible';
 // Gemini renders TWO different send controls depending on where the prompt area
 // sits. On a new chat it is <button aria-label="Envoyer un message">. On a
-// conversation it is <gem-icon-button class="send-button"> with NO aria-label --
-// measured on the live tab (x=1076, y=638, label null). A label-only selector
-// therefore found nothing on conversations, which is why the send never happened.
-const SEND = 'gem-icon-button.send-button:visible,'
-  + 'button[aria-label="Envoyer un message"]:visible,button[aria-label="Send message"]:visible';
+// conversation the visible host is <gem-icon-button class="send-button"> with NO
+// aria-label -- measured on the live tab at x=1076,y=638 -- and its INNER
+// <button> carries the label.
+//
+// The selector used to name BOTH the host and the labelled button. That matched
+// TWO elements for ONE control, so the "exactly one control" guard below could
+// never be satisfied and the wait always expired. The labelled inner button is
+// the single node that exists in both layouts, so it is the only selector used.
+const SEND = 'button[aria-label="Envoyer un message"]:visible,'
+  + 'button[aria-label="Send message"]:visible';
 const CHAT_ORIGIN = 'https://gemini.google.com';
 
 /** Durable consume BEFORE any UI effect. No reset/rollback method exists. */
@@ -154,7 +159,14 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
       // control missing before the framework has reacted is a false negative.
       const sendDeadline = Date.now() + 5000;
       while (await button.count() !== 1 || !await button.isVisible() || !await button.isEnabled()) {
-        if (Date.now() > sendDeadline) return deny('send control never appeared after filling');
+        if (Date.now() > sendDeadline) {
+          // Report what was actually observed: "never appeared" alone cannot tell a
+          // missing control from one that is present but not actionable.
+          const seen = 'count=' + await button.count() + ' visible=' + await button.isVisible()
+            + ' enabled=' + await button.isEnabled() + ' composer=' + await composer.count()
+            + ' chars=' + await composer.evaluate((el) => ((el as HTMLElement).textContent ?? '').length);
+          return deny('send control never appeared after filling (' + seen + ')');
+        }
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       if (await composer.count() !== 1) return deny('composer changed after filling');
@@ -178,7 +190,11 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
             await box.fill('', { timeout: 1000 });
         }
       } catch { /* ignore */ }
-      throw new Error('G175_SEND_UNCERTAIN: consumed before UI effect; do not replay');
+      // Keep the CAUSE. The attempt stays consumed either way, but a bare
+      // "consumed before UI effect" makes every failure indistinguishable and
+      // costs a whole debug cycle to rediscover which step threw.
+      const cause = error instanceof Error ? error.message : String(error);
+      throw new Error('G175_SEND_UNCERTAIN: consumed before UI effect; do not replay (cause: ' + cause + ')');
     }
     throw error;
   } finally {

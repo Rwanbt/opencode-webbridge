@@ -151,13 +151,34 @@ export async function g174SendDeepseekOnce(request: G174SendRequest): Promise<{
           !await button.isVisible())
         return deny('send control changed after filling');
       // At most ONE user-visible click; never retry on timeout, navigation or lost ACK.
-      // Observed on the real authenticated UI (2026-10-19): the DeepSeek send
-      // control animates, so Playwright's actionability/stability check times out
-      // at 2 s and the click never lands (the turn then settles `send-uncertain`
-      // with 0 delivered fragments). Qwen and Mistral carry the same documented
-      // treatment; the send control itself is unambiguous (exactly one visible
-      // `ds-button--primary` node).
-      await button.click({ timeout: 5000, noWaitAfter: true, force: true });
+      // A forced MOUSE click reports success and does nothing here: measured on the
+      // live tab, click({force:true}) returned without error while the composer kept
+      // the exact prompt and the turn settled no-new-candidate. A DOM click on the
+      // same control emptied the composer and created the turn, so the app's own
+      // handler is what accepts it (Qwen carries the same documented treatment).
+      await button.clickDom({ timeout: 5000 });
+      // Confirm the effect we can actually observe: DeepSeek empties the composer
+      // when it accepts a turn. Without this, a swallowed click leaves OUR text in
+      // the user's composer, and every later turn is then refused with "nonempty
+      // user draft cannot be replaced" -- a failure far from its cause.
+      const acceptedDeadline = Date.now() + 4000;
+      let accepted = false;
+      for (;;) {
+        const current = await composer.evaluate((el) =>
+          ((el as HTMLTextAreaElement | HTMLInputElement).value ?? el.textContent ?? ''));
+        if (current !== prompt) { accepted = true; break; }
+        if (Date.now() > acceptedDeadline) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (!accepted) {
+        // Nothing was sent. Remove ONLY our untouched copy: a draft the operator
+        // edited is never overwritten, and this is cleanup, not a retry.
+        try {
+          if (await composer.evaluate((el) =>
+            ((el as HTMLTextAreaElement | HTMLInputElement).value ?? el.textContent ?? '')) === prompt)
+            await composer.fill('', { timeout: 1000 });
+        } catch { /* ignore */ }
+      }
       return Object.freeze({ status: 'uncertain' as const, turnID });
     } finally { await session.detach().catch(() => {}); }
   } catch (error) {

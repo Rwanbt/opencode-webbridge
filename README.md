@@ -119,7 +119,8 @@ It is never enabled by default, and without it the models advertise no tool capa
 - `webbridge-journal` — inspect or explicitly close (`--abandon`) a provisional attempt.
 
 See `docs/INSTALL.fr.md`, `docs/INSTALL-DIAGNOSTICS.fr.md`, `docs/REFUSALS.fr.md`,
-`docs/SECURITY-MATRIX.fr.md`, `docs/TRACEABILITY.fr.md` and `docs/QUALIFICATION.fr.md`.
+`docs/SECURITY-MATRIX.fr.md`, `docs/TRACEABILITY.fr.md`, `docs/PREUVE-LIVE.fr.md`
+and `docs/QUALIFICATION.fr.md`.
 
 ## Development
 

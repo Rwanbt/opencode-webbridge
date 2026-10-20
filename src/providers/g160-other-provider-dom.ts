@@ -117,10 +117,28 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
   return { messageKey: key, text, finalized };
 }
 
+/** Measured on the live Qwen and DeepSeek tabs (2026-10-20): a HIDDEN declared tab
+ *  does not render what the reader needs. Qwen paints the answer text but never
+ *  mounts the action bar (0 buttons for 71 s; hover and scroll changed nothing),
+ *  and DeepSeek paints an EMPTY virtual list while the conversation exists
+ *  server-side (0 items for 32 s). Activating the tab made Qwen mount its seven
+ *  controls in three seconds and DeepSeek render its two turns and the answer.
+ *  Bringing the declared tab forward is therefore part of reading the provider's
+ *  own evidence; nothing is asserted on its behalf, and a failed activation only
+ *  costs finality, never correctness. */
+async function bringToFront(endpoint: string, tabID: string): Promise<void> {
+  try {
+    const base = endpoint.replace(/#.*$/, '').replace(/\/+$/, '');
+    await fetch(base + '/json/activate/' + encodeURIComponent(tabID),
+      { signal: AbortSignal.timeout(3000) });
+  } catch { /* best effort */ }
+}
+
 /** Uses the ACTUAL existing user-selected Chromium tab and exact DOM reader. */
 export class G160OtherProviderObserver {
   private closed = false;
   private constructor(
+    private readonly endpoint: string,
     private readonly discovery: ExplicitCdpReadBridge,
     /** The driver owns this attachment's socket: closing it detaches THIS client
      *  only, and never terminates the browser or the user's tab. */
@@ -158,7 +176,7 @@ export class G160OtherProviderObserver {
       await discovery.verify(tab);
       const documentEpoch = await readCdpDocumentEpoch(page, tab.url);
       await discovery.verify(tab);
-      return new G160OtherProviderObserver(discovery, page, tab, provider, consent, documentEpoch);
+      return new G160OtherProviderObserver(endpoint, discovery, page, tab, provider, consent, documentEpoch);
     } catch (error) {
       await page?.close();
       discovery.close();
@@ -202,6 +220,12 @@ export class G160OtherProviderObserver {
     assertOpaqueID(turnID, 'turnID');
     if (!KEY.test(messageKey) || !Number.isSafeInteger(polls) || polls < 1 || polls > 32)
       throw new Error('G160 invalid selected answer/budget');
+    // Measured on Qwen AND DeepSeek (2026-10-20): a hidden declared tab does not
+    // render what the reader needs -- Qwen never mounts its action bar, DeepSeek
+    // paints an empty virtual list even though the conversation exists server-side
+    // (0 items for 32 s, then 2 items and the answer within 3 s of activation).
+    // Activation does not change the document epoch, so authorization stays intact.
+    await bringToFront(this.endpoint, this.tab.tabID);
     let seen = '', seq = 0;
     for (let i = 0; i < polls; i++) {
       const found = await this.sample();
