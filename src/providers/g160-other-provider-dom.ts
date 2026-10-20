@@ -117,10 +117,27 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
   return { messageKey: key, text, finalized };
 }
 
+/** Measured on the live Qwen tab (2026-10-20): a HIDDEN declared tab paints the
+ *  answer text but never mounts the action bar, so provider finality can never be
+ *  observed -- 0 buttons for 71 s, and neither hovering nor scrolling helped.
+ *  Activating the tab made the SAME answer mount its seven controls within three
+ *  seconds (Copier, Bonne réponse, Mauvaise réponse, Partager, Régénérer, Plus
+ *  d'actions). Bringing the declared tab forward is the only way to read the
+ *  provider's own finality evidence; nothing is asserted on its behalf, and a
+ *  failed activation only costs finality, never correctness. */
+async function bringToFront(endpoint: string, tabID: string): Promise<void> {
+  try {
+    const base = endpoint.replace(/#.*$/, '').replace(/\/+$/, '');
+    await fetch(base + '/json/activate/' + encodeURIComponent(tabID),
+      { signal: AbortSignal.timeout(3000) });
+  } catch { /* best effort */ }
+}
+
 /** Uses the ACTUAL existing user-selected Chromium tab and exact DOM reader. */
 export class G160OtherProviderObserver {
   private closed = false;
   private constructor(
+    private readonly endpoint: string,
     private readonly discovery: ExplicitCdpReadBridge,
     /** The driver owns this attachment's socket: closing it detaches THIS client
      *  only, and never terminates the browser or the user's tab. */
@@ -158,7 +175,7 @@ export class G160OtherProviderObserver {
       await discovery.verify(tab);
       const documentEpoch = await readCdpDocumentEpoch(page, tab.url);
       await discovery.verify(tab);
-      return new G160OtherProviderObserver(discovery, page, tab, provider, consent, documentEpoch);
+      return new G160OtherProviderObserver(endpoint, discovery, page, tab, provider, consent, documentEpoch);
     } catch (error) {
       await page?.close();
       discovery.close();
@@ -202,6 +219,9 @@ export class G160OtherProviderObserver {
     assertOpaqueID(turnID, 'turnID');
     if (!KEY.test(messageKey) || !Number.isSafeInteger(polls) || polls < 1 || polls > 32)
       throw new Error('G160 invalid selected answer/budget');
+    // Qwen only mounts its action bar on a VISIBLE tab (measured, see above).
+    // Activation does not change the document epoch, so authorization is intact.
+    if (this.provider === 'qwen') await bringToFront(this.endpoint, this.tab.tabID);
     let seen = '', seq = 0;
     for (let i = 0; i < polls; i++) {
       const found = await this.sample();
