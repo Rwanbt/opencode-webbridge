@@ -181,11 +181,34 @@ export class CdpLocator {
             return;
           }
           await this.page.selectAll();
-          await this.page.insertText(value);
+          // Keystrokes, not insertText: see typeText. Long prompts fall back to
+          // insertText because 16k keystrokes would be unacceptably slow.
+          if (value.length <= 2000) await this.page.typeText(value);
+          else await this.page.insertText(value);
           return;
         }
       }
       if (expired) throw new Error("CDP locator: nothing to fill");
+      await pause(50);
+    }
+  }
+
+  /** A DOM click on the first match. Needed where the control is a custom element
+   *  whose host ignores pointer events but whose inner button handles `click`:
+   *  measured on Gemini, whose send control is <gem-icon-button class="send-button">
+   *  with no aria-label -- a mouse click at its centre did nothing, while
+   *  innerButton.click() sent the message (the composer emptied and the response
+   *  started). */
+  async clickDom(options?: { timeout?: number }): Promise<void> {
+    const timeout = typeof options?.timeout === "number" ? options.timeout : 5000;
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const done = await this.page.evaluateSource<boolean>("(() => { const els = " + elementsExpression(this.selector) + ";"
+        + " const host = els[0]; if (!host) return false;"
+        + " const target = (host instanceof HTMLButtonElement ? null : host.querySelector('button')) || host;"
+        + " target.click(); return true; })()");
+      if (done === true) return;
+      if (Date.now() > deadline) throw new Error("CDP locator: nothing to click");
       await pause(50);
     }
   }
@@ -211,6 +234,9 @@ export class CdpLocator {
             continue;
           }
           const x = box.x + box.w / 2, y = box.y + box.h / 2;
+          // Move first: a press that does not follow a hover is ignored by some
+          // handlers, and Playwright's own click does the same.
+          await this.page.dispatchMouse("mouseMoved", x, y);
           await this.page.dispatchMouse("mousePressed", x, y);
           await this.page.dispatchMouse("mouseReleased", x, y);
           return;
@@ -345,6 +371,35 @@ export class CdpPage {
     await this.call("Input.insertText", { text });
   }
 
+  /** Types ONE KEYSTROKE per character. Measured on Gemini: `Input.insertText`
+   *  puts the characters in the composer but never updates the framework's own
+   *  value tracker, so the send button -- which only mounts when that tracker is
+   *  non-empty -- never appears and the flow fails at "nothing to click". Real key
+   *  events do update it. */
+  async typeText(text: string): Promise<void> {
+    if (typeof text !== "string") throw new Error("CDP page: invalid text");
+    for (const ch of text) {
+      const letter = /^[A-Za-z]$/.test(ch);
+      const code = letter ? "Key" + ch.toUpperCase() : ch === " " ? "Space" : "";
+      const vk = letter ? ch.toUpperCase().charCodeAt(0) : ch === " " ? 32 : ch.charCodeAt(0);
+      await this.call("Input.dispatchKeyEvent", {
+        type: "keyDown", key: ch, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk,
+      });
+      // The `char` event is the one Playwright's pressSequentially sends; without
+      // it some components see a keypress but never receive the text.
+      await this.call("Input.dispatchKeyEvent", {
+        type: "char", text: ch, unmodifiedText: ch, key: ch, code, windowsVirtualKeyCode: vk,
+      });
+      await this.call("Input.dispatchKeyEvent", {
+        type: "keyUp", key: ch, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk,
+      });
+      // A tiny gap per keystroke: typed with no delay, the framework coalesces
+      // the events and its value tracker stays empty. Measured: the probe that
+      // awaited 60 ms per key made the send button appear, the instant one did not.
+      await pause(60);
+    }
+  }
+
   /** Selects the whole content of the focused field, so a following insert
    *  REPLACES it instead of appending. Measured: without this, repeated fills
    *  produced "WEBBRIDGE-OKWEBBRIDGE-OK". */
@@ -360,9 +415,19 @@ export class CdpPage {
   /** A real pointer event at viewport coordinates. `element.click()` is a DOM
    *  synthetic event, and frameworks that bind pointer/mouse handlers ignore it:
    *  measured on Gemini, where the send button appeared live yet a DOM click
-   *  only emptied the composer without sending anything. */
-  async dispatchMouse(type: "mousePressed" | "mouseReleased", x: number, y: number): Promise<void> {
-    await this.call("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+   *  only emptied the composer without sending anything.
+   *
+   *  `buttons` is part of the contract: a mousePressed without the left-button bit
+   *  is not a press, and handlers that inspect it ignore the event. Measured
+   *  difference between a direct probe that passed `buttons` and this helper that
+   *  did not. */
+  async dispatchMouse(
+    type: "mouseMoved" | "mousePressed" | "mouseReleased", x: number, y: number,
+  ): Promise<void> {
+    await this.call("Input.dispatchMouseEvent", {
+      type, x, y, button: type === "mouseMoved" ? "none" : "left",
+      buttons: type === "mousePressed" ? 1 : 0, clickCount: 1,
+    });
   }
 
   /** Opens the session for a document-epoch read. The driver owns exactly one
