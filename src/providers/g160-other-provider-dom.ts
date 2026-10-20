@@ -117,14 +117,15 @@ export function g160ReadOtherDOM(provider: OtherProviderID): OtherResponse | nul
   return { messageKey: key, text, finalized };
 }
 
-/** Measured on the live Qwen tab (2026-10-20): a HIDDEN declared tab paints the
- *  answer text but never mounts the action bar, so provider finality can never be
- *  observed -- 0 buttons for 71 s, and neither hovering nor scrolling helped.
- *  Activating the tab made the SAME answer mount its seven controls within three
- *  seconds (Copier, Bonne réponse, Mauvaise réponse, Partager, Régénérer, Plus
- *  d'actions). Bringing the declared tab forward is the only way to read the
- *  provider's own finality evidence; nothing is asserted on its behalf, and a
- *  failed activation only costs finality, never correctness. */
+/** Measured on the live Qwen and DeepSeek tabs (2026-10-20): a HIDDEN declared tab
+ *  does not render what the reader needs. Qwen paints the answer text but never
+ *  mounts the action bar (0 buttons for 71 s; hover and scroll changed nothing),
+ *  and DeepSeek paints an EMPTY virtual list while the conversation exists
+ *  server-side (0 items for 32 s). Activating the tab made Qwen mount its seven
+ *  controls in three seconds and DeepSeek render its two turns and the answer.
+ *  Bringing the declared tab forward is therefore part of reading the provider's
+ *  own evidence; nothing is asserted on its behalf, and a failed activation only
+ *  costs finality, never correctness. */
 async function bringToFront(endpoint: string, tabID: string): Promise<void> {
   try {
     const base = endpoint.replace(/#.*$/, '').replace(/\/+$/, '');
@@ -219,9 +220,12 @@ export class G160OtherProviderObserver {
     assertOpaqueID(turnID, 'turnID');
     if (!KEY.test(messageKey) || !Number.isSafeInteger(polls) || polls < 1 || polls > 32)
       throw new Error('G160 invalid selected answer/budget');
-    // Qwen only mounts its action bar on a VISIBLE tab (measured, see above).
-    // Activation does not change the document epoch, so authorization is intact.
-    if (this.provider === 'qwen') await bringToFront(this.endpoint, this.tab.tabID);
+    // Measured on Qwen AND DeepSeek (2026-10-20): a hidden declared tab does not
+    // render what the reader needs -- Qwen never mounts its action bar, DeepSeek
+    // paints an empty virtual list even though the conversation exists server-side
+    // (0 items for 32 s, then 2 items and the answer within 3 s of activation).
+    // Activation does not change the document epoch, so authorization stays intact.
+    await bringToFront(this.endpoint, this.tab.tabID);
     let seen = '', seq = 0;
     for (let i = 0; i < polls; i++) {
       const found = await this.sample();
