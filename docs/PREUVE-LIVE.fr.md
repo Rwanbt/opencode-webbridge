@@ -26,28 +26,32 @@
 | Mistral Le Chat | `WB-MI-032040` | `WB-MI-032040` | `complete / dom-completion-proven` (03:21:00) | `9986d0f3…` | `d116eb93-…` |
 | Qwen | `WB-QW-032101` | `WB-QW-032101` | `complete / dom-completion-proven` (03:21:14) | `430e268a…` | `chat-response-message-eb898ef5-…` |
 | DeepSeek | `WB-DE-032626` | `WB-DE-032626` | `complete / dom-completion-proven` (03:26:41) | `a6a24a97…` | `4573e92b-…:4` |
-| ChatGPT | `WB-CH-032716` | *non envoyé* | **refus avant envoi**, voir §4 | — | dernier `complete` : 2026-10-19 18:08:55, tour `ff720082` |
+| ChatGPT | `WB-CH-034425` | `WB-CH-034425` | `complete / dom-completion-proven` (03:44:43) | `f1afd2ac…` | `fallback-turn-4:2:assistant` |
 
-**Quatre preuves sur cinq sont datées de ce jour et de ce dépôt.** ChatGPT est
-bloqué par une donnée qui n'appartient pas au plugin, pas par un défaut du
-transport : le compositeur de l'onglet déclaré contient **6 502 caractères d'un
-texte étranger** (un catalogue système), et le plugin refuse — correctement — de
-remplacer un brouillon non vide :
+**Les cinq preuves sont datées de ce jour et de ce dépôt.**
+
+Un incident intermédiaire mérite d'être consigné. Le premier essai ChatGPT a été
+**refusé avant envoi** :
 
 ```text
 G159 send refused: nonempty user draft cannot be replaced
 ```
 
-Ce refus est le comportement attendu : écraser silencieusement le texte de
-l'opérateur serait une faute plus grave que de ne pas envoyer. Le dernier
-`complete` enregistré **sur cet onglet** reste valable (même onglet `852701…`,
-tour `ff720082`, `dom-completion-proven`). Une tentative dans un onglet neuf a
-été faite puis annulée : le nouvel onglet ne rendait jamais son compositeur, et la
-carte `tabs` a été restaurée à l'identique.
+Le compositeur contenait **6 502 caractères d'un catalogue d'outils** laissé par
+un essai antérieur — seul ChatGPT était dans ce cas, les quatre autres
+fournisseurs avaient un compositeur vide. Ce refus est le comportement attendu :
+écraser silencieusement le texte de l'opérateur serait une faute plus grave que de
+ne pas envoyer. Une copie de sécurité a été écrite sur disque avant tout vidage
+(`C:\Users\barat\.webbridge\saved-drafts`) ; au moment du contrôle, le compositeur
+s'est révélé **déjà vide** (un saut de ligne, donc une copie d'un octet) et le tour
+a alors conclu `complete`. Une tentative dans un onglet neuf avait été annulée
+auparavant — le nouvel onglet ne rendait jamais son compositeur — et la carte
+`tabs` a été restaurée à l'identique.
 
 ## 3. Preuves brutes
 
 ```json
+{"turnID":"f1afd2ac794094e36f14598ca408c021","state":"complete","at":1792460683211,"reason":"dom-completion-proven","messageKey":"fallback-turn-4:2:assistant","progress":{"seq":1,"length":12,"hash":"158cd7c4…"},"scope":{"tabID":"85270144012B2B67C7FC23788AB97ABF","generation":1}}
 {"turnID":"59f0a7e1a14d516c2b0b74d6747c02b3","state":"complete","at":1792459240104,"reason":"dom-completion-proven","messageKey":"12b696aa35480822","progress":{"seq":1,"length":12,"hash":"34ea1bcf…"},"scope":{"tabID":"695ECF4C1C92F71DCC9DCDD3A1DC4AB4","generation":2}}
 {"turnID":"9986d0f394468233115755caf9678a28","state":"complete","at":1792459260789,"reason":"dom-completion-proven","messageKey":"d116eb93-58ef-49c5-bfe1-22d77ea4a0dd","progress":{"seq":1,"length":12,"hash":"25869101…"},"scope":{"tabID":"75C500C846B5B35CF571F4E87DC7A2A8","generation":4}}
 {"turnID":"430e268a9247348a9e1009e454d2ad48","state":"complete","at":1792459274643,"reason":"dom-completion-proven","messageKey":"chat-response-message-eb898ef5-a698-48ef-9b28-f9b2854fc75a","progress":{"seq":1,"length":12,"hash":"e00d6f03…"},"scope":{"tabID":"CDAE9EAD0F7B8C605234FB9D81129236","generation":1}}
@@ -65,8 +69,6 @@ Les journaux complets sont dans `C:\Users\barat\.webbridge\journal` (fichiers
   génération.
 - **Rien sur Desktop/Electron.** Aucune preuve de ce niveau n'existe.
 - **Aucune écriture navigateur** n'est revendiquée.
-- **ChatGPT n'a pas été rejoué aujourd'hui** pour la raison du §2 : la preuve
-  citée date du 2026-10-19.
 
 ## 5. Deux défauts trouvés *par* cette preuve, et corrigés
 
