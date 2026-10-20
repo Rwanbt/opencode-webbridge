@@ -177,7 +177,7 @@ de conversation. Les gardes locales complètent l'inspection :
 
 ## 7 bis. Dépannage par symptôme
 
-Ces quatre cas ont été rencontrés en conditions réelles. Chacun a désormais un
+Ces six cas ont été rencontrés en conditions réelles. Chacun a désormais un
 symptôme nommé et une action précise.
 
 | Symptôme | Cause réelle | Action |
@@ -186,6 +186,8 @@ symptôme nommé et une action précise.
 | « … is on the provider home/new-chat page (/app) » | L'onglet déclaré est sur la page d'accueil, pas sur une conversation | Ouvrir une conversation dans cet onglet, puis le redéclarer |
 | Attachement refusé avec « discarded or frozen » | Onglet déchargé par le navigateur | Le pilote le recharge une fois et réessaie ; si l'échec persiste, rafraîchir la page |
 | « the tab did not answer even after a reload » | Onglet fermé ou en cours de démarrage | Rouvrir l'onglet et redéclarer son identifiant |
+| `uncertain / reconciled-attempt-without-observation` | Le tour précédent a été tué avant de conclure. **Le texte du prompt est la clé de la tentative** : renvoyer exactement la même phrase reprend l'ancienne tentative au lieu d'envoyer, pendant dix minutes | Reformuler le prompt (même sens, mots différents) puis relancer. Attendre dix minutes fonctionne aussi, mais chaque nouvelle tentative relance le délai |
+| `uncertain / send-uncertain (cause: …)` | L'envoi a été consommé avant toute preuve d'effet ; la cause est dans le message | **Ne pas rejouer** : le message porte parfois déjà parti. Vérifier l'onglet, vider le brouillon, puis envoyer une phrase différente |
 
 **Les identifiants d'onglet sont recréés à chaque redémarrage du navigateur.**
 Après une réouverture, la carte `tabs` de la configuration doit être réconciliée
