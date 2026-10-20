@@ -181,6 +181,25 @@ export class CdpLocator {
             return;
           }
           await this.page.selectAll();
+          // execCommand('insertText') first: it fires a real beforeinput/input,
+          // so the page's framework updates its own value and mounts whatever
+          // depends on it (measured: Gemini's send control appears exactly then).
+          // It is also one call instead of thousands of keystrokes. Keystrokes
+          // remain the fallback: they are the only thing that works on pages
+          // that ignore execCommand, and they were proven on the same composer.
+          const inserted = await this.page.evaluateSource<string>(
+            "(() => { const el = (" + elementsExpression(this.selector) + ")[0];"
+            + " if (!el) return '';"
+            + " try { el.focus(); } catch { /* ignore */ }"
+            + " try { document.execCommand('insertText', false, " + JSON.stringify(value) + "); } catch { /* ignore */ }"
+            + " return (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement)"
+            + " ? el.value : (el.textContent || ''); })()");
+          if (typeof inserted === 'string' && inserted.includes(value)) return;
+          await this.page.evaluateSource<boolean>("(() => { const el = (" + elementsExpression(this.selector) + ")[0];"
+            + " if (!el) return false;"
+            + " if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) el.value = '';"
+            + " else el.textContent = '';"
+            + " el.dispatchEvent(new Event('input', { bubbles: true })); return true; })()");
           // Keystrokes, not insertText: see typeText. Long prompts fall back to
           // insertText because 16k keystrokes would be unacceptably slow.
           if (value.length <= 2000) await this.page.typeText(value);
