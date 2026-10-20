@@ -68,7 +68,14 @@ finalité est en revanche mesurée côté transport, sur l'interface réelle :
   `Régénérer`, `Plus d'actions`) **n'est montée que si l'onglet est visible**.
   Onglet caché : texte peint, zéro bouton pendant 71 s, ni survol ni défilement
   n'y changent rien. Onglet activé : les sept contrôles apparaissent en trois
-  secondes. C'est pourquoi l'observateur active l'onglet déclaré avant de lire.
+  secondes.
+- DeepSeek : même dépendance, autre symptôme. Onglet caché : **liste virtuelle
+  vide** alors que la conversation existe côté serveur (0 élément pendant 32 s).
+  Onglet activé : les deux tours et la réponse sont rendus en trois secondes.
+
+C'est pourquoi l'observateur active l'onglet déclaré avant de lire : c'est la
+seule façon d'obtenir la preuve de finalité du fournisseur lui-même, et un échec
+d'activation ne coûte que la finalité, jamais la correction.
 
 Aucune capacité d'envoi n'est inventée pour les fournisseurs sans primitive
 vérifiée ; le transport natif refuse tour par tour (dégradation par fournisseur,

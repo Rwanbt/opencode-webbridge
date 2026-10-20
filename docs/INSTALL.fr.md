@@ -177,7 +177,7 @@ de conversation. Les gardes locales complètent l'inspection :
 
 ## 7 bis. Dépannage par symptôme
 
-Ces sept cas ont été rencontrés en conditions réelles. Chacun a désormais un
+Ces huit cas ont été rencontrés en conditions réelles. Chacun a désormais un
 symptôme nommé et une action précise.
 
 | Symptôme | Cause réelle | Action |
@@ -189,6 +189,7 @@ symptôme nommé et une action précise.
 | `uncertain / reconciled-attempt-without-observation` | Le tour précédent a été tué avant de conclure. **Le texte du prompt est la clé de la tentative** : renvoyer exactement la même phrase reprend l'ancienne tentative au lieu d'envoyer, pendant dix minutes | Reformuler le prompt (même sens, mots différents) puis relancer. Attendre dix minutes fonctionne aussi, mais chaque nouvelle tentative relance le délai |
 | `uncertain / send-uncertain (cause: …)` | L'envoi a été consommé avant toute preuve d'effet ; la cause est dans le message | **Ne pas rejouer** : le message porte parfois déjà parti. Vérifier l'onglet, vider le brouillon, puis envoyer une phrase différente |
 | `uncertain / provider-finality-unverified` alors que la réponse est bien affichée (Qwen) | L'onglet était **caché** : Qwen peint le texte mais ne monte sa barre d'actions que sur un onglet visible (0 bouton mesuré pendant 71 s, ni survol ni défilement) | L'observateur active l'onglet déclaré avant de lire ; si un autre logiciel reprend le premier plan, relancer le tour ou activer l'onglet à la main |
+| `uncertain / no-new-candidate` alors que la conversation a bien été créée (DeepSeek) | Même cause, autre symptôme : onglet **caché**, DeepSeek rend une liste virtuelle vide (0 tour pendant 32 s) alors que la conversation existe côté serveur | Idem : l'observateur active l'onglet avant de lire. Vérifier au besoin que l'onglet est bien au premier plan, puis relancer avec une phrase différente |
 
 **Les identifiants d'onglet sont recréés à chaque redémarrage du navigateur.**
 Après une réouverture, la carte `tabs` de la configuration doit être réconciliée
