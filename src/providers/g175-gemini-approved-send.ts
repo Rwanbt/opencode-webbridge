@@ -148,8 +148,16 @@ export async function g175SendGeminiOnce(request: G175SendRequest): Promise<{
       await recheck();
       if (consent.isStillApproved(action) !== true) return deny('send authorization revoked');
       const button = selected.locator(SEND);
-      if (await composer.count() !== 1 || await button.count() !== 1 || !await button.isVisible())
-        return deny('send control changed after filling');
+      // Gemini mounts its send control only AFTER its framework has processed the
+      // typed text: measured, the count is 0 immediately after fill() and becomes 1
+      // about a second later. Playwright waited for actionability; calling the
+      // control missing before the framework has reacted is a false negative.
+      const sendDeadline = Date.now() + 5000;
+      while (await button.count() !== 1 || !await button.isVisible() || !await button.isEnabled()) {
+        if (Date.now() > sendDeadline) return deny('send control never appeared after filling');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (await composer.count() !== 1) return deny('composer changed after filling');
       await button.clickDom({ timeout: 2000 });
       return Object.freeze({ status: 'uncertain' as const, turnID });
     } finally { await session.detach().catch(() => {}); }
