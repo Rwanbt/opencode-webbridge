@@ -61,13 +61,21 @@ export function conversationRequired(
 
 /** Rendered conversation turns, the evidence the path cannot give. Gemini keeps
  *  '/app' after the first message, so a URL-only check refused a tab that visibly
- *  contained an exchange. */
+ *  contained an exchange.
+ *
+ *  Qwen is the same shape and was refused by the same rule: its conversation URL
+ *  stays '/' even while five rendered answers are on screen (measured), and it
+ *  renders neither `model-response` nor `article`. Its turn ids are the only
+ *  stable evidence, so they are named here. */
+const TURN_SELECTOR = 'model-response, user-query, [data-message-author-role], '
+  + '[data-testid*="conversation-turn"], article, [id^="chat-response-message-"]';
+
 export async function pageHasTurns(
   page: { evaluateSource<T>(source: string): Promise<T> },
 ): Promise<boolean> {
   try {
     const count = await page.evaluateSource<number>(
-      "document.querySelectorAll('model-response, user-query, [data-message-author-role], [data-testid*=\"conversation-turn\"], article').length",
+      "document.querySelectorAll(" + JSON.stringify(TURN_SELECTOR) + ").length",
     );
     return typeof count === "number" && count > 0;
   } catch {

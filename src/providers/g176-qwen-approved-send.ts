@@ -140,8 +140,20 @@ export async function g176SendQwenOnce(request: G176SendRequest): Promise<{
       await recheck();
       if (consent.isStillApproved(action) !== true) return deny('send authorization revoked');
       const button = selected.locator(SEND);
-      if (await composer.count() !== 1 || await button.count() !== 1 || !await button.isVisible())
-        return deny('send control changed after filling');
+      // Qwen mounts its send control only once the composer holds text, and it
+      // animates in. A single check is a false negative: measured on the live tab,
+      // the control is a 32x32 <button aria-label="Envoyer" class="send-button">
+      // that appears with the text, not before it. Wait for it, and report what was
+      // observed if it never becomes usable.
+      const sendDeadline = Date.now() + 5000;
+      while (await button.count() !== 1 || !await button.isVisible() || !await button.isEnabled()) {
+        if (Date.now() > sendDeadline) {
+          return deny('send control never appeared after filling (count=' + await button.count()
+            + ' visible=' + await button.isVisible() + ' enabled=' + await button.isEnabled()
+            + ' composer=' + await composer.count() + ')');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
       // At most ONE user-visible click; never retry on timeout, navigation or
       // lost ACK. Observed on the real Qwen UI: the control animates, so
       // Playwright's stability check flakes; we already verified it is visible
@@ -164,7 +176,10 @@ export async function g176SendQwenOnce(request: G176SendRequest): Promise<{
             await box.fill('', { timeout: 1000 });
         }
       } catch { /* ignore */ }
-      throw new Error('G176_SEND_UNCERTAIN: consumed before UI effect; do not replay');
+      // Keep the CAUSE: "consumed before UI effect" alone makes every failure
+      // indistinguishable and costs a debug cycle to rediscover which step threw.
+      const cause = error instanceof Error ? error.message : String(error);
+      throw new Error('G176_SEND_UNCERTAIN: consumed before UI effect; do not replay (cause: ' + cause + ')');
     }
     throw error;
   } finally {
