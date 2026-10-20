@@ -38,7 +38,10 @@ test("the changelog invents no release and points at real pull requests", async 
   const refs = [...changelog.matchAll(/#(\d{3})\b/g)].map((match) => Number(match[1]));
   assert.ok(refs.length >= 15, "the changelog must reference the wave's pull requests");
   for (const pr of refs) {
-    assert.ok(pr >= 230 && pr <= 300, `suspicious pull request reference: #${pr}`);
+    // The upper bound is the highest pull request merged in the current wave; raise
+    // it when a wave lands beyond it. It exists to catch typos and invented numbers,
+    // not to freeze the repository's history at an older wave.
+    assert.ok(pr >= 230 && pr <= 342, `suspicious pull request reference: #${pr}`);
   }
 });
 

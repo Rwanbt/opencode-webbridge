@@ -44,6 +44,36 @@ that carried them, with their verified CI state.
   `NO_GO_PACKAGED_GUI_EXTENSION` verdict (#275); CI flakiness fixed at the root by a bounded
   durable-history wait (#274).
 
+### Five-provider CDP driving and the live proof (wave W12)
+
+- Provider attachment moved off Playwright onto the tab's own CDP endpoint, after measuring that
+  enumeration missed tabs Playwright had just listed. The driver owns only its socket and never
+  closes the operator's tab (#318, #319, #321, #326).
+- A discarded tab is revived by one reload and the turn retried, instead of failing blind (#326).
+- Sends go through the browser's real input pipeline: `insertText` with read-back, real keystrokes
+  as fallback, then a DOM click on the measured control, with actionability waited for the way
+  Playwright did it (#321, #331, #341).
+- A draft is cleared only when it is still exactly the prompt that was sent; a non-empty operator
+  draft is refused before sending, never overwritten (#302, #305).
+- Qwen and DeepSeek measured that a forced mouse click can "succeed" with no effect at all. Both
+  now send with a DOM click and prove it by the composer emptying (#341).
+- The page-state guard belongs to observation and judges on rendered turns, not on the URL shape:
+  sending from a home page creates the conversation (#332, #336, #338, #341).
+- A hidden tab does not render what the reader must read (Qwen without its action bar, DeepSeek
+  with an empty virtual list), so the observer activates the declared tab for every provider
+  (#341).
+- `npm run deploy:local` copies the build into the directory OpenCode actually loads and fails on a
+  missing marker, after a whole session stayed green in CI while the loaded copy was stale (#333).
+- Troubleshooting by symptom (eight cases), the real scope of the observer, and the parked
+  tool-bridge decision are written down instead of implied (#334, #335).
+- Live proof: one dated turn per provider, a unique code each, and a `complete /
+  dom-completion-proven` journal entry for ChatGPT, Gemini, Mistral, Qwen and DeepSeek
+  (`docs/PREUVE-LIVE.fr.md`, #341, #342).
+
+This wave does not prove long conversations, cut-off replies, or anything on Desktop/Electron. It
+also does not claim any browser write: every send is a ChatGPT-style composer send approved by the
+operator, one turn at a time.
+
 ## Conventions
 
 - Entries reference pull requests, never invented version numbers.
